@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 打包产物
+build/
+dist/
+*.spec.bak
+
+# 运行时产物（配置含账号信息，绝不入库）
+*.local.json
+config.json
+
+# IDE
+.idea/
+.vscode/
+
+# 系统杂项
+Thumbs.db
+.DS_Store
