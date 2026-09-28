@@ -234,3 +234,35 @@ def test_proxy_opener_routing(tmp_path):
     custom = build_opener("custom", "http://127.0.0.1:7890")
     for opener in (direct, sys_proxy, custom):
         assert opener is not None
+
+
+def test_portal_transient_failure_retries(tmp_path):
+    """门户瞬断（VPN 切线等）：重试成功不应误报无校园网。"""
+    worker, _ = make_worker(tmp_path)
+    with patch.object(MonitorWorker, "_client") as mc,          patch("zju_autologin.monitor.probe_internet", return_value=True),          patch("zju_autologin.monitor.time.sleep") as slept:
+        from zju_autologin.srun import SrunError
+        client = mc.return_value
+        client.get_status.side_effect = [SrunError("transient"), dict(ONLINE)]
+        info = run_check(worker)
+        assert info["state"] == "online"
+        slept.assert_called_once()
+
+
+def test_portal_double_failure_reports_no_campus(tmp_path):
+    worker, _ = make_worker(tmp_path)
+    with patch.object(MonitorWorker, "_client") as mc,          patch("zju_autologin.monitor.time.sleep"):
+        from zju_autologin.srun import SrunError
+        client = mc.return_value
+        client.get_status.side_effect = SrunError("down")
+        info = run_check(worker)
+        assert info["state"] == "no_campus"
+
+
+def test_scheme_cache_prevents_repeated_downgrade(tmp_path):
+    """HTTPS 降级成功后按门户缓存, 新客户端直接走可用协议。"""
+    from zju_autologin import srun as S
+    from zju_autologin.srun import SrunClient
+    S._SCHEME_CACHE.clear()
+    S._SCHEME_CACHE["net.zju.edu.cn"] = "http"
+    client = SrunClient(base_url="https://net.zju.edu.cn")
+    assert client.base_url.startswith("http://")

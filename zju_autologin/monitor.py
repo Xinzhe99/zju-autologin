@@ -139,7 +139,7 @@ class MonitorWorker(QObject):
 
     @pyqtSlot()
     def notify_test(self) -> None:
-        ok, msg = send_notification(self._config, tr("app.name"), tr("notify.test_body"))
+        _ok, msg = send_notification(self._config, tr("app.name"), tr("notify.test_body"))
         self.log(tr("notify.test_done", msg=msg))
 
     @pyqtSlot(int)
@@ -243,9 +243,15 @@ class MonitorWorker(QObject):
             client = self._client()
             try:
                 status = client.get_status()
-            except SrunError as exc:
-                self._emit("no_campus", detail=str(exc))
-                return
+            except SrunError as first_exc:
+                # VPN 切换线路等瞬断: 1.5s 后快速重试一次, 仍失败才判定无校园网
+                self.log(tr("log.portal_retry"))
+                time.sleep(1.5)
+                try:
+                    status = client.get_status()
+                except SrunError:
+                    self._emit("no_campus", detail=str(first_exc))
+                    return
 
             if not status["online"]:
                 if not self._config.username or not self._config.get_password():

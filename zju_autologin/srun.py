@@ -75,6 +75,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # 绕过系统代理的直连 opener（门户与认证 API 只应走校园网直连）
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+# HTTPS 被掐断后成功降级的门户（host -> "http"）：后续检测直接走可用协议，
+# 不再每次重付一次 HTTPS 超时代价
+_SCHEME_CACHE: dict[str, str] = {}
+
 
 class SrunError(Exception):
     """门户请求失败（网络不通、响应异常等）。"""
@@ -213,6 +217,9 @@ class SrunClient:
         self.timeout = timeout
         self._callback_seq = 0
         self._resolved_ac_id: str | None = None
+        host = urllib.parse.urlsplit(self.base_url).netloc
+        if _SCHEME_CACHE.get(host) == "http" and self.base_url.startswith("https://"):
+            self.base_url = "http://" + self.base_url[len("https://"):]
 
     # ------------------------------------------------------------------ HTTP
 
@@ -250,6 +257,8 @@ class SrunClient:
             except SrunError:
                 raise first_exc from None
             self.base_url = alt_base  # 本次会话记住可用协议
+            host = urllib.parse.urlsplit(alt_base).netloc
+            _SCHEME_CACHE[host] = "http"
             return body
 
     def _jsonp(self, path: str, params: dict) -> dict:
