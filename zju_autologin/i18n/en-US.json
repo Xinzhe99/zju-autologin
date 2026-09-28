@@ -232,5 +232,6 @@
   "nav.status": "Status",
   "nav.settings": "Settings",
   "nav.logs": "Logs",
-  "btn.open_portal": "Open login page"
+  "btn.open_portal": "Open login page",
+  "notify.keyword_hint": "DingTalk/Feishu bots with keyword security: all push titles contain the word 校园网 — add that keyword in the bot settings. Webhook keys stay on this machine."
 }

@@ -241,7 +241,7 @@ class SetupWizard(QDialog):
 
     def _start_detect(self) -> None:
         self._detect_label.setText(tr("wiz.detecting"))
-        self._detect_thread = _DetectThread()
+        self._detect_thread = _DetectThread(self)  # 挂父对象, 防止悬空销毁
         self._detect_thread.detected.connect(self._on_detected)
         self._detect_thread.start()
 
@@ -293,5 +293,5 @@ class SetupWizard(QDialog):
         if result != QDialog.DialogCode.Accepted:
             i18n.set_lang(self._initial_lang)
         if self._detect_thread is not None and self._detect_thread.isRunning():
-            self._detect_thread.wait(1500)
+            self._detect_thread.wait(6000)  # 检测超时 3s, 留足余量防悬空线程
         super().done(result)

@@ -279,6 +279,7 @@ class DevicesDialog(QDialog):
 
         self._load_thread = _FnThread(work, self)
         self._load_thread.done.connect(self._apply_devices)
+        self._load_thread.finished.connect(self._load_thread.deleteLater)
         self._load_thread.start()
 
     def _apply_devices(self, devices) -> None:
@@ -326,6 +327,7 @@ class DevicesDialog(QDialog):
 
         self._kick_thread = _FnThread(work, self)
         self._kick_thread.done.connect(self._kick_done)
+        self._kick_thread.finished.connect(self._kick_thread.deleteLater)
         self._kick_thread.start()
 
     def _kick_done(self, result) -> None:
@@ -853,6 +855,10 @@ class MainWindow(QMainWindow):
         self._notify_title = QLabel()
         self._notify_title.setObjectName("cardTitle")
         glay.addWidget(self._notify_title)
+        self._notify_hint = QLabel()
+        self._notify_hint.setObjectName("statusDetail")
+        self._notify_hint.setWordWrap(True)
+        glay.addWidget(self._notify_hint)
         notify_grid = QGridLayout()
         notify_grid.setHorizontalSpacing(10)
         notify_grid.setVerticalSpacing(8)
@@ -1100,6 +1106,7 @@ class MainWindow(QMainWindow):
         self._chk_service.setText(tr("service.chk"))
         self._service_hint.setText(tr("service.hint"))
         self._notify_title.setText(tr("settings.notify"))
+        self._notify_hint.setText(tr("notify.keyword_hint"))
         self._chk_recovery.setText(tr("notify.recovery"))
         self._lbl_threshold.setText(tr("notify.threshold"))
         self._lbl_traffic.setText(tr("settings.traffic_limit"))
@@ -1226,8 +1233,12 @@ class MainWindow(QMainWindow):
             self._time_proactive.setTime(QTime(int(hh) % 24, int(mm) % 60))
         except (ValueError, AttributeError):
             pass
-        self._tray_boot.setChecked(autostart.is_enabled())
-        self._act_auto.setChecked(bool(cfg.auto_login))
+        # setChecked 会触发 toggled 槽(误写配置/注册表), 先屏蔽信号
+        for act, checked in ((self._tray_boot, autostart.is_enabled()),
+                             (self._act_auto, bool(cfg.auto_login))):
+            act.blockSignals(True)
+            act.setChecked(checked)
+            act.blockSignals(False)
         if cfg.get_password():
             self._edit_pwd.setPlaceholderText(
                 tr("ph.password_saved", backend=tr(f"password.storage.{cfg.password_backend_key()}")))
@@ -1326,6 +1337,7 @@ class MainWindow(QMainWindow):
 
         self._service_thread = _FnThread(work, self)
         self._service_thread.done.connect(done)
+        self._service_thread.finished.connect(self._service_thread.deleteLater)
         self._service_thread.start()
 
     def _toggle_auto_login(self, on: bool) -> None:
@@ -1550,6 +1562,9 @@ class MainWindow(QMainWindow):
     def quit_app(self) -> None:
         self._force_quit = True
         self._save_geometry()
+        if self._downloader is not None:
+            self._downloader.stop()
+            self._downloader.wait(3000)
         self._monitor.stop()
         self._tray.hide()
         QApplication.quit()
