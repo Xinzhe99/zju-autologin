@@ -167,7 +167,7 @@ def test_notify_pushes_after_threshold_and_resets(tmp_path):
     worker, cfg = make_worker(tmp_path, notify_threshold=2)
     sent = []
     with patch.object(MonitorWorker, "_client") as mc, \
-         patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b: sent.append(t) or (True, "")):
+         patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b, **kw: sent.append(t) or (True, "")):
         client = mc.return_value
         client.get_status.return_value = dict(OFFLINE)
         client.login.return_value = {"ok": False, "msg": "portal busy", "username": "x",
@@ -187,7 +187,7 @@ def test_traffic_alert_monthly_once(tmp_path):
     worker, cfg = make_worker(tmp_path, traffic_limit_gb=10)
     sent = []
     with patch.object(MonitorWorker, "_client") as mc, \
-         patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b: sent.append(t) or (True, "")):
+         patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b, **kw: sent.append(t) or (True, "")):
         worker._check_traffic_limit(20 * 1024 ** 3)
         worker._check_traffic_limit(21 * 1024 ** 3)  # 同月不再推
         assert len(sent) == 1
@@ -216,8 +216,21 @@ def test_heartbeat_pings_once_per_window(tmp_path):
         def close(self): pass
         def __enter__(self): return self
         def __exit__(self, *a): return False
-    with patch("zju_autologin.monitor.urllib.request.urlopen", side_effect=lambda req, timeout: calls.append(req.full_url) or Resp()):
-        worker._ping_heartbeat()
-        worker._ping_heartbeat()  # 5 分钟窗口内不重复
-        assert len(calls) == 1
+    class FakeOpener:
+        def open(self, req, timeout=None):
+            calls.append(req.full_url)
+            return Resp()
+    worker._opener = FakeOpener()
+    worker._ping_heartbeat()
+    worker._ping_heartbeat()  # 5 分钟窗口内不重复
+    assert len(calls) == 1
     assert calls == ["http://hc.example/ping"]
+
+
+def test_proxy_opener_routing(tmp_path):
+    from zju_autologin.net import build_opener
+    direct = build_opener("direct")
+    sys_proxy = build_opener("system")
+    custom = build_opener("custom", "http://127.0.0.1:7890")
+    for opener in (direct, sys_proxy, custom):
+        assert opener is not None

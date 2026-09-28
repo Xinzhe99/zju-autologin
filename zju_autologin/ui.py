@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 
-from PyQt6.QtCore import Qt, QThread, QTime, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QThread, QTime, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap, QBrush, QColor, QPen
 from PyQt6.QtWidgets import (
     QApplication,
@@ -26,10 +26,13 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
+    QButtonGroup,
     QTimeEdit,
     QToolButton,
     QVBoxLayout,
@@ -46,6 +49,7 @@ from .config import (
 )
 from .i18n import tr
 from .monitor import Monitor
+from .net import build_opener
 from .srun import SrunClient
 
 STATUS_KEYS = (
@@ -126,8 +130,11 @@ class UpdateDownloadThread(QThread):
     finished_ok = pyqtSignal(str)  # 本地文件路径
     finished_err = pyqtSignal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, proxy_mode: str = "system", proxy_url: str = "",
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._proxy_mode = proxy_mode
+        self._proxy_url = proxy_url
         self._stop = False
 
     def stop(self) -> None:
@@ -164,7 +171,8 @@ class UpdateDownloadThread(QThread):
             req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
             path = os.path.join(tempfile.gettempdir(), name)
             got = 0
-            with urllib.request.urlopen(req, timeout=30) as resp, open(path, "wb") as fh:
+            opener = build_opener(self._proxy_mode, self._proxy_url)
+            with opener.open(req, timeout=30) as resp, open(path, "wb") as fh:
                 while True:
                     if self._stop:
                         return
@@ -529,8 +537,8 @@ class MainWindow(QMainWindow):
         icon_path = resource_path("zju.ico")
         self.setWindowIcon(QIcon(icon_path if os.path.isfile(icon_path)
                                  else resource_path("zju_seal_blue.png")))
-        self.resize(800, 860)
-        self.setMinimumSize(740, 700)
+        self.resize(940, 680)
+        self.setMinimumSize(860, 600)
         geo = str(config.win_geometry or "")
         if geo:
             try:
@@ -564,54 +572,87 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        outer = QVBoxLayout(central)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        outer.addWidget(scroll)
-        content = QWidget()
-        scroll.setWidget(content)
-        root = QVBoxLayout(content)
-        root.setContentsMargins(16, 16, 16, 12)
-        root.setSpacing(12)
+        lay = QHBoxLayout(central)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._build_sidebar())
+        self._stack = QStackedWidget()
+        lay.addWidget(self._stack, 1)
+        self._stack.addWidget(self._page_status())    # 0
+        self._stack.addWidget(self._page_settings())  # 1
+        self._stack.addWidget(self._page_logs())      # 2
 
-        # ---- 顶栏（Codex 风格：小校徽 + 应用名 + 版本）----
-        topbar = QFrame()
-        topbar.setObjectName("topbar")
-        topbar.setFixedHeight(46)
-        hlay = QHBoxLayout(topbar)
-        hlay.setContentsMargins(4, 0, 4, 0)
-        hlay.setSpacing(10)
+    def _build_sidebar(self) -> QFrame:
+        """Codex 风格左侧导航栏。"""
+        sb = QFrame()
+        sb.setObjectName("sidebar")
+        sb.setFixedWidth(204)
+        lay = QVBoxLayout(sb)
+        lay.setContentsMargins(12, 16, 12, 14)
+        lay.setSpacing(4)
+
+        logo_row = QHBoxLayout()
+        logo_row.setSpacing(10)
         seal = _load_pixmap("zju_seal_blue.png")
         seal_label = QLabel()
         if not seal.isNull():
-            seal_label.setPixmap(seal.scaled(26, 26, Qt.AspectRatioMode.KeepAspectRatio,
+            seal_label.setPixmap(seal.scaled(30, 30, Qt.AspectRatioMode.KeepAspectRatio,
                                              Qt.TransformationMode.SmoothTransformation))
-        hlay.addWidget(seal_label)
+        logo_row.addWidget(seal_label)
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
         self._topbar_title = QLabel()
-        self._topbar_title.setObjectName("topbarTitle")
+        self._topbar_title.setObjectName("sidebarTitle")
         self._topbar_sub = QLabel()
-        self._topbar_sub.setObjectName("topbarSub")
+        self._topbar_sub.setObjectName("sidebarSub")
         title_col.addWidget(self._topbar_title)
         title_col.addWidget(self._topbar_sub)
-        hlay.addLayout(title_col)
-        hlay.addStretch(1)
-        self._version_label = QLabel()
-        self._version_label.setObjectName("topbarHint")
-        hlay.addWidget(self._version_label)
-        root.addWidget(topbar)
+        logo_row.addLayout(title_col)
+        lay.addLayout(logo_row)
+        lay.addSpacing(18)
 
-        # ---- 更新横幅（有新版本时显示）----
+        self._nav_group = QButtonGroup(self)
+        self._nav_group.setExclusive(True)
+        self._nav_buttons = []
+        for idx, (icon_name, key) in enumerate((
+            ("icon_nav_status.png", "nav.status"),
+            ("icon_nav_settings.png", "nav.settings"),
+            ("icon_nav_logs.png", "nav.logs"),
+        )):
+            btn = QPushButton()
+            btn.setObjectName("nav")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            icon_path = resource_path(icon_name)
+            if os.path.isfile(icon_path):
+                btn.setIcon(QIcon(icon_path))
+                btn.setIconSize(QSize(18, 18))
+            btn.clicked.connect(lambda _=False, i=idx: self._stack.setCurrentIndex(i))
+            self._nav_group.addButton(btn, idx)
+            self._nav_buttons.append((btn, key))
+            lay.addWidget(btn)
+        self._nav_buttons[0][0].setChecked(True)
+
+        lay.addStretch(1)
+        self._version_label = QLabel()
+        self._version_label.setObjectName("sidebarHint")
+        lay.addWidget(self._version_label)
+        return sb
+
+    def _page_status(self) -> QWidget:
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(24, 20, 24, 16)
+        root.setSpacing(12)
+
+        # 更新横幅（有新版本时显示）
         self._update_banner = QPushButton()
         self._update_banner.setObjectName("primary")
         self._update_banner.clicked.connect(self._do_update)
         self._update_banner.hide()
         root.addWidget(self._update_banner)
 
-        # ---- 状态卡片 ----
+        # 状态卡片
         status_card = self._card()
         slay = QVBoxLayout(status_card)
         slay.setContentsMargins(20, 16, 20, 16)
@@ -668,6 +709,26 @@ class MainWindow(QMainWindow):
         slay.addWidget(grid_host)
         root.addWidget(status_card)
 
+        self._tip = QLabel()
+        self._tip.setObjectName("statusDetail")
+        root.addWidget(self._tip)
+        root.addStretch(1)
+        return page
+
+    def _page_settings(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+        content = QWidget()
+        scroll.setWidget(content)
+        root = QVBoxLayout(content)
+        root.setContentsMargins(24, 20, 24, 16)
+        root.setSpacing(12)
+
         # ---- 设置卡片 ----
         settings_card = self._card()
         glay = QVBoxLayout(settings_card)
@@ -720,16 +781,34 @@ class MainWindow(QMainWindow):
         self._combo_lang = QComboBox()
         for lang in ("auto", "zh-CN", "en-US"):
             self._combo_lang.addItem(self._lang_label(lang), lang)
-        self._combo_theme = QComboBox()
+
+        # 主题：Codex 风格分段胶囊
+        seg_host = QFrame()
+        seg_host.setObjectName("segHost")
+        seg_host.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        seg_lay = QHBoxLayout(seg_host)
+        seg_lay.setContentsMargins(2, 2, 2, 2)
+        seg_lay.setSpacing(2)
+        self._seg_buttons: dict[str, QPushButton] = {}
+        self._seg_group = QButtonGroup(self)
+        self._seg_group.setExclusive(True)
         for mode in ("auto", "light", "dark"):
-            self._combo_theme.addItem(tr(f"theme.{mode}"), mode)
+            btn = QPushButton()
+            btn.setObjectName("seg")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, m=mode: self.setStyleSheet(theme.get_qss(m)))
+            self._seg_group.addButton(btn)
+            self._seg_buttons[mode] = btn
+            seg_lay.addWidget(btn)
+        self._seg_buttons["auto"].setChecked(True)
 
         add_row(0, "username", self._edit_user)
         add_row(1, "domain", self._edit_domain)
         add_row(2, "password", pwd_host)
         add_row(3, "interval", self._spin_interval)
         add_row(4, "language", self._combo_lang)
-        add_row(5, "theme", self._combo_theme)
+        add_row(5, "theme", seg_host)
         glay.addLayout(form)
 
         # 选项行
@@ -789,8 +868,6 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self._lbl_threshold = QLabel()
         self._lbl_threshold.setObjectName("fieldKey")
-        self._lbl_recovery = QLabel()
-        self._lbl_recovery.setObjectName("fieldKey")
         actions.addWidget(self._lbl_threshold)
         actions.addWidget(self._spin_threshold)
         actions.addSpacing(14)
@@ -821,6 +898,10 @@ class MainWindow(QMainWindow):
         self._edit_acid = QLineEdit()
         self._edit_heartbeat = QLineEdit()
         self._edit_heartbeat.setToolTip(tr("hb.hint"))
+        self._combo_proxy = QComboBox()
+        for pid in ("system", "direct", "custom"):
+            self._combo_proxy.addItem(tr(f"net.proxy.{pid}"), pid)
+        self._combo_proxy.currentIndexChanged.connect(self._on_proxy_mode_changed)
         self._chk_proactive = QCheckBox()
         self._time_proactive = QTimeEdit(QTime(3, 0))
         self._time_proactive.setDisplayFormat("HH:mm")
@@ -829,12 +910,20 @@ class MainWindow(QMainWindow):
             ("field.base_url", self._edit_base),
             ("field.ac_id", self._edit_acid),
             ("hb.url", self._edit_heartbeat),
+            ("net.proxy", self._combo_proxy),
         )):
             label = QLabel()
             label.setObjectName("fieldKey")
             adv_grid.addWidget(label, row, 0)
             adv_grid.addWidget(widget, row, 1)
             self._adv_labels.append(label)
+        self._edit_proxy_url = QLineEdit()
+        self._edit_proxy_url.setPlaceholderText("http://127.0.0.1:7890")
+        self._edit_proxy_url.setEnabled(False)
+        self._lbl_proxy_url = QLabel()
+        self._lbl_proxy_url.setObjectName("fieldKey")
+        adv_grid.addWidget(self._lbl_proxy_url, 4, 0)
+        adv_grid.addWidget(self._edit_proxy_url, 4, 1)
         prow = QHBoxLayout()
         prow.addWidget(self._chk_proactive)
         prow.addWidget(self._time_proactive)
@@ -845,13 +934,13 @@ class MainWindow(QMainWindow):
         self._btn_import = QPushButton()
         self._btn_import.setObjectName("secondary")
         self._btn_import.clicked.connect(self._import_config)
-        prow.addWidget(self._btn_export)
-        prow.addWidget(self._btn_import)
         self._btn_portal = QPushButton()
         self._btn_portal.setObjectName("secondary")
         self._btn_portal.clicked.connect(self._show_portal_wizard)
+        prow.addWidget(self._btn_export)
+        prow.addWidget(self._btn_import)
         prow.addWidget(self._btn_portal)
-        adv_grid.addLayout(prow, 2, 0, 1, 2)
+        adv_grid.addLayout(prow, 5, 0, 1, 2)
         self._advanced_host.setVisible(False)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
         glay.addWidget(self._advanced_host)
@@ -869,8 +958,15 @@ class MainWindow(QMainWindow):
         save_row.addWidget(self._btn_save)
         glay.addLayout(save_row)
         root.addWidget(settings_card)
+        root.addStretch(1)
+        return page
 
-        # ---- 日志卡片 ----
+    def _page_logs(self) -> QWidget:
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(24, 20, 24, 16)
+        root.setSpacing(10)
+
         log_card = self._card()
         llay = QVBoxLayout(log_card)
         llay.setContentsMargins(20, 14, 20, 14)
@@ -897,13 +993,25 @@ class MainWindow(QMainWindow):
         self._log.setObjectName("log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(400)
-        self._log.setFixedHeight(120)
-        llay.addWidget(self._log)
+        self._log.setMinimumHeight(320)
+        llay.addWidget(self._log, 1)
         root.addWidget(log_card, 1)
+        return page
 
-        self._tip = QLabel()
-        self._tip.setObjectName("statusDetail")
-        root.addWidget(self._tip)
+    def _seg_theme_data(self) -> str:
+        for data, btn in self._seg_buttons.items():
+            if btn.isChecked():
+                return data
+        return "auto"
+
+    def _set_seg_theme(self, data: str) -> None:
+        btn = self._seg_buttons.get(data if data in ("auto", "light", "dark") else "auto")
+        if btn is not None:
+            btn.setChecked(True)
+
+    def _on_proxy_mode_changed(self) -> None:
+        custom = self._combo_proxy.currentData() == "custom"
+        self._edit_proxy_url.setEnabled(custom)
 
     # ------------------------------------------------------ 标签/文案辅助
 
@@ -932,6 +1040,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(tr("app.name"))
         self._topbar_title.setText(tr("app.name"))
         self._topbar_sub.setText(tr("app.tagline"))
+        for btn, key in self._nav_buttons:
+            btn.setText(tr(key))
         self._version_label.setText(tr("app.header_badge", version=__version__))
         self._btn_check.setText(tr("btn.check_now"))
         self._btn_login.setText(tr("btn.login_now"))
@@ -984,16 +1094,19 @@ class MainWindow(QMainWindow):
         self._chk_proactive.setText(tr("chk.proactive"))
         for i in range(self._combo_lang.count()):
             self._combo_lang.setItemText(i, self._lang_label(self._combo_lang.itemData(i)))
-        for i in range(self._combo_theme.count()):
-            mode = self._combo_theme.itemData(i)
-            self._combo_theme.setItemText(i, tr(f"theme.{mode}"))
+        for data, btn in self._seg_buttons.items():
+            btn.setText(tr(f"theme.{data}"))
         for i in range(self._combo_provider.count()):
             pid = self._combo_provider.itemData(i)
             self._combo_provider.setItemText(i, self._provider_label(pid))
         for label, key in zip(self._notify_labels, ("notify.provider", "notify.key")):
             label.setText(tr(key))
-        for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id", "hb.url")):
+        for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id", "hb.url", "net.proxy")):
             label.setText(tr(key))
+        self._lbl_proxy_url.setText(tr("net.proxy.url"))
+        for i in range(self._combo_proxy.count()):
+            pid = self._combo_proxy.itemData(i)
+            self._combo_proxy.setItemText(i, tr(f"net.proxy.{pid}"))
         self._btn_export.setText(tr("btn.export_cfg"))
         self._btn_import.setText(tr("btn.import_cfg"))
         self._btn_portal.setText(tr("btn.portal_wizard"))
@@ -1074,8 +1187,7 @@ class MainWindow(QMainWindow):
         self._chk_updates.setChecked(bool(cfg.check_updates))
         lang = cfg.language if cfg.language in ("auto", "zh-CN", "en-US") else "auto"
         self._combo_lang.setCurrentIndex(max(0, self._combo_lang.findData(lang)))
-        theme_mode = cfg.theme if cfg.theme in ("auto", "light", "dark") else "auto"
-        self._combo_theme.setCurrentIndex(max(0, self._combo_theme.findData(theme_mode)))
+        self._set_seg_theme(cfg.theme if cfg.theme in ("auto", "light", "dark") else "auto")
         self._chk_boot.setChecked(autostart.is_enabled())
         self._chk_service.setChecked(service.is_installed())
         self._combo_provider.setCurrentIndex(
@@ -1087,6 +1199,10 @@ class MainWindow(QMainWindow):
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
         self._edit_heartbeat.setText(cfg.heartbeat_url or "")
+        pm = cfg.proxy_mode if cfg.proxy_mode in ("system", "direct", "custom") else "system"
+        self._combo_proxy.setCurrentIndex(max(0, self._combo_proxy.findData(pm)))
+        self._edit_proxy_url.setText(cfg.proxy_url or "")
+        self._edit_proxy_url.setEnabled(pm == "custom")
         self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
         try:
             hh, mm = str(cfg.proactive_time or "03:00").split(":")
@@ -1119,7 +1235,7 @@ class MainWindow(QMainWindow):
         cfg.minimize_to_tray = self._chk_tray.isChecked()
         cfg.check_updates = self._chk_updates.isChecked()
         cfg.language = self._combo_lang.currentData() or "auto"
-        cfg.theme = self._combo_theme.currentData() or "auto"
+        cfg.theme = self._seg_theme_data()
         cfg.notify_provider = self._combo_provider.currentData() or "none"
         cfg.notify_key = self._edit_key.text().strip()
         cfg.notify_threshold = self._spin_threshold.value()
@@ -1128,6 +1244,8 @@ class MainWindow(QMainWindow):
         cfg.base_url = self._edit_base.text().strip() or "https://net.zju.edu.cn"
         cfg.ac_id = self._edit_acid.text().strip() or "80"
         cfg.heartbeat_url = self._edit_heartbeat.text().strip()
+        cfg.proxy_mode = self._combo_proxy.currentData() or "system"
+        cfg.proxy_url = self._edit_proxy_url.text().strip()
         cfg.proactive_relogin = self._chk_proactive.isChecked()
         cfg.proactive_time = self._time_proactive.time().toString("HH:mm")
 
@@ -1294,6 +1412,10 @@ class MainWindow(QMainWindow):
         from .config import config_dir
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
 
+    def _on_proxy_mode_changed(self) -> None:
+        custom = self._combo_proxy.currentData() == "custom"
+        self._edit_proxy_url.setEnabled(custom)
+
     def _show_portal_wizard(self) -> None:
         PortalWizardDialog(self._config, self).exec()
 
@@ -1322,7 +1444,8 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(self._update_url or updates.RELEASE_PAGE))
             return
         self._update_banner.setText(tr("update.downloading", percent=0))
-        self._downloader = UpdateDownloadThread(self)
+        self._downloader = UpdateDownloadThread(
+            self._config.proxy_mode, self._config.proxy_url, self)
         self._downloader.progress.connect(
             lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
         self._downloader.finished_ok.connect(self._update_downloaded)

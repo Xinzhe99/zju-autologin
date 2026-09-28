@@ -223,5 +223,13 @@
   "portal.result_ok": "探测成功：ac_id={acid}，本机 IP {ip}，challenge 测试通过 ✓ 保存后请在主窗口填写账号密码",
   "portal.result_fail": "探测失败：{msg}。请确认地址正确且已在校园网内",
   "app.tagline": "浙江大学校园网保活",
-  "log.http_fallback": "HTTPS 被拦截，已改用 HTTP 直连门户"
+  "log.http_fallback": "HTTPS 被拦截，已改用 HTTP 直连门户",
+  "net.proxy": "网络代理",
+  "net.proxy.system": "跟随系统",
+  "net.proxy.direct": "强制直连",
+  "net.proxy.custom": "自定义",
+  "net.proxy.url": "代理地址",
+  "nav.status": "网络状态",
+  "nav.settings": "设置",
+  "nav.logs": "运行日志"
 }

@@ -14,7 +14,8 @@ import urllib.request
 PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "smtp")
 
 
-def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0) -> tuple[bool, str]:
+def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0,
+               opener: urllib.request.OpenerDirector | None = None) -> tuple[bool, str]:
     try:
         data = None
         headers = {"User-Agent": "ZJU-AutoLogin"}
@@ -22,7 +23,9 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0) -> t
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if opener is None:
+            opener = urllib.request.build_opener()
+        with opener.open(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
         try:
             result = json.loads(body)
@@ -59,8 +62,9 @@ def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def send_notification(cfg, title: str, body: str) -> tuple[bool, str]:
-    """按配置发送通知，返回 (成功?, 说明)。"""
+def send_notification(cfg, title: str, body: str,
+                      opener: urllib.request.OpenerDirector | None = None) -> tuple[bool, str]:
+    """按配置发送通知，返回 (成功?, 说明)。opener 控制代理路由。"""
     provider = getattr(cfg, "notify_provider", "none") or "none"
     key = (getattr(cfg, "notify_key", "") or "").strip()
     if provider == "none":
@@ -74,14 +78,16 @@ def send_notification(cfg, title: str, body: str) -> tuple[bool, str]:
         else:
             url = ("https://api.day.app/" + urllib.parse.quote(key)
                    + f"/{urllib.parse.quote(title)}/{urllib.parse.quote(body)}")
-        return _http_json(url)
+        return _http_json(url, opener=opener)
 
     if provider == "serverchan":
         url = f"https://sctapi.ftqq.com/{urllib.parse.quote(key)}.send"
         data = urllib.parse.urlencode({"title": title, "desp": body}).encode()
         try:
             req = urllib.request.Request(url, data=data)
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            if opener is None:
+                opener = urllib.request.build_opener()
+            with opener.open(req, timeout=6) as resp:
                 return resp.status < 400, resp.read().decode("utf-8", "replace")[:200]
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
@@ -89,12 +95,12 @@ def send_notification(cfg, title: str, body: str) -> tuple[bool, str]:
     if provider == "wecom":
         if not key.startswith("http"):
             return False, "wecom webhook url required"
-        return _http_json(key, {"msgtype": "text", "text": {"content": f"{title}\n{body}"}})
+        return _http_json(key, {"msgtype": "text", "text": {"content": f"{title}\n{body}"}}, opener=opener)
 
     if provider == "dingtalk":
         if not key.startswith("http"):
             return False, "dingtalk webhook url required"
-        return _http_json(key, {"msgtype": "text", "text": {"content": f"{title}\n{body}"}})
+        return _http_json(key, {"msgtype": "text", "text": {"content": f"{title}\n{body}"}}, opener=opener)
 
     if provider == "smtp":
         if not cfg.smtp_host or not cfg.smtp_to:

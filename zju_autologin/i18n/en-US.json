@@ -223,5 +223,13 @@
   "portal.result_ok": "Detected: ac_id={acid}, local IP {ip}, challenge OK ✓ — save it, then fill your account in the main window",
   "portal.result_fail": "Detection failed: {msg}. Check the URL and make sure you are on that campus network",
   "app.tagline": "ZJU campus keep-alive",
-  "log.http_fallback": "HTTPS blocked; switched to direct HTTP"
+  "log.http_fallback": "HTTPS blocked; switched to direct HTTP",
+  "net.proxy": "Network proxy",
+  "net.proxy.system": "System",
+  "net.proxy.direct": "Direct",
+  "net.proxy.custom": "Custom",
+  "net.proxy.url": "Proxy URL",
+  "nav.status": "Status",
+  "nav.settings": "Settings",
+  "nav.logs": "Logs"
 }

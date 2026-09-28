@@ -17,14 +17,16 @@ def _version_tuple(v: str) -> tuple:
     return tuple(int(x) for x in nums[:3]) or (0,)
 
 
-def check_newer(timeout: float = 5.0) -> tuple[bool, str, str]:
+def check_newer(timeout: float = 5.0, opener: urllib.request.OpenerDirector | None = None) -> tuple[bool, str, str]:
     """检查是否有新版本，返回 (是否有新版, 最新版本号, 下载页链接)。失败静默。"""
     try:
         req = urllib.request.Request(
             REPO_API,
             headers={"Accept": "application/vnd.github+json", "User-Agent": "ZJU-AutoLogin"},
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if opener is None:
+            opener = urllib.request.build_opener()
+        with opener.open(req, timeout=timeout) as resp:
             data = json.load(resp)
         tag = str(data.get("tag_name") or "").lstrip("vV")
         url = str(data.get("html_url") or RELEASE_PAGE)

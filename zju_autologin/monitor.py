@@ -20,6 +20,7 @@ from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, 
 
 from . import updates
 from .config import Config, append_event, append_usage_snapshot
+from .net import build_opener
 from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
@@ -43,9 +44,13 @@ _UPDATE_INTERVAL = 24 * 3600
 _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
 
 
-def probe_internet(timeout: float = 4.0) -> bool:
-    """探测外网连通性（直连，不经过系统代理）；captive portal 劫持会被内容校验识破。"""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def probe_internet(timeout: float = 4.0, opener: urllib.request.OpenerDirector | None = None) -> bool:
+    """探测外网连通性；captive portal 劫持会被内容校验识破。
+
+    opener 缺省时跟随系统代理（反映用户真实上网路径）。
+    """
+    if opener is None:
+        opener = urllib.request.build_opener()
     for url, expect_body in _PROBE_URLS:
         try:
             req = urllib.request.Request(url, method="GET")
@@ -78,6 +83,7 @@ class MonitorWorker(QObject):
         self._fail_streak = 0
         self._notify_sent = False
         self._prev_state = ""
+        self._opener = None
         self._last_login_attempt = 0.0
         self._last_proactive_date = ""
         self._last_heartbeat = 0.0
@@ -158,7 +164,8 @@ class MonitorWorker(QObject):
         self._last_heartbeat = now
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
-            urllib.request.urlopen(req, timeout=6).close()
+            (self._opener or build_opener(self._config.proxy_mode, self._config.proxy_url)) \
+                .open(req, timeout=6).close()
         except Exception as exc:  # noqa: BLE001 - 心跳失败仅记录
             self.log(tr("log.heartbeat_fail", msg=exc))
 
@@ -181,7 +188,8 @@ class MonitorWorker(QObject):
     def check_updates(self) -> None:
         if not self._config.check_updates:
             return
-        newer, version, url = updates.check_newer()
+        newer, version, url = updates.check_newer(
+            opener=build_opener(self._config.proxy_mode, self._config.proxy_url))
         if newer:
             self.log(tr("log.update_found", version=version))
             self.updateAvailable.emit(version, url)
@@ -194,7 +202,7 @@ class MonitorWorker(QObject):
     def _maybe_push(self, title_key: str, body: str) -> None:
         if self._notify_sent:
             return
-        ok, msg = send_notification(self._config, tr(title_key), body)
+        ok, msg = send_notification(self._config, tr(title_key), body, opener=self._opener)
         if ok:
             self._notify_sent = True
             self.log(tr("notify.sent"))
@@ -231,6 +239,7 @@ class MonitorWorker(QObject):
         self._busy = True
         try:
             self._adjust_interval_for_power()
+            self._opener = build_opener(self._config.proxy_mode, self._config.proxy_url)
             client = self._client()
             try:
                 status = client.get_status()
@@ -258,8 +267,8 @@ class MonitorWorker(QObject):
                 self._do_login(client=client)
                 return
 
-            # 已认证：校验外网连通性
-            if probe_internet():
+            # 已认证：校验外网连通性（按代理设置路由）
+            if probe_internet(opener=self._opener):
                 self._fail_count = 0
                 self._auth_error = ""
                 self._ping_heartbeat()
@@ -302,6 +311,7 @@ class MonitorWorker(QObject):
             self._config,
             tr("notify.recovery_title"),
             tr("notify.recovery_body", ip=ip or "-"),
+            opener=self._opener,
         )
         self.log(tr("notify.recovery_sent"))
 

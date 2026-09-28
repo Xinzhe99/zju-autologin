@@ -51,6 +51,10 @@ _DEFAULTS = {
     "win_geometry": "",
     # 心跳死信开关（healthchecks.io 等；本机在线时定期 ping，机器失联由外部服务报警）
     "heartbeat_url": "",
+    # 网络出口：门户认证始终直连；探测/更新/推送按此设置路由
+    # system=跟随系统代理, direct=强制直连, custom=使用 proxy_url
+    "proxy_mode": "system",
+    "proxy_url": "",
     # 笔记本电池供电时自动放慢检测节奏
     "battery_mode": True,
 }
