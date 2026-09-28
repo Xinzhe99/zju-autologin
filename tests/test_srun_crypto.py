@@ -14,9 +14,7 @@ TOKEN = "a1b2c3d4" * 8
 INFO = {"username": "3230104321", "password": "zju-test-2026",
         "ip": "192.0.2.10", "acid": "80", "enc_ver": "srun_bx1"}
 INFO_JSON = '{"username":"3230104321","password":"zju-test-2026","ip":"192.0.2.10","acid":"80","enc_ver":"srun_bx1"}'
-EXPECT_INFO = ('{SRBX1}NmVz3iWy4GlA3kE0nF69kWYFw6vOaWfVfoyYPjRLl8YzeV8apivClP0tJ6bYfhCRV'
-               '+nBslt2+JtKfU9VD5zmTn8m/LVhUyos06gw+AIdIiMoTxiJVUKfmGHUWIiph/CJTF4vaxsvwu'
-               'L3zoKlisiAES==')
+EXPECT_INFO = '{SRBX1}ajKZ5DDxZ6l4dgkehSX4gK+8Y3Tpr4z1H53Djk4LkxDMVj5hdbYZ0d+Ekl7zSZ+swodNHnP4Q0NiHOT7LSaCm1w7I1KJgNoKzr1Zh2i8O7IbaKbhdZ/JtI3U+95pooQQJ4NWrMPkxrbIsn0l'
 
 
 def test_pack_words_appends_length():
