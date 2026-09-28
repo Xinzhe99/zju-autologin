@@ -1,8 +1,9 @@
 """ZJU 校园网自动登录 —— 程序入口。
 
 用法：
-    python main.py              打开主窗口（首次运行先进入引导向导）
-    python main.py --minimized  启动后最小化到托盘（开机自启用）
+    python main.py                       打开主窗口（首次运行先进入引导向导）
+    python main.py --minimized           启动后最小化到托盘（开机自启用）
+    python main.py watch [--config 路径]  无界面守护（系统级保活计划任务使用）
 """
 
 from __future__ import annotations
@@ -21,6 +22,10 @@ from zju_autologin.wizard import SetupWizard
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in ("watch", "--watch"):
+        from zju_autologin.cli import main as cli_main
+        return cli_main()
+
     app = QApplication(sys.argv)
     app.setApplicationName("ZJUAutoLogin")
     app.setApplicationDisplayName("ZJU 校园网自动登录")

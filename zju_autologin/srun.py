@@ -65,6 +65,13 @@ _IDX_LOGIN_TIME = 1
 _IDX_IP = 8
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """阻止自动跟随 302，用于捕获 captive portal 重定向地址。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
 class SrunError(Exception):
     """门户请求失败（网络不通、响应异常等）。"""
 
@@ -201,6 +208,7 @@ class SrunClient:
         self.enc_ver = enc_ver
         self.timeout = timeout
         self._callback_seq = 0
+        self._resolved_ac_id: str | None = None
 
     # ------------------------------------------------------------------ HTTP
 
@@ -297,6 +305,112 @@ class SrunClient:
         match = re.search(r"ip\s*:\s*\"(\d{1,3}(?:\.\d{1,3}){3})\"", body)
         return match.group(1) if match else ""
 
+    def resolve_ac_id(self) -> str:
+        """ac_id 配置为 auto 时，从 captive portal 重定向自动探测（其他 srun 学校可用）。"""
+        if self.ac_id not in ("", "auto"):
+            return self.ac_id
+        if self._resolved_ac_id:
+            return self._resolved_ac_id
+        ac_id = self.detect_portal_ac_id()
+        self._resolved_ac_id = ac_id or DEFAULT_AC_ID
+        return self._resolved_ac_id
+
+    def detect_portal_ac_id(self) -> str:
+        """访问一个 HTTP 探针，从门户劫持重定向 URL 中解析 ac_id / ip。"""
+        probe = "http://www.msftconnecttest.com/redirect"
+        try:
+            req = urllib.request.Request(probe, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"})
+            opener = urllib.request.build_opener(_NoRedirect())
+            with opener.open(req, timeout=self.timeout) as resp:
+                location = resp.headers.get("Location", "")
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location", "") if exc.headers else ""
+        except Exception:  # noqa: BLE001
+            return ""
+        if not location:
+            return ""
+        if "http" not in location and location.startswith("/"):
+            location = self.base_url + location
+        host = urllib.parse.urlsplit(location)
+        if host.scheme and "zju.edu.cn" not in host.netloc:
+            # 其他学校：仍可复用其门户地址
+            pass
+        query = urllib.parse.parse_qs(host.query)
+        ac_ids = query.get("ac_id") or query.get("ac-id") or []
+        return str(ac_ids[0]) if ac_ids else ""
+
+    def get_status_detail(self) -> dict:
+        """带用量/套餐的富在线状态（门户 JSONP 形态），失败时退回 get_status。"""
+        try:
+            body = self._get("/cgi-bin/rad_user_info", {"callback": "zjulogin_detail"})
+            text = body.strip()
+            if text.startswith("{") or "(" in text:
+                raw = text[text.find("(") + 1 : text.rfind(")")] if "(" in text else text
+                data = json.loads(raw)
+            else:
+                data = {}
+        except (SrunError, json.JSONDecodeError):
+            data = {}
+        base = self.get_status()
+        if data.get("error") == "ok" and data.get("user_name"):
+            base.update({
+                "online": True,
+                "username": str(data.get("user_name") or base.get("username", "")),
+                "ip": str(data.get("user_ip") or data.get("online_ip") or base.get("ip", "")),
+                "billing": str(data.get("billing_name") or ""),
+                "all_bytes": int(data.get("all_bytes") or 0),
+                "bytes_in": int(data.get("bytes_in") or 0),
+                "bytes_out": int(data.get("bytes_out") or 0),
+                "balance": data.get("user_balance"),
+            })
+        return base
+
+    # ------------------------------------------------------- 在线设备管理
+
+    def list_online_devices(self, username: str, password: str, domain: str = "") -> list[dict]:
+        """获取账号的在线设备列表（用于 E2620 设备数超限时自助踢号）。
+
+        门户接口使用密码的普通 MD5 作为凭据（与 portal 登录页一致）。
+        """
+        user = (username + domain).strip()
+        pwd_md5 = hashlib.md5(password.encode("utf-8")).hexdigest()
+        try:
+            body = self._get(
+                "/v1/srun_portal_online",
+                {"user_name": user, "password": pwd_md5},
+            )
+            data = _parse_jsonp(body)
+        except SrunError:
+            return []
+        if str(data.get("error", "")) != "ok":
+            return []
+        items = data.get("data") or []
+        return [
+            {
+                "ip": str(it.get("ip") or ""),
+                "user_name": str(it.get("user_name") or ""),
+                "os_name": str(it.get("os_name") or ""),
+                "client_type": str(it.get("client_type") or ""),
+                "add_time": int(it.get("add_time") or 0),
+            }
+            for it in items if isinstance(it, dict)
+        ]
+
+    def kick_device(self, username: str, target_ip: str) -> tuple[bool, str]:
+        """把账号在 target_ip 上的在线设备踢下线（设备数超限时使用）。"""
+        ts = str(int(time.time()))
+        unbind = "1"
+        sign = hashlib.sha1(f"{ts}{username}{target_ip}{unbind}{ts}".encode()).hexdigest()
+        try:
+            resp = self._jsonp(
+                "/cgi-bin/rad_user_dm",
+                {"ip": target_ip, "username": username, "time": ts, "unbind": unbind, "sign": sign},
+            )
+        except SrunError as exc:
+            return False, str(exc)
+        ok = resp.get("error") == "ok"
+        return ok, (tr("srun.login_ok") if ok else friendly_error(resp))
+
     # ------------------------------------------------------------------ 认证
 
     def login(self, username: str, password: str, ip: str = "", domain: str = "") -> dict:
@@ -325,12 +439,13 @@ class SrunClient:
                 }
             token = challenge["challenge"]
 
+            ac_id = self.resolve_ac_id()
             info_json = json.dumps(
                 {
                     "username": username,
                     "password": password,
                     "ip": ip,
-                    "acid": self.ac_id,
+                    "acid": ac_id,
                     "enc_ver": self.enc_ver,
                 },
                 separators=(",", ":"),
@@ -341,7 +456,7 @@ class SrunClient:
             chkstr = (
                 token + username
                 + token + hmd5
-                + token + self.ac_id
+                + token + ac_id
                 + token + ip
                 + token + str(n)
                 + token + str(t)
@@ -360,7 +475,7 @@ class SrunClient:
                     "double_stack": 0,
                     "chksum": chksum,
                     "info": info,
-                    "ac_id": self.ac_id,
+                    "ac_id": ac_id,
                     "ip": ip,
                     "n": n,
                     "type": t,

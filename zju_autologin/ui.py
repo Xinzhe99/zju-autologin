@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import os
+import sys
+import tempfile
 import time
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QThread, QTime, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap, QBrush, QColor, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -21,18 +24,27 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSystemTrayIcon,
+    QTableWidget,
+    QTableWidgetItem,
+    QTimeEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from . import __version__, autostart, i18n
-from .config import Config, resource_path
+from . import __version__, autostart, i18n, service, theme, updates
+from .config import (
+    Config,
+    append_file_log,
+    read_events,
+    resource_path,
+)
 from .i18n import tr
 from .monitor import Monitor
-from .theme import QSS
+from .srun import SrunClient, SrunError
 
 STATUS_KEYS = (
     "online", "authed_no_internet", "offline", "need_config",
@@ -48,11 +60,10 @@ DOT_COLORS = {
     "no_campus": "#94a3b8",
     "checking": "#3b82f6",
 }
-# 出现这些状态 → 状态突然恢复 online 时弹"已自动重登"通知
+# 出现这些状态 → 状态恢复 online 时弹"已自动重登"通知
 _NOTIFY_RELOGIN_FROM = {"offline", "auth_error", "login_fail", "authed_no_internet"}
 
 REPO_URL = "https://github.com/Xinzhe99/zju-autologin"
-LOG_FILE_MAX = 256 * 1024
 
 
 def _load_pixmap(name: str) -> QPixmap:
@@ -80,19 +91,248 @@ def make_tray_icon(state: str) -> QIcon:
     return QIcon(pixmap)
 
 
-def append_file_log(line: str) -> None:
-    """滚动追加到本地日志文件（用于远程排查问题）。"""
-    from .config import config_dir
+def _fmt_bytes(num: int) -> str:
+    value = float(num or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.2f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{value:.2f} TB"
 
-    try:
-        path = config_dir() / "app.log"
-        if path.exists() and path.stat().st_size > LOG_FILE_MAX:
-            content = path.read_text(encoding="utf-8", errors="replace")
-            path.write_text(content[-64 * 1024:], encoding="utf-8")
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except OSError:
-        pass
+
+class _FnThread(QThread):
+    """在后台线程执行 fn()，结果经信号回传到 UI 线程。"""
+
+    done = pyqtSignal(object)
+
+    def __init__(self, fn, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            result = self._fn()
+        except Exception as exc:  # noqa: BLE001
+            result = exc
+        self.done.emit(result)
+
+
+class UpdateDownloadThread(QThread):
+    """下载新版本安装包（frozen 版一键更新）。"""
+
+    progress = pyqtSignal(int)
+    finished_ok = pyqtSignal(str)  # 本地文件路径
+    finished_err = pyqtSignal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        import json as _json
+        import urllib.request
+
+        try:
+            req = urllib.request.Request(
+                updates.REPO_API,
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "ZJU-AutoLogin"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = _json.load(resp)
+            target = None
+            for asset in data.get("assets") or []:
+                name = str(asset.get("name", ""))
+                if sys.platform == "win32" and name.endswith("-windows-setup.exe"):
+                    target = asset
+                    break
+                if sys.platform == "darwin" and name.endswith("-macos.dmg"):
+                    target = asset
+                    break
+            if not target:
+                self.finished_err.emit("asset not found")
+                return
+            url = str(target.get("browser_download_url") or "")
+            name = str(target.get("name") or "update.bin")
+            total = int(target.get("size") or 0)
+            self.progress.emit(0)
+            req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
+            path = os.path.join(tempfile.gettempdir(), name)
+            got = 0
+            with urllib.request.urlopen(req, timeout=30) as resp, open(path, "wb") as fh:
+                while True:
+                    if self._stop:
+                        return
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        self.progress.emit(int(got * 100 / total))
+            self.finished_ok.emit(path)
+        except Exception as exc:  # noqa: BLE001
+            self.finished_err.emit(str(exc))
+
+
+class DevicesDialog(QDialog):
+    """在线设备管理：设备数超限时查看/踢掉其他设备。"""
+
+    def __init__(self, config: Config, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._config = config
+        self._kicked_ip = ""
+        self._load_thread: _FnThread | None = None
+        self.setWindowTitle(tr("devices.title"))
+        self.setModal(True)
+        self.resize(560, 380)
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+        hint = QLabel(tr("devices.hint"))
+        hint.setObjectName("statusDetail")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels([
+            tr("devices.col_ip"), tr("devices.col_user"), tr("devices.col_os"),
+            tr("devices.col_client"), tr("devices.col_since"),
+        ])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(0, 130)
+        self._table.setColumnWidth(1, 110)
+        self._table.setColumnWidth(2, 110)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        lay.addWidget(self._table, 1)
+
+        self._status = QLabel("")
+        self._status.setObjectName("statusDetail")
+        lay.addWidget(self._status)
+
+        btns = QHBoxLayout()
+        btn_refresh = QPushButton(tr("devices.refresh"))
+        btn_refresh.setObjectName("secondary")
+        btn_refresh.clicked.connect(self.reload)
+        self._btn_kick = QPushButton(tr("devices.kick"))
+        self._btn_kick.setObjectName("primary")
+        self._btn_kick.clicked.connect(self._kick)
+        btn_close = QPushButton(tr("btn.close"))
+        btn_close.setObjectName("secondary")
+        btn_close.clicked.connect(self.reject)
+        btns.addWidget(btn_refresh)
+        btns.addStretch(1)
+        btns.addWidget(self._btn_kick)
+        btns.addSpacing(8)
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+
+        self.reload()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        for thread in (self._load_thread, getattr(self, "_kick_thread", None)):
+            if thread is not None and thread.isRunning():
+                thread.wait(4000)
+        super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+
+    def reload(self) -> None:
+        self._status.setText("…")
+        self._btn_kick.setEnabled(False)
+        cfg = self._config
+
+        def work():
+            client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
+            return client.list_online_devices(cfg.username, cfg.get_password(), cfg.domain)
+
+        self._load_thread = _FnThread(work, self)
+        self._load_thread.done.connect(self._apply_devices)
+        self._load_thread.start()
+
+    def _apply_devices(self, devices) -> None:
+        if isinstance(devices, Exception) or not devices:
+            self._status.setText(tr("devices.load_fail"))
+            self._table.setRowCount(0)
+            self._btn_kick.setEnabled(bool(devices) and not isinstance(devices, Exception))
+            return
+        self._table.setRowCount(len(devices))
+        for row, item in enumerate(devices):
+            since = time.strftime("%m-%d %H:%M", time.localtime(item.get("add_time") or 0))
+            for col, text in enumerate((
+                item.get("ip", ""), item.get("user_name", ""), item.get("os_name", ""),
+                item.get("client_type", ""), since,
+            )):
+                self._table.setItem(row, col, QTableWidgetItem(text))
+        self._status.setText("")
+        self._btn_kick.setEnabled(True)
+
+    def _kick(self) -> None:
+        row = self._table.currentRow()
+        if row < 0:
+            return
+        ip = self._table.item(row, 0).text()
+        self._pending_ip = ip
+        self._btn_kick.setEnabled(False)
+        cfg = self._config
+
+        def work():
+            client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
+            return client.kick_device(cfg.username, ip)
+
+        self._kick_thread = _FnThread(work, self)
+        self._kick_thread.done.connect(self._kick_done)
+        self._kick_thread.start()
+
+    def _kick_done(self, result) -> None:
+        ok = bool(result and result[0])
+        if ok:
+            self._kicked_ip = self._pending_ip
+            self.accept()
+        else:
+            self._status.setText(tr("update.failed", msg=result[1] if result else ""))
+            self._btn_kick.setEnabled(True)
+
+
+class StatsDialog(QDialog):
+    """网络事件时间线与近 7 天掉线统计。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(tr("stats.title"))
+        self.setModal(True)
+        self.resize(520, 420)
+        lay = QVBoxLayout(self)
+        events = read_events(300)
+        week_ago = time.time() - 7 * 86400
+        drops = sum(1 for e in events if e.get("event") == "offline" and e.get("ts", 0) >= week_ago)
+        title = QLabel(tr("stats.drop_count", n=drops))
+        title.setObjectName("cardTitle")
+        lay.addWidget(title)
+
+        table = QTableWidget(0, 3)
+        table.setHorizontalHeaderLabels(["#", tr("field.last_check"), tr("status.offline")])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setColumnWidth(0, 40)
+        table.setColumnWidth(1, 150)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        for e in reversed(events):
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
+            table.setItem(row, 1, QTableWidgetItem(time.strftime(
+                "%m-%d %H:%M:%S", time.localtime(e.get("ts") or 0))))
+            table.setItem(row, 2, QTableWidgetItem(str(e.get("detail") or e.get("event") or "")))
+        if table.rowCount() == 0:
+            table.insertRow(0)
+            table.setItem(0, 0, QTableWidgetItem("-"))
+            table.setItem(0, 1, QTableWidgetItem(tr("stats.empty")))
+        lay.addWidget(table, 1)
 
 
 class MainWindow(QMainWindow):
@@ -104,15 +344,17 @@ class MainWindow(QMainWindow):
         self._warned_auth_error = False
         self._tray_state = ""
         self._last_status: dict = {"state": "checking", "detail": ""}
+        self._update_version = ""
         self._update_url = ""
+        self._downloader: UpdateDownloadThread | None = None
 
         self.setWindowTitle(tr("app.name"))
         icon_path = resource_path("zju.ico")
         self.setWindowIcon(QIcon(icon_path if os.path.isfile(icon_path)
                                  else resource_path("zju_seal_blue.png")))
-        self.resize(780, 764)
+        self.resize(800, 860)
         self.setMinimumSize(740, 700)
-        self.setStyleSheet(QSS)
+        self.setStyleSheet(theme.get_qss(config.theme))
 
         self._build_ui()
         self._build_tray()
@@ -133,7 +375,15 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+        content = QWidget()
+        scroll.setWidget(content)
+        root = QVBoxLayout(content)
         root.setContentsMargins(16, 16, 16, 12)
         root.setSpacing(12)
 
@@ -154,6 +404,13 @@ class MainWindow(QMainWindow):
         hlay.addWidget(self._version_label)
         root.addWidget(header)
 
+        # ---- 更新横幅（有新版本时显示）----
+        self._update_banner = QPushButton()
+        self._update_banner.setObjectName("primary")
+        self._update_banner.clicked.connect(self._do_update)
+        self._update_banner.hide()
+        root.addWidget(self._update_banner)
+
         # ---- 状态卡片 ----
         status_card = self._card()
         slay = QVBoxLayout(status_card)
@@ -169,6 +426,11 @@ class MainWindow(QMainWindow):
         status_row.addSpacing(10)
         status_row.addWidget(self._status_text)
         status_row.addStretch(1)
+        self._btn_devices = QPushButton()
+        self._btn_devices.setObjectName("secondary")
+        self._btn_devices.clicked.connect(self._show_devices)
+        self._btn_devices.hide()
+        status_row.addWidget(self._btn_devices)
         self._btn_check = QPushButton()
         self._btn_check.setObjectName("secondary")
         self._btn_check.clicked.connect(self._monitor.check_once)
@@ -182,6 +444,7 @@ class MainWindow(QMainWindow):
 
         self._status_detail = QLabel()
         self._status_detail.setObjectName("statusDetail")
+        self._status_detail.setWordWrap(True)
         slay.addWidget(self._status_detail)
 
         grid_host = QFrame()
@@ -191,14 +454,15 @@ class MainWindow(QMainWindow):
         grid_lay.setVerticalSpacing(4)
         self._fields: dict[str, QLabel] = {}
         self._field_labels: dict[str, QLabel] = {}
-        for col, key in enumerate(("account", "ip", "login_time", "last_check")):
+        keys = ("account", "ip", "login_time", "last_check", "billing", "traffic")
+        for idx, key in enumerate(keys):
             klabel = QLabel()
             klabel.setObjectName("fieldKey")
-            vlabel = QLabel("—")
+            vlabel = QLabel(tr("statuscard.never"))
             vlabel.setObjectName("fieldValue")
             vlabel.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            grid_lay.addWidget(klabel, 0, col)
-            grid_lay.addWidget(vlabel, 1, col)
+            grid_lay.addWidget(klabel, (idx // 4) * 2, idx % 4)
+            grid_lay.addWidget(vlabel, (idx // 4) * 2 + 1, idx % 4)
             self._fields[key] = vlabel
             self._field_labels[key] = klabel
         slay.addWidget(grid_host)
@@ -215,32 +479,26 @@ class MainWindow(QMainWindow):
 
         form = QGridLayout()
         form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(12)
+        form.setVerticalSpacing(10)
+
+        self._form_labels: dict[str, QLabel] = {}
 
         def add_row(row: int, key: str, widget: QWidget) -> None:
             label = QLabel()
             label.setObjectName("fieldKey")
+            label.setFixedWidth(110)
             form.addWidget(label, row, 0)
             form.addWidget(widget, row, 1)
             self._form_labels[key] = label
 
-        self._form_labels: dict[str, QLabel] = {}
-
         self._edit_user = QLineEdit()
-        self._edit_user.setPlaceholderText(tr("ph.username"))
-        add_row(0, "username", self._edit_user)
-
         self._edit_domain = QLineEdit()
-        self._edit_domain.setPlaceholderText(tr("ph.domain"))
-        add_row(1, "domain", self._edit_domain)
-
         pwd_host = QFrame()
         pwd_lay = QHBoxLayout(pwd_host)
         pwd_lay.setContentsMargins(0, 0, 0, 0)
         pwd_lay.setSpacing(2)
         self._edit_pwd = QLineEdit()
         self._edit_pwd.setEchoMode(QLineEdit.EchoMode.Password)
-        self._edit_pwd.setPlaceholderText(tr("ph.password"))
         self._eye = QToolButton()
         self._eye.setObjectName("eye")
         self._eye.setCheckable(True)
@@ -252,33 +510,120 @@ class MainWindow(QMainWindow):
                 QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
         pwd_lay.addWidget(self._edit_pwd, 1)
         pwd_lay.addWidget(self._eye)
-        add_row(2, "password", pwd_host)
 
         self._spin_interval = QSpinBox()
         self._spin_interval.setRange(10, 600)
-        self._spin_interval.setToolTip(tr("tip.interval"))
-        self._spin_interval.setSuffix(f" {tr('unit.seconds', n='')}".rstrip())
-        add_row(3, "interval", self._spin_interval)
-
         self._combo_lang = QComboBox()
         for lang in ("auto", "zh-CN", "en-US"):
             self._combo_lang.addItem(self._lang_label(lang), lang)
-        add_row(4, "language", self._combo_lang)
+        self._combo_theme = QComboBox()
+        for mode in ("auto", "light", "dark"):
+            self._combo_theme.addItem(tr(f"theme.{mode}"), mode)
 
-        opts_host = QFrame()
-        opts_lay = QHBoxLayout(opts_host)
-        opts_lay.setContentsMargins(0, 0, 0, 0)
-        opts_lay.setSpacing(18)
-        self._chk_auto = QCheckBox()
-        self._chk_tray = QCheckBox()
-        self._chk_boot = QCheckBox()
-        self._chk_updates = QCheckBox()
-        for chk in (self._chk_auto, self._chk_tray, self._chk_boot, self._chk_updates):
-            opts_lay.addWidget(chk)
-        opts_lay.addStretch(1)
-        form.addWidget(opts_host, 5, 0, 1, 2)
+        add_row(0, "username", self._edit_user)
+        add_row(1, "domain", self._edit_domain)
+        add_row(2, "password", pwd_host)
+        add_row(3, "interval", self._spin_interval)
+        add_row(4, "language", self._combo_lang)
+        add_row(5, "theme", self._combo_theme)
         glay.addLayout(form)
 
+        # 选项行
+        self._chk_auto = QCheckBox()
+        self._chk_tray = QCheckBox()
+        self._chk_updates = QCheckBox()
+        self._chk_boot = QCheckBox()
+        self._chk_service = QCheckBox()
+        opts = QHBoxLayout()
+        opts.setSpacing(16)
+        for chk in (self._chk_auto, self._chk_tray, self._chk_updates, self._chk_boot):
+            opts.addWidget(chk)
+        opts.addStretch(1)
+        glay.addLayout(opts)
+        glay.addWidget(self._chk_service)
+        self._service_hint = QLabel()
+        self._service_hint.setObjectName("statusDetail")
+        self._service_hint.setWordWrap(True)
+        glay.addWidget(self._service_hint)
+
+        # 通知区
+        self._notify_title = QLabel()
+        self._notify_title.setObjectName("cardTitle")
+        glay.addWidget(self._notify_title)
+        notify_grid = QGridLayout()
+        notify_grid.setHorizontalSpacing(10)
+        notify_grid.setVerticalSpacing(8)
+        self._combo_provider = QComboBox()
+        for pid in ("none", "bark", "serverchan", "wecom", "dingtalk", "smtp"):
+            self._combo_provider.addItem(self._provider_label(pid), pid)
+        self._edit_key = QLineEdit()
+        self._btn_notify_test = QPushButton()
+        self._btn_notify_test.setObjectName("secondary")
+        self._btn_notify_test.clicked.connect(self._monitor.notify_test)
+        self._spin_threshold = QSpinBox()
+        self._spin_threshold.setRange(1, 10)
+        self._chk_recovery = QCheckBox()
+        self._notify_labels: list[QLabel] = []
+        for col, (label_key, widget) in enumerate((
+            ("notify.provider", self._combo_provider),
+            ("notify.key", self._edit_key),
+        )):
+            label = QLabel()
+            label.setObjectName("fieldKey")
+            notify_grid.addWidget(label, 0, col * 2)
+            notify_grid.addWidget(widget, 0, col * 2 + 1)
+            self._notify_labels.append(label)
+        actions = QHBoxLayout()
+        self._lbl_threshold = QLabel()
+        self._lbl_threshold.setObjectName("fieldKey")
+        self._lbl_recovery = QLabel()
+        self._lbl_recovery.setObjectName("fieldKey")
+        actions.addWidget(self._lbl_threshold)
+        actions.addWidget(self._spin_threshold)
+        actions.addSpacing(14)
+        actions.addWidget(self._chk_recovery)
+        actions.addStretch(1)
+        actions.addWidget(self._btn_notify_test)
+        notify_grid.addLayout(actions, 1, 0, 1, 4)
+        glay.addLayout(notify_grid)
+
+        # 高级选项
+        self._btn_advanced = QToolButton()
+        self._btn_advanced.setObjectName("eye")
+        self._btn_advanced.setCheckable(True)
+        self._btn_advanced.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._btn_advanced.setFixedHeight(24)
+        glay.addWidget(self._btn_advanced)
+        self._advanced_host = QFrame()
+        adv_grid = QGridLayout(self._advanced_host)
+        adv_grid.setContentsMargins(0, 0, 0, 0)
+        adv_grid.setHorizontalSpacing(10)
+        adv_grid.setVerticalSpacing(8)
+        self._edit_base = QLineEdit()
+        self._edit_acid = QLineEdit()
+        self._chk_proactive = QCheckBox()
+        self._time_proactive = QTimeEdit(QTime(3, 0))
+        self._time_proactive.setDisplayFormat("HH:mm")
+        self._adv_labels: list[QLabel] = []
+        for row, (label_key, widget) in enumerate((
+            ("field.base_url", self._edit_base),
+            ("field.ac_id", self._edit_acid),
+        )):
+            label = QLabel()
+            label.setObjectName("fieldKey")
+            adv_grid.addWidget(label, row, 0)
+            adv_grid.addWidget(widget, row, 1)
+            self._adv_labels.append(label)
+        prow = QHBoxLayout()
+        prow.addWidget(self._chk_proactive)
+        prow.addWidget(self._time_proactive)
+        prow.addStretch(1)
+        adv_grid.addLayout(prow, 2, 0, 1, 2)
+        self._advanced_host.setVisible(False)
+        self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
+        glay.addWidget(self._advanced_host)
+
+        # 保存行
         save_row = QHBoxLayout()
         self._save_hint = QLabel("")
         self._save_hint.setObjectName("statusDetail")
@@ -297,20 +642,33 @@ class MainWindow(QMainWindow):
         llay = QVBoxLayout(log_card)
         llay.setContentsMargins(20, 14, 20, 14)
         llay.setSpacing(6)
+        log_head = QHBoxLayout()
         self._log_title = QLabel()
         self._log_title.setObjectName("cardTitle")
-        llay.addWidget(self._log_title)
+        log_head.addWidget(self._log_title)
+        log_head.addStretch(1)
+        self._btn_diag = QPushButton()
+        self._btn_diag.setObjectName("secondary")
+        self._btn_diag.clicked.connect(self._copy_diagnostics)
+        self._btn_stats = QPushButton()
+        self._btn_stats.setObjectName("secondary")
+        self._btn_stats.clicked.connect(lambda: StatsDialog(self).exec())
+        log_head.addWidget(self._btn_diag)
+        log_head.addWidget(self._btn_stats)
+        llay.addLayout(log_head)
         self._log = QPlainTextEdit()
         self._log.setObjectName("log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(400)
-        self._log.setFixedHeight(132)
+        self._log.setFixedHeight(120)
         llay.addWidget(self._log)
         root.addWidget(log_card, 1)
 
         self._tip = QLabel()
         self._tip.setObjectName("statusDetail")
         root.addWidget(self._tip)
+
+    # ------------------------------------------------------ 标签/文案辅助
 
     @staticmethod
     def _lang_label(lang: str) -> str:
@@ -319,6 +677,19 @@ class MainWindow(QMainWindow):
                     if i18n.detect_system_lang() == "zh-CN" else "Follow system / 跟随系统")
         return i18n.LANG_LABELS.get(lang, lang)
 
+    @staticmethod
+    def _provider_label(pid: str) -> str:
+        names = {
+            "none": ("不启用", "Disabled"),
+            "bark": ("Bark (iOS)", "Bark (iOS)"),
+            "serverchan": ("Server酱", "ServerChan"),
+            "wecom": ("企业微信机器人", "WeCom bot"),
+            "dingtalk": ("钉钉机器人", "DingTalk bot"),
+            "smtp": ("邮件 (SMTP)", "Email (SMTP)"),
+        }
+        zh, en = names.get(pid, (pid, pid))
+        return zh if i18n.current_lang().startswith("zh") else en
+
     def retranslate_ui(self) -> None:
         """运行时切换语言后刷新全部文本。"""
         self.setWindowTitle(tr("app.name"))
@@ -326,31 +697,60 @@ class MainWindow(QMainWindow):
         self._btn_check.setText(tr("btn.check_now"))
         self._btn_login.setText(tr("btn.login_now"))
         self._btn_save.setText(tr("btn.save"))
+        self._btn_devices.setText(tr("btn.devices"))
         self._settings_title.setText(tr("card.settings"))
         self._log_title.setText(tr("card.log"))
         self._tip.setText(tr("tip.footer"))
         self._save_hint.setText("")
+        self._btn_diag.setText(tr("btn.copy_diag"))
+        self._btn_stats.setText(tr("btn.stats"))
 
         for key, label in self._field_labels.items():
-            label.setText(tr(f"field.{key}"))
+            if key == "billing":
+                label.setText(tr("field.billing"))
+            elif key == "traffic":
+                label.setText(tr("field.traffic"))
+            else:
+                label.setText(tr(f"field.{key}"))
         self._form_labels["username"].setText(tr("field.username"))
         self._form_labels["domain"].setText(tr("field.domain"))
         self._form_labels["password"].setText(tr("field.password"))
         self._form_labels["interval"].setText(tr("field.interval"))
         self._form_labels["language"].setText(tr("field.language"))
+        self._form_labels["theme"].setText(tr("settings.theme"))
 
         self._edit_user.setPlaceholderText(tr("ph.username"))
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
         self._edit_pwd.setPlaceholderText(tr("ph.password"))
+        self._edit_key.setPlaceholderText(tr("notify.key"))
+        self._edit_base.setPlaceholderText("https://net.zju.edu.cn")
+        self._edit_acid.setPlaceholderText("80 / auto")
         self._spin_interval.setSuffix(f" {tr('unit.seconds', n='')}".rstrip())
 
         self._chk_auto.setText(tr("chk.auto_login"))
         self._chk_tray.setText(tr("chk.minimize_tray"))
-        self._chk_boot.setText(tr("chk.autostart"))
         self._chk_updates.setText(tr("chk.check_updates"))
-
+        self._chk_boot.setText(tr("chk.autostart"))
+        self._chk_service.setText(tr("service.chk"))
+        self._service_hint.setText(tr("service.hint"))
+        self._notify_title.setText(tr("settings.notify"))
+        self._chk_recovery.setText(tr("notify.recovery"))
+        self._lbl_threshold.setText(tr("notify.threshold"))
+        self._btn_notify_test.setText(tr("btn.notify_test"))
+        self._btn_advanced.setText(tr("settings.advanced"))
+        self._chk_proactive.setText(tr("chk.proactive"))
         for i in range(self._combo_lang.count()):
             self._combo_lang.setItemText(i, self._lang_label(self._combo_lang.itemData(i)))
+        for i in range(self._combo_theme.count()):
+            mode = self._combo_theme.itemData(i)
+            self._combo_theme.setItemText(i, tr(f"theme.{mode}"))
+        for i in range(self._combo_provider.count()):
+            pid = self._combo_provider.itemData(i)
+            self._combo_provider.setItemText(i, self._provider_label(pid))
+        for label, key in zip(self._notify_labels, ("notify.provider", "notify.key")):
+            label.setText(tr(key))
+        for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id")):
+            label.setText(tr(key))
 
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
                          (self._act_login, "tray.login"), (self._act_about, "tray.about"),
@@ -358,12 +758,14 @@ class MainWindow(QMainWindow):
             act.setText(tr(key))
         self._tray_boot.setText(tr("tray.autostart"))
 
-        # 恢复最近一次状态文本
+        if self._update_banner.isVisible():
+            self._update_banner.setText(tr("btn.update_now", version=self._update_version))
+
         self._set_status_ui(self._last_status.get("state", "checking"),
                             self._last_status.get("detail", ""))
         self._refresh_tray_tooltip()
 
-    # ---------------------------------------------------------- 语言/托盘
+    # ---------------------------------------------------------- 托盘
 
     def _build_tray(self) -> None:
         self._tray = QSystemTrayIcon(make_tray_icon("checking"), self)
@@ -417,9 +819,24 @@ class MainWindow(QMainWindow):
         self._chk_tray.setChecked(bool(cfg.minimize_to_tray))
         self._chk_updates.setChecked(bool(cfg.check_updates))
         lang = cfg.language if cfg.language in ("auto", "zh-CN", "en-US") else "auto"
-        idx = self._combo_lang.findData(lang)
-        self._combo_lang.setCurrentIndex(max(0, idx))
+        self._combo_lang.setCurrentIndex(max(0, self._combo_lang.findData(lang)))
+        theme_mode = cfg.theme if cfg.theme in ("auto", "light", "dark") else "auto"
+        self._combo_theme.setCurrentIndex(max(0, self._combo_theme.findData(theme_mode)))
         self._chk_boot.setChecked(autostart.is_enabled())
+        self._chk_service.setChecked(service.is_installed())
+        self._combo_provider.setCurrentIndex(
+            max(0, self._combo_provider.findData(cfg.notify_provider or "none")))
+        self._edit_key.setText(cfg.notify_key or "")
+        self._spin_threshold.setValue(cfg.notify_threshold)
+        self._chk_recovery.setChecked(bool(cfg.notify_recovery))
+        self._edit_base.setText(cfg.base_url or "")
+        self._edit_acid.setText(str(cfg.ac_id or "80"))
+        self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
+        try:
+            hh, mm = str(cfg.proactive_time or "03:00").split(":")
+            self._time_proactive.setTime(QTime(int(hh) % 24, int(mm) % 60))
+        except (ValueError, AttributeError):
+            pass
         self._tray_boot.setChecked(autostart.is_enabled())
         if cfg.get_password():
             self._edit_pwd.setPlaceholderText(
@@ -445,6 +862,15 @@ class MainWindow(QMainWindow):
         cfg.minimize_to_tray = self._chk_tray.isChecked()
         cfg.check_updates = self._chk_updates.isChecked()
         cfg.language = self._combo_lang.currentData() or "auto"
+        cfg.theme = self._combo_theme.currentData() or "auto"
+        cfg.notify_provider = self._combo_provider.currentData() or "none"
+        cfg.notify_key = self._edit_key.text().strip()
+        cfg.notify_threshold = self._spin_threshold.value()
+        cfg.notify_recovery = self._chk_recovery.isChecked()
+        cfg.base_url = self._edit_base.text().strip() or "https://net.zju.edu.cn"
+        cfg.ac_id = self._edit_acid.text().strip() or "80"
+        cfg.proactive_relogin = self._chk_proactive.isChecked()
+        cfg.proactive_time = self._time_proactive.time().toString("HH:mm")
 
         pwd = self._edit_pwd.text()
         if pwd:
@@ -462,10 +888,23 @@ class MainWindow(QMainWindow):
         cfg.autostart = boot_ok
         cfg.save()
 
+        # 系统级保活
+        if self._chk_service.isChecked() != service.is_installed():
+            if self._chk_service.isChecked():
+                ok, _ = service.install(cfg)
+                self._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
+                self._chk_service.setChecked(ok)
+            else:
+                ok, _ = service.uninstall()
+                self._append_log(tr("service.off_ok") if ok else tr("service.on_fail"))
+                self._chk_service.setChecked(not ok)
+
         # 语言实时切换
         if i18n.current_lang() != cfg.language:
             i18n.set_lang(cfg.language)
         self.retranslate_ui()
+        # 主题实时切换
+        self.setStyleSheet(theme.get_qss(cfg.theme))
 
         self._monitor.config_updated()
         self._save_hint.setText(tr("hint.save_ok"))
@@ -482,23 +921,73 @@ class MainWindow(QMainWindow):
         self._config.save()
         self._append_log(tr("log.autostart_on") if result else tr("log.autostart_off"))
 
-    def show_normal(self) -> None:
-        self.show()
-        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
-        self.raise_()
-        self.activateWindow()
+    def _copy_diagnostics(self) -> None:
+        cfg = self._config
+        lines = [
+            f"ZJU-AutoLogin v{__version__}",
+            f"Python {sys.version.split()[0]} @ {sys.platform}",
+            f"portal: {cfg.base_url} ac_id={cfg.ac_id}",
+            f"account: {cfg.username}{cfg.domain}",
+            f"state: {self._last_status.get('state')} ip={self._last_status.get('ip')}",
+            f"notify: {cfg.notify_provider}",
+            "", "---- last logs ----",
+        ]
+        lines += self._log.toPlainText().splitlines()[-50:]
+        QApplication.clipboard().setText("\n".join(lines))
+        self._save_hint.setText(tr("diag.copied"))
+        QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
 
-    def quit_app(self) -> None:
-        self._force_quit = True
-        self._monitor.stop()
+    def _show_devices(self) -> None:
+        dlg = DevicesDialog(self._config, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg._kicked_ip:
+            self._append_log(tr("devices.kicked", ip=dlg._kicked_ip))
+            self._monitor.login_now()
+
+    # ---------------------------------------------------------------- 更新
+
+    def _on_update_available(self, version: str, url: str) -> None:
+        self._update_version = version
+        self._update_url = url
+        self._update_banner.setText(tr("btn.update_now", version=version))
+        self._update_banner.show()
+        self._tray.showMessage(
+            tr("tray.msg_update_title", version=version),
+            tr("tray.msg_update_body", current=__version__),
+            QSystemTrayIcon.MessageIcon.Information, 8000)
+
+    def _do_update(self) -> None:
+        if self._downloader is not None:
+            return
+        if not getattr(sys, "frozen", False):
+            QDesktopServices.openUrl(QUrl(self._update_url or updates.RELEASE_PAGE))
+            return
+        self._update_banner.setText(tr("update.downloading", percent=0))
+        self._downloader = UpdateDownloadThread(self)
+        self._downloader.progress.connect(
+            lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
+        self._downloader.finished_ok.connect(self._update_downloaded)
+        self._downloader.finished_err.connect(self._update_failed)
+        self._downloader.start()
+
+    def _update_failed(self, error: str) -> None:
+        self._downloader = None
+        self._update_banner.setText(tr("update.failed", msg=error or "?"))
+
+    def _update_downloaded(self, path: str) -> None:
+        self._downloader = None
+        self._append_log(tr("update.downloaded"))
         self._tray.hide()
+        if sys.platform == "win32":
+            os.startfile(path)  # noqa: S606 - 启动官方安装包
+        else:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         QApplication.quit()
 
     # ---------------------------------------------------------------- 状态
 
     def _set_status_ui(self, state: str, detail: str) -> None:
         self._dot.setStyleSheet(f"background: {DOT_COLORS.get(state, '#94a3b8')}; border-radius: 7px;")
-        self._status_text.setText(tr(f"status.{state}", ) if state in STATUS_KEYS else state)
+        self._status_text.setText(tr(f"status.{state}") if state in STATUS_KEYS else state)
         self._status_detail.setText(detail)
 
     def _on_status(self, info: dict) -> None:
@@ -510,6 +999,11 @@ class MainWindow(QMainWindow):
         self._fields["ip"].setText(info.get("ip") or "—")
         self._fields["login_time"].setText(info.get("login_time") or "—")
         self._fields["last_check"].setText(time.strftime("%H:%M:%S"))
+        billing = info.get("billing") or ""
+        self._fields["billing"].setText(billing or "—")
+        self._fields["traffic"].setText(
+            _fmt_bytes(info.get("all_bytes") or 0) if info.get("all_bytes") else "—")
+        self._btn_devices.setVisible(state == "auth_error" and info.get("ecode") == "E2620")
 
         icon_state = state if state in DOT_COLORS else "checking"
         if icon_state != self._tray_state:
@@ -531,17 +1025,9 @@ class MainWindow(QMainWindow):
                     tr("tray.msg_relogin_body", ip=info.get("ip") or ""),
                     QSystemTrayIcon.MessageIcon.Information, 5000)
 
-    def _on_update_available(self, version: str, url: str) -> None:
-        self._update_url = url
-        self._tray.showMessage(
-            tr("tray.msg_update_title", version=version),
-            tr("tray.msg_update_body", current=__version__),
-            QSystemTrayIcon.MessageIcon.Information, 8000)
-
     def _on_message_clicked(self) -> None:
         if self._update_url:
-            QDesktopServices.openUrl(QUrl(self._update_url))
-            self._update_url = ""
+            self._do_update()
 
     def _append_log(self, line: str) -> None:
         self._log.appendPlainText(line)
@@ -550,6 +1036,18 @@ class MainWindow(QMainWindow):
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_normal()
+
+    def show_normal(self) -> None:
+        self.show()
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.raise_()
+        self.activateWindow()
+
+    def quit_app(self) -> None:
+        self._force_quit = True
+        self._monitor.stop()
+        self._tray.hide()
+        QApplication.quit()
 
     # ---------------------------------------------------------------- 关闭
 
