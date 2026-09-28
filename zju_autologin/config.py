@@ -49,6 +49,10 @@ _DEFAULTS = {
     "last_traffic_alert": "",  # 已提醒的 "YYYY-MM"
     # 窗口位置记忆
     "win_geometry": "",
+    # 心跳死信开关（healthchecks.io 等；本机在线时定期 ping，机器失联由外部服务报警）
+    "heartbeat_url": "",
+    # 笔记本电池供电时自动放慢检测节奏
+    "battery_mode": True,
 }
 
 
@@ -227,7 +231,12 @@ class Config:
 
     def __setattr__(self, name, value) -> None:
         if name in _DEFAULTS:
-            self.data[name] = value
+            # 若存在 property setter（username/domain 等），先走规范化逻辑
+            prop = type(self).__dict__.get(name)
+            if isinstance(prop, property) and prop.fset is not None:
+                prop.fset(self, value)
+            else:
+                self.data[name] = value
         else:
             super().__setattr__(name, value)
 

@@ -190,5 +190,22 @@
   "log.traffic_alert": "本月流量 {used} 已达提醒阈值 {limit}",
   "notify.traffic_title": "校园网流量提醒",
   "notify.traffic_body": "本月已用 {used}，达到你设定的上限 {limit}。",
-  "btn.open_log": "打开日志"
+  "btn.open_log": "打开日志",
+  "hb.url": "心跳 URL",
+  "hb.hint": "填入 healthchecks.io 等死信开关的 ping URL；本机在线时每 5 分钟上报一次，机器彻底失联时由外部服务通知你",
+  "devices.confirm_title": "确认踢号",
+  "devices.confirm_kick": "确定把 {ip} 踢下线？",
+  "devices.this_machine": "（本机）",
+  "devices.cant_kick_self": "不能踢掉本机当前会话",
+  "service.heartbeat_ok": "系统级保活运行中（{mins} 分钟前活跃）",
+  "service.heartbeat_stale": "系统级保活疑似停止（{mins} 分钟无心跳）",
+  "service.heartbeat_off": "系统级保活未开启",
+  "log.battery_mode": "使用电池：检测间隔自动放慢到 {n} 秒",
+  "log.plugged_mode": "已接通电源：检测间隔恢复 {n} 秒",
+  "log.heartbeat_fail": "心跳上报失败：{msg}",
+  "msg.cfg_exported": "配置已导出到 {path}（不含密码）",
+  "msg.cfg_imported": "配置已导入，请补填密码后保存",
+  "msg.cfg_import_fail": "导入失败：{msg}",
+  "btn.export_cfg": "导出配置",
+  "btn.import_cfg": "导入配置"
 }

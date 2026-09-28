@@ -190,5 +190,22 @@
   "log.traffic_alert": "Monthly traffic {used} reached your limit of {limit}",
   "notify.traffic_title": "Campus network traffic alert",
   "notify.traffic_body": "Used {used} this month, reaching your limit of {limit}.",
-  "btn.open_log": "Open logs"
+  "btn.open_log": "Open logs",
+  "hb.url": "Heartbeat URL",
+  "hb.hint": "Paste a healthchecks.io ping URL; pings every 5 minutes while online, and the external service alerts you if this machine goes silent",
+  "devices.confirm_title": "Confirm kick",
+  "devices.confirm_kick": "Kick {ip} offline?",
+  "devices.this_machine": "(this device)",
+  "devices.cant_kick_self": "You cannot kick the local session",
+  "service.heartbeat_ok": "Service running (active {mins} min ago)",
+  "service.heartbeat_stale": "Service seems stopped (no heartbeat for {mins} min)",
+  "service.heartbeat_off": "System-level keep-alive not enabled",
+  "log.battery_mode": "On battery: check interval slowed to {n} s",
+  "log.plugged_mode": "Plugged in: interval restored to {n} s",
+  "log.heartbeat_fail": "Heartbeat ping failed: {msg}",
+  "msg.cfg_exported": "Config exported to {path} (password excluded)",
+  "msg.cfg_imported": "Config imported — please re-enter your password and save",
+  "msg.cfg_import_fail": "Import failed: {msg}",
+  "btn.export_cfg": "Export",
+  "btn.import_cfg": "Import"
 }

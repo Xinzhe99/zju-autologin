@@ -20,6 +20,7 @@ from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, 
 
 from . import updates
 from .config import Config, append_event
+from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
 from .srun import SrunClient, SrunError
@@ -39,6 +40,7 @@ _PROBE_URLS = (
     ("http://connect.rom.miui.com/generate_204", None),
 )
 _UPDATE_INTERVAL = 24 * 3600
+_HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
 
 
 def probe_internet(timeout: float = 4.0) -> bool:
@@ -77,6 +79,8 @@ class MonitorWorker(QObject):
         self._prev_state = ""
         self._last_login_attempt = 0.0
         self._last_proactive_date = ""
+        self._last_heartbeat = 0.0
+        self._battery_mode_on = False
         self._running = True
 
     # ------------------------------------------------------------- 线程入口
@@ -141,6 +145,36 @@ class MonitorWorker(QObject):
     def clear_auth_error(self) -> None:
         self._auth_error = ""
 
+    def _ping_heartbeat(self) -> None:
+        """死信开关：在线时定期 ping 外部 URL，机器失联由外部服务报警。"""
+        url = (self._config.heartbeat_url or "").strip()
+        if not url:
+            return
+        now = time.time()
+        if now - self._last_heartbeat < _HEARTBEAT_INTERVAL:
+            return
+        self._last_heartbeat = now
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
+            urllib.request.urlopen(req, timeout=6).close()
+        except Exception as exc:  # noqa: BLE001 - 心跳失败仅记录
+            self.log(tr("log.heartbeat_fail", msg=exc))
+
+    def _adjust_interval_for_power(self) -> None:
+        """笔记本电池供电时把检测间隔放慢一倍，插电恢复。"""
+        if not self._config.battery_mode or self._timer is None:
+            return
+        base = self._config.interval
+        want = base * 2 if on_battery() else base
+        if want != self._timer.interval() // 1000:
+            self._timer.setInterval(want * 1000)
+        if want != base and not self._battery_mode_on:
+            self.log(tr("log.battery_mode", n=want))
+            self._battery_mode_on = True
+        elif want == base and self._battery_mode_on:
+            self.log(tr("log.plugged_mode", n=base))
+            self._battery_mode_on = False
+
     @pyqtSlot()
     def check_updates(self) -> None:
         if not self._config.check_updates:
@@ -194,6 +228,7 @@ class MonitorWorker(QObject):
             return
         self._busy = True
         try:
+            self._adjust_interval_for_power()
             client = self._client()
             try:
                 status = client.get_status()
@@ -224,6 +259,7 @@ class MonitorWorker(QObject):
             if probe_internet():
                 self._fail_count = 0
                 self._auth_error = ""
+                self._ping_heartbeat()
                 if self._notify_sent and self._config.notify_recovery:
                     self._maybe_push_recovery(status.get("ip") or "")
                 self._reset_notify()

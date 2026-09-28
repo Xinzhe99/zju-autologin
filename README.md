@@ -6,6 +6,8 @@
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](releases)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
+**[简体中文](README.md) | [English](README.en.md)**
+
 一个挂在 Windows 桌面托盘的后台小程序：**自动检测浙江大学校园网认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因为认证过期而失联。
 
 | 主界面 | 首次引导 |
@@ -57,6 +59,11 @@
 - ✅ **一键复制诊断** / **深色模式**（跟随系统）/ **记忆窗口位置**
 - ✅ **流量超额提醒**：设定每月上限（GB），超过时推送通知（每月最多提醒一次）
 - ✅ **托盘即时信息**：悬停托盘图标即可查看状态、IP 与本月流量；日志文件夹一键打开
+- ✅ **心跳死信开关**：填入 healthchecks.io 等 ping URL，本机在线时每 5 分钟上报；机器彻底失联（断电/断网）时由**外部服务**通知你——感知闭环的最后一环
+- ✅ **设备管理安全强化**：本机设备标记"（本机）"且禁止踢除，踢号前二次确认
+- ✅ **服务心跳可视化**：主界面显示系统级保活服务的实时活跃状态
+- ✅ **配置导出/导入**：换机迁移一键完成（不含密码）
+- ✅ **笔记本智能降频**：电池供电时检测间隔自动放慢一倍，插电恢复
 - ✅ **通用 srun 模式**：门户地址与 ac_id 可在高级选项中修改（ac_id 支持 auto 自动探测），其他深澜高校亦可尝试使用
 
 ## 校园网认证机制解析
@@ -177,6 +184,10 @@ zju-autologin/
 │   ├── ui.py                  # PyQt6 主窗口 + 托盘
 │   └── theme.py               # 浙大蓝 QSS 主题
 ├── .github/workflows/release.yml  # 打 tag 自动构建三平台安装包/便携包并发布 Release
+├── .github/workflows/test.yml     # push/PR 自动跑 pytest
+├── tests/                         # 协议加密基准向量（门户 JS 生成）与单元测试
+├── README.en.md                   # English readme
+├── CONTRIBUTING.md                # 贡献指南（含新语言接入步骤）
 ├── installer.iss              # Inno Setup 安装包脚本（Windows）
 ├── resources/                 # 校徽 logo、图标
 ├── tools/                     # 开发工具（资源生成、JS 交叉验证、UI 截图）

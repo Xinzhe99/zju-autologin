@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -178,11 +179,13 @@ class UpdateDownloadThread(QThread):
 
 
 class DevicesDialog(QDialog):
-    """在线设备管理：设备数超限时查看/踢掉其他设备。"""
+    """在线设备管理：设备数超限时查看/踢掉其他设备（本机受保护，踢前确认）。"""
 
-    def __init__(self, config: Config, parent: QWidget | None = None) -> None:
+    def __init__(self, config: Config, current_ip: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._config = config
+        self._current_ip = current_ip
+        self._devices: list[dict] = []
         self._kicked_ip = ""
         self._load_thread: _FnThread | None = None
         self.setWindowTitle(tr("devices.title"))
@@ -260,11 +263,15 @@ class DevicesDialog(QDialog):
             self._table.setRowCount(0)
             self._btn_kick.setEnabled(bool(devices) and not isinstance(devices, Exception))
             return
-        self._table.setRowCount(len(devices))
-        for row, item in enumerate(devices):
+        self._devices = list(devices)
+        self._table.setRowCount(len(self._devices))
+        for row, item in enumerate(self._devices):
+            is_local = bool(self._current_ip) and item.get("ip") == self._current_ip
             since = time.strftime("%m-%d %H:%M", time.localtime(item.get("add_time") or 0))
+            ip_text = (item.get("ip", "") + (" " + tr("devices.this_machine")
+                                             if is_local else ""))
             for col, text in enumerate((
-                item.get("ip", ""), item.get("user_name", ""), item.get("os_name", ""),
+                ip_text, item.get("user_name", ""), item.get("os_name", ""),
                 item.get("client_type", ""), since,
             )):
                 self._table.setItem(row, col, QTableWidgetItem(text))
@@ -273,9 +280,18 @@ class DevicesDialog(QDialog):
 
     def _kick(self) -> None:
         row = self._table.currentRow()
-        if row < 0:
+        if row < 0 or row >= len(self._devices):
             return
-        ip = self._table.item(row, 0).text()
+        device = self._devices[row]
+        ip = device.get("ip", "")
+        if self._current_ip and ip == self._current_ip:
+            self._status.setText(tr("devices.cant_kick_self"))
+            return
+        answer = QMessageBox.question(
+            self, tr("devices.confirm_title"), tr("devices.confirm_kick", ip=ip),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
         self._pending_ip = ip
         self._btn_kick.setEnabled(False)
         cfg = self._config
@@ -556,6 +572,13 @@ class MainWindow(QMainWindow):
         self._service_hint.setObjectName("statusDetail")
         self._service_hint.setWordWrap(True)
         glay.addWidget(self._service_hint)
+        self._service_heartbeat = QLabel()
+        self._service_heartbeat.setObjectName("statusDetail")
+        glay.addWidget(self._service_heartbeat)
+        self._hb_timer = QTimer(self)
+        self._hb_timer.setInterval(60_000)
+        self._hb_timer.timeout.connect(self._refresh_service_heartbeat)
+        self._hb_timer.start()
 
         # 通知区
         self._notify_title = QLabel()
@@ -619,6 +642,8 @@ class MainWindow(QMainWindow):
         adv_grid.setVerticalSpacing(8)
         self._edit_base = QLineEdit()
         self._edit_acid = QLineEdit()
+        self._edit_heartbeat = QLineEdit()
+        self._edit_heartbeat.setToolTip(tr("hb.hint"))
         self._chk_proactive = QCheckBox()
         self._time_proactive = QTimeEdit(QTime(3, 0))
         self._time_proactive.setDisplayFormat("HH:mm")
@@ -626,6 +651,7 @@ class MainWindow(QMainWindow):
         for row, (label_key, widget) in enumerate((
             ("field.base_url", self._edit_base),
             ("field.ac_id", self._edit_acid),
+            ("hb.url", self._edit_heartbeat),
         )):
             label = QLabel()
             label.setObjectName("fieldKey")
@@ -636,6 +662,14 @@ class MainWindow(QMainWindow):
         prow.addWidget(self._chk_proactive)
         prow.addWidget(self._time_proactive)
         prow.addStretch(1)
+        self._btn_export = QPushButton()
+        self._btn_export.setObjectName("secondary")
+        self._btn_export.clicked.connect(self._export_config)
+        self._btn_import = QPushButton()
+        self._btn_import.setObjectName("secondary")
+        self._btn_import.clicked.connect(self._import_config)
+        prow.addWidget(self._btn_export)
+        prow.addWidget(self._btn_import)
         adv_grid.addLayout(prow, 2, 0, 1, 2)
         self._advanced_host.setVisible(False)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
@@ -748,6 +782,7 @@ class MainWindow(QMainWindow):
         self._edit_key.setPlaceholderText(tr("notify.key"))
         self._edit_base.setPlaceholderText("https://net.zju.edu.cn")
         self._edit_acid.setPlaceholderText("80 / auto")
+        self._edit_heartbeat.setToolTip(tr("hb.hint"))
         self._spin_interval.setSuffix(f" {tr('unit.seconds', n='')}".rstrip())
 
         self._chk_auto.setText(tr("chk.auto_login"))
@@ -774,8 +809,10 @@ class MainWindow(QMainWindow):
             self._combo_provider.setItemText(i, self._provider_label(pid))
         for label, key in zip(self._notify_labels, ("notify.provider", "notify.key")):
             label.setText(tr(key))
-        for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id")):
+        for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id", "hb.url")):
             label.setText(tr(key))
+        self._btn_export.setText(tr("btn.export_cfg"))
+        self._btn_import.setText(tr("btn.import_cfg"))
 
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
                          (self._act_login, "tray.login"), (self._act_about, "tray.about"),
@@ -860,6 +897,7 @@ class MainWindow(QMainWindow):
         self._spin_traffic.setValue(int(cfg.traffic_limit_gb or 0))
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
+        self._edit_heartbeat.setText(cfg.heartbeat_url or "")
         self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
         try:
             hh, mm = str(cfg.proactive_time or "03:00").split(":")
@@ -899,6 +937,7 @@ class MainWindow(QMainWindow):
         cfg.traffic_limit_gb = self._spin_traffic.value()
         cfg.base_url = self._edit_base.text().strip() or "https://net.zju.edu.cn"
         cfg.ac_id = self._edit_acid.text().strip() or "80"
+        cfg.heartbeat_url = self._edit_heartbeat.text().strip()
         cfg.proactive_relogin = self._chk_proactive.isChecked()
         cfg.proactive_time = self._time_proactive.time().toString("HH:mm")
 
@@ -988,12 +1027,79 @@ class MainWindow(QMainWindow):
         self._save_hint.setText(tr("diag.copied"))
         QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
 
+    def _export_config(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        from .config import _DEFAULTS
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("btn.export_cfg"), "zju-autologin-config.json", "JSON (*.json)")
+        if not path:
+            return
+        payload = {"_exported_by": f"ZJU-AutoLogin v{__version__}"}
+        for key in _DEFAULTS:
+            if key != "win_geometry":
+                payload[key] = self._config.data.get(key)
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False, indent=2)
+            self._save_hint.setText(tr("msg.cfg_exported", path=os.path.basename(path)))
+        except OSError as exc:
+            self._save_hint.setText(tr("msg.cfg_import_fail", msg=exc))
+        QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
+
+    def _import_config(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        from .config import _DEFAULTS
+
+        path, _ = QFileDialog.getOpenFileName(self, tr("btn.import_cfg"), "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+            if not isinstance(payload, dict):
+                raise ValueError("bad format")
+        except (OSError, ValueError) as exc:
+            self._save_hint.setText(tr("msg.cfg_import_fail", msg=exc))
+            QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
+            return
+        for key in _DEFAULTS:
+            if key != "win_geometry" and key in payload:
+                self._config.data[key] = payload[key]
+        self._config.save()
+        self._load_settings_into_ui()
+        self._monitor.config_updated()
+        self._save_hint.setText(tr("msg.cfg_imported"))
+        QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
+        self._monitor.check_once()
+
+    def _refresh_service_heartbeat(self) -> None:
+        """显示系统级保活服务的心跳状态（watch 进程每轮写入时间戳）。"""
+        if not service.is_installed():
+            self._service_heartbeat.setText(tr("service.heartbeat_off"))
+            return
+        from .config import service_config_dir
+
+        try:
+            raw = (service_config_dir() / "service.heartbeat").read_text(encoding="ascii").strip()
+            mins = int((time.time() - float(raw)) / 60)
+        except (OSError, ValueError):
+            mins = -1
+        if mins < 0:
+            self._service_heartbeat.setText(tr("service.heartbeat_stale", mins="∞"))
+        elif mins <= 10:
+            self._service_heartbeat.setText(tr("service.heartbeat_ok", mins=mins))
+        else:
+            self._service_heartbeat.setText(tr("service.heartbeat_stale", mins=mins))
+
     def _open_log_folder(self) -> None:
         from .config import config_dir
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
 
     def _show_devices(self) -> None:
-        dlg = DevicesDialog(self._config, self)
+        dlg = DevicesDialog(self._config, self._last_status.get("ip") or "", self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg._kicked_ip:
             self._append_log(tr("devices.kicked", ip=dlg._kicked_ip))
             self._monitor.login_now()

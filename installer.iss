@@ -25,7 +25,7 @@ UninstallDisplayIcon={app}\ZJUAutoLogin.exe
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "autostart"; Description: "Launch at Windows startup (recommended)"; GroupDescription: "Options:"
+Name: "autostart"; Description: "Launch at Windows startup / 开机自启（推荐）"; GroupDescription: "Options / 选项:"
 
 [Files]
 Source: "dist\ZJUAutoLogin.exe"; DestDir: "{app}"; Flags: ignoreversion

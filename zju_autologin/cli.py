@@ -67,11 +67,22 @@ def cmd_login(cfg: Config) -> int:
 
 
 def cmd_watch(cfg: Config, interval: int | None) -> int:
+    from pathlib import Path
+
     from zju_autologin.config import append_event, append_file_log
+
+    heartbeat_file = Path(cfg.path).parent / "service.heartbeat"
+
+    def touch_heartbeat() -> None:
+        try:
+            heartbeat_file.write_text(str(time.time()), encoding="ascii")
+        except OSError:
+            pass
 
     seconds = interval or cfg.interval
     print(tr("cli.watching", n=seconds))
     append_file_log(tr("cli.watching", n=seconds))
+    touch_heartbeat()
     prev_state = ""
     while True:
         try:
@@ -92,6 +103,7 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
             return 0
         except Exception as exc:  # noqa: BLE001 - 守护进程不因单次异常退出
             print(tr("cli.exc", msg=exc))
+        touch_heartbeat()
         time.sleep(seconds)
 
 
