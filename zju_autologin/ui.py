@@ -537,8 +537,8 @@ class MainWindow(QMainWindow):
         icon_path = resource_path("zju.ico")
         self.setWindowIcon(QIcon(icon_path if os.path.isfile(icon_path)
                                  else resource_path("zju_seal_blue.png")))
-        self.resize(940, 680)
-        self.setMinimumSize(860, 600)
+        self.resize(940, 430)
+        self.setMinimumSize(860, 380)
         geo = str(config.win_geometry or "")
         if geo:
             try:
@@ -550,6 +550,7 @@ class MainWindow(QMainWindow):
                     self.resize(w, h)
             except (ValueError, TypeError):
                 pass
+        self.resize(self.width(), self._PAGE_HEIGHTS[0])
         self.setStyleSheet(theme.get_qss(config.theme))
 
         self._build_ui()
@@ -627,7 +628,7 @@ class MainWindow(QMainWindow):
             if os.path.isfile(icon_path):
                 btn.setIcon(QIcon(icon_path))
                 btn.setIconSize(QSize(18, 18))
-            btn.clicked.connect(lambda _=False, i=idx: self._stack.setCurrentIndex(i))
+            btn.clicked.connect(lambda _=False, i=idx: self._switch_page(i))
             self._nav_group.addButton(btn, idx)
             self._nav_buttons.append((btn, key))
             lay.addWidget(btn)
@@ -638,6 +639,15 @@ class MainWindow(QMainWindow):
         self._version_label.setObjectName("sidebarHint")
         lay.addWidget(self._version_label)
         return sb
+
+    _PAGE_HEIGHTS = {0: 430, 1: 800, 2: 600}  # 状态紧凑 / 设置全量 / 日志适中
+
+    def _switch_page(self, idx: int) -> None:
+        self._stack.setCurrentIndex(idx)
+        # 状态页内容少, 窗口随之收窄高度; 设置/日志页再展开
+        target = self._PAGE_HEIGHTS.get(idx)
+        if target and not (self.windowState() & Qt.WindowState.WindowMaximized):
+            self.resize(self.width(), target)
 
     def _page_status(self) -> QWidget:
         page = QWidget()
@@ -672,6 +682,9 @@ class MainWindow(QMainWindow):
         self._btn_devices.clicked.connect(self._show_devices)
         self._btn_devices.hide()
         status_row.addWidget(self._btn_devices)
+        self._btn_openportal = QPushButton()
+        self._btn_openportal.setObjectName("secondary")
+        self._btn_openportal.clicked.connect(self._open_portal_page)
         self._btn_check = QPushButton()
         self._btn_check.setObjectName("secondary")
         self._btn_check.clicked.connect(self._monitor.check_once)
@@ -844,7 +857,7 @@ class MainWindow(QMainWindow):
         notify_grid.setHorizontalSpacing(10)
         notify_grid.setVerticalSpacing(8)
         self._combo_provider = QComboBox()
-        for pid in ("none", "bark", "serverchan", "wecom", "dingtalk", "smtp"):
+        for pid in ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "smtp"):
             self._combo_provider.addItem(self._provider_label(pid), pid)
         self._edit_key = QLineEdit()
         self._btn_notify_test = QPushButton()
@@ -1030,6 +1043,7 @@ class MainWindow(QMainWindow):
             "serverchan": ("Server酱", "ServerChan"),
             "wecom": ("企业微信机器人", "WeCom bot"),
             "dingtalk": ("钉钉机器人", "DingTalk bot"),
+            "feishu": ("飞书机器人", "Feishu bot"),
             "smtp": ("邮件 (SMTP)", "Email (SMTP)"),
         }
         zh, en = names.get(pid, (pid, pid))
@@ -1044,6 +1058,7 @@ class MainWindow(QMainWindow):
             btn.setText(tr(key))
         self._version_label.setText(tr("app.header_badge", version=__version__))
         self._btn_check.setText(tr("btn.check_now"))
+        self._btn_openportal.setText(tr("btn.open_portal"))
         self._btn_login.setText(tr("btn.login_now"))
         self._btn_save.setText(tr("btn.save"))
         self._btn_devices.setText(tr("btn.devices"))
@@ -1112,8 +1127,8 @@ class MainWindow(QMainWindow):
         self._btn_portal.setText(tr("btn.portal_wizard"))
 
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
-                         (self._act_login, "tray.login"), (self._act_about, "tray.about"),
-                         (self._act_quit, "tray.quit")):
+                         (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
+                         (self._act_about, "tray.about"), (self._act_quit, "tray.quit")):
             act.setText(tr(key))
         self._act_auto.setText(tr("chk.auto_login"))
         self._tray_boot.setText(tr("tray.autostart"))
@@ -1142,13 +1157,15 @@ class MainWindow(QMainWindow):
         self._tray_boot.setCheckable(True)
         self._act_about = QAction(menu)
         self._act_quit = QAction(menu)
+        self._act_openportal = QAction(menu)
+        self._act_openportal.triggered.connect(self._open_portal_page)
         self._act_show.triggered.connect(self.show_normal)
         self._act_check.triggered.connect(self._monitor.check_once)
         self._act_login.triggered.connect(self._on_login_clicked)
         self._tray_boot.toggled.connect(self._toggle_autostart_from_tray)
         self._act_about.triggered.connect(self._show_about)
         self._act_quit.triggered.connect(self.quit_app)
-        for act in (self._act_show, self._act_check, self._act_login):
+        for act in (self._act_show, self._act_check, self._act_login, self._act_openportal):
             menu.addAction(act)
         menu.addAction(self._act_auto)
         menu.addSeparator()
@@ -1415,6 +1432,10 @@ class MainWindow(QMainWindow):
     def _on_proxy_mode_changed(self) -> None:
         custom = self._combo_proxy.currentData() == "custom"
         self._edit_proxy_url.setEnabled(custom)
+
+    def _open_portal_page(self) -> None:
+        """在浏览器打开校园网认证登录页（门户会自动重定向到认证界面）。"""
+        QDesktopServices.openUrl(QUrl(self._config.base_url))
 
     def _show_portal_wizard(self) -> None:
         PortalWizardDialog(self._config, self).exec()

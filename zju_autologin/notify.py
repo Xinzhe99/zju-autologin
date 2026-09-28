@@ -11,7 +11,7 @@ import ssl
 import urllib.parse
 import urllib.request
 
-PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "smtp")
+PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "smtp")
 
 
 def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0,
@@ -101,6 +101,12 @@ def send_notification(cfg, title: str, body: str,
         if not key.startswith("http"):
             return False, "dingtalk webhook url required"
         return _http_json(key, {"msgtype": "text", "text": {"content": f"{title}\n{body}"}}, opener=opener)
+
+    if provider == "feishu":
+        if not key.startswith("http"):
+            return False, "feishu webhook url required"
+        return _http_json(key, {"msg_type": "text", "content": {"text": f"{title}\n{body}"}},
+                          opener=opener)
 
     if provider == "smtp":
         if not cfg.smtp_host or not cfg.smtp_to:

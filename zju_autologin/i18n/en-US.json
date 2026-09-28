@@ -231,5 +231,6 @@
   "net.proxy.url": "Proxy URL",
   "nav.status": "Status",
   "nav.settings": "Settings",
-  "nav.logs": "Logs"
+  "nav.logs": "Logs",
+  "btn.open_portal": "Open login page"
 }

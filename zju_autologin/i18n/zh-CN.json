@@ -231,5 +231,6 @@
   "net.proxy.url": "代理地址",
   "nav.status": "网络状态",
   "nav.settings": "设置",
-  "nav.logs": "运行日志"
+  "nav.logs": "运行日志",
+  "btn.open_portal": "打开登录页"
 }
