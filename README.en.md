@@ -48,7 +48,15 @@ Grab a package from [Releases](https://github.com/Xinzhe99/zju-autologin/release
 | Windows | `ZJUAutoLogin-*-windows-setup.exe` | `ZJUAutoLogin-*-windows-portable.zip` |
 | macOS | `ZJUAutoLogin-*-macos.dmg` | `ZJUAutoLogin-*-macos-portable.zip` |
 
-Or run from source: `pip install -r requirements.txt && python main.py`
+## Quick start
+
+1. **Install** the setup package (or unzip the portable one and run `ZJUAutoLogin.exe`)
+2. **First-run wizard** — it detects your network; if you are already online your account is filled in automatically. Confirm it, enter your campus password once, tick "Launch at startup", done
+3. **That's it** — the app lives in the tray and re-authenticates before you even notice a drop
+
+Recommended for remote access: enable **System-level keep-alive** in Settings (authenticates before Windows login), and configure **offline notifications** so your phone knows if anything needs manual attention.
+
+> Running from source (developers): see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 > macOS builds are unsigned — right-click the app → **Open**, or run `xattr -cr /Applications/ZJU\ AutoLogin.app`.
 
