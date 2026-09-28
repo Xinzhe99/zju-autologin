@@ -258,3 +258,24 @@ def test_portal_double_failure_reports_no_campus(tmp_path):
         assert info["state"] == "no_campus"
 
 
+
+
+def test_neg_cache_skips_bound_strategies(tmp_path):
+    """门户整体不可达后 5 分钟内, 策略链只保留直连（掉校外不再空耗几十秒）。"""
+    from zju_autologin import srun as S
+    from zju_autologin.srun import SrunClient
+    S._STRATEGY_CACHE.clear()
+    S._NEG_CACHE.clear()
+    client = SrunClient(base_url="https://net.zju.edu.cn")
+    client._request_once = lambda url, opener=None: (_ for _ in ()).throw(S.SrunError("down"))
+    try:
+        client._get("/cgi-bin/rad_user_info", {})
+    except S.SrunError:
+        pass
+    assert "net.zju.edu.cn" in S._NEG_CACHE  # 已记录失败
+    strategies = client._strategies()
+    assert all(k == "direct" for k, _, _ in strategies)  # 只剩直连
+    # 成功后负缓存清除
+    client._request_once = lambda url, opener=None: "ok"
+    client._get("/cgi-bin/rad_user_info", {})
+    assert "net.zju.edu.cn" not in S._NEG_CACHE

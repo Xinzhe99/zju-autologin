@@ -78,6 +78,10 @@ _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # 门户连接策略缓存（host -> "策略|协议"）：命中后跳过全部失败尝试
 _STRATEGY_CACHE: dict[str, str] = {}
+# 全链失败负缓存（host -> 失败时间戳）：如门户整体不可达（掉校外），
+# 5 分钟内只尝试直连策略，避免每轮检测空耗几十秒
+_NEG_CACHE: dict[str, float] = {}
+_NEG_TTL = 300.0
 
 
 class SrunError(Exception):
@@ -248,10 +252,12 @@ class SrunClient:
             ("direct", _DIRECT_OPENER, "https"),
             ("direct", _DIRECT_OPENER, "http"),
         ]
-        for ip in candidate_source_ips():
-            opener = bound_opener(ip)
-            pairs.append((f"bind:{ip}", opener, "https"))
-            pairs.append((f"bind:{ip}", opener, "http"))
+        recently_failed = time.time() - _NEG_CACHE.get(host, 0.0) < _NEG_TTL
+        if not recently_failed:
+            for ip in candidate_source_ips():
+                opener = bound_opener(ip)
+                pairs.append((f"bind:{ip}", opener, "https"))
+                pairs.append((f"bind:{ip}", opener, "http"))
         cached = _STRATEGY_CACHE.get(host)
         if cached:
             key, scheme = cached.rsplit("|", 1)
@@ -274,7 +280,9 @@ class SrunClient:
                 continue
             self.base_url = base
             _STRATEGY_CACHE[host] = f"{key}|{scheme}"
+            _NEG_CACHE.pop(host, None)
             return body
+        _NEG_CACHE[host] = time.time()
         raise first_exc or SrunError(tr("srun.request_failed", err="all strategies failed"))
 
     def _jsonp(self, path: str, params: dict) -> dict:

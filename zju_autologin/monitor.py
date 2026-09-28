@@ -100,13 +100,13 @@ class MonitorWorker(QObject):
         self._timer.timeout.connect(self.check_once)
         self._timer.start()
         self.log(tr("log.monitor_started", n=self._config.interval))
+        self.check_once()  # 首次状态检测优先, 不被更新检查的网络等待拖慢
         if self._config.check_updates:
             self.check_updates()
         self._update_timer = QTimer()
         self._update_timer.setInterval(_UPDATE_INTERVAL * 1000)
         self._update_timer.timeout.connect(self.check_updates)
         self._update_timer.start()
-        self.check_once()
 
     @pyqtSlot()
     def stop(self) -> None:
