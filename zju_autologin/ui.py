@@ -406,8 +406,6 @@ class MainWindow(QMainWindow):
         self._fields["ip"].setText(info.get("ip") or "—")
         self._fields["login_time"].setText(info.get("login_time") or "—")
         self._fields["last_check"].setText(time.strftime("%H:%M:%S"))
-        if info.get("ip") and state == "online":
-            self._fields["login_time"].setText(info.get("login_time") or "—")
 
         icon_state = state if state in DOT_COLORS else "checking"
         if icon_state != self._tray_state:

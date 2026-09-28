@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from PyQt6.QtCore import QLockFile, Qt, QStandardPaths, QTemporaryDir
+from PyQt6.QtCore import QLockFile, QTemporaryDir
 from PyQt6.QtWidgets import QApplication
 
 from zju_autologin.config import Config
