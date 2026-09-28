@@ -185,5 +185,10 @@
   "statuscard.never": "—",
   "btn.close": "Close",
   "field.base_url": "Portal URL",
-  "field.ac_id": "ac_id"
+  "field.ac_id": "ac_id",
+  "settings.traffic_limit": "Traffic alert (0=off)",
+  "log.traffic_alert": "Monthly traffic {used} reached your limit of {limit}",
+  "notify.traffic_title": "Campus network traffic alert",
+  "notify.traffic_body": "Used {used} this month, reaching your limit of {limit}.",
+  "btn.open_log": "Open logs"
 }

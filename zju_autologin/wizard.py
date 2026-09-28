@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import autostart, i18n
+from . import autostart, i18n, theme
 from .config import Config
 from .i18n import tr
 from .srun import SrunClient, SrunError
@@ -43,8 +43,10 @@ class SetupWizard(QDialog):
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
+        self._initial_lang = config.language
         self._detect_thread: _DetectThread | None = None
 
+        self.setStyleSheet(theme.get_qss(config.theme))
         self.setWindowTitle(tr("wiz.title"))
         self.setModal(True)
         self.setFixedWidth(520)
@@ -278,7 +280,10 @@ class SetupWizard(QDialog):
         self._btn_back.setText(tr("wiz.prev"))
         self._update_nav()
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    def done(self, result: int) -> None:  # noqa: N802
+        # 取消向导时回滚界面语言，避免与未保存的配置不一致
+        if result != QDialog.DialogCode.Accepted:
+            i18n.set_lang(self._initial_lang)
         if self._detect_thread is not None and self._detect_thread.isRunning():
             self._detect_thread.wait(1500)
-        super().closeEvent(event)
+        super().done(result)

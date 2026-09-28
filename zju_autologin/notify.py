@@ -35,10 +35,13 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0) -> t
 
 def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
     try:
-        msg = (
-            f"From: {cfg.smtp_user}\r\nTo: {cfg.smtp_to}\r\n"
-            f"Subject: {title}\r\n\r\n{body}\r\n"
-        )
+        from email.message import EmailMessage
+
+        msg = EmailMessage()
+        msg["Subject"] = title
+        msg["From"] = cfg.smtp_user
+        msg["To"] = cfg.smtp_to
+        msg.set_content(body)
         if cfg.smtp_port == 465:
             server = smtplib.SMTP_SSL(cfg.smtp_host, 465, timeout=8)
         else:
@@ -50,7 +53,7 @@ def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
         with server:
             if cfg.smtp_user:
                 server.login(cfg.smtp_user, cfg.smtp_pass)
-            server.sendmail(cfg.smtp_user, [cfg.smtp_to], msg.encode("utf-8"))
+            server.send_message(msg)
         return True, "sent"
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)

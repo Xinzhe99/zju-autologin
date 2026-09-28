@@ -185,5 +185,10 @@
   "statuscard.never": "—",
   "btn.close": "关闭",
   "field.base_url": "门户地址",
-  "field.ac_id": "ac_id"
+  "field.ac_id": "ac_id",
+  "settings.traffic_limit": "流量提醒 (0=关)",
+  "log.traffic_alert": "本月流量 {used} 已达提醒阈值 {limit}",
+  "notify.traffic_title": "校园网流量提醒",
+  "notify.traffic_body": "本月已用 {used}，达到你设定的上限 {limit}。",
+  "btn.open_log": "打开日志"
 }

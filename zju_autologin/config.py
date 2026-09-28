@@ -44,6 +44,11 @@ _DEFAULTS = {
     "smtp_user": "",
     "smtp_pass": "",
     "smtp_to": "",
+    # 流量月度上限提醒（GB，0 = 关闭）
+    "traffic_limit_gb": 0,
+    "last_traffic_alert": "",  # 已提醒的 "YYYY-MM"
+    # 窗口位置记忆
+    "win_geometry": "",
 }
 
 
@@ -78,32 +83,35 @@ def service_config_dir() -> Path:
 LOG_FILE_MAX = 256 * 1024
 
 
-def append_file_log(line: str) -> None:
-    """滚动追加运行日志（用于远程排查问题）。"""
+def append_file_log(line: str, directory: Path | None = None) -> None:
+    """滚动追加运行日志（用于远程排查问题）。directory 默认为用户配置目录。"""
     try:
-        path = config_dir() / "app.log"
+        path = (directory or config_dir()) / "app.log"
         if path.exists() and path.stat().st_size > LOG_FILE_MAX:
             content = path.read_text(encoding="utf-8", errors="replace")
             path.write_text(content[-64 * 1024:], encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + line + "\n")
     except OSError:
         pass
 
 
-def append_event(kind: str, detail: str = "") -> None:
+def append_event(kind: str, detail: str = "", directory: Path | None = None) -> None:
     """记录网络事件（events.jsonl，一行一个 JSON），供统计面板使用。"""
     try:
-        with open(config_dir() / "events.jsonl", "a", encoding="utf-8") as fh:
+        base = directory or config_dir()
+        base.mkdir(parents=True, exist_ok=True)
+        with open(base / "events.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"ts": time.time(), "event": kind, "detail": detail},
                                 ensure_ascii=False) + "\n")
     except OSError:
         pass
 
 
-def read_events(limit: int = 200) -> list[dict]:
+def read_events(limit: int = 200, directory: Path | None = None) -> list[dict]:
     try:
-        path = config_dir() / "events.jsonl"
+        path = (directory or config_dir()) / "events.jsonl"
         if not path.exists():
             return []
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 import urllib.request
+from pathlib import Path
 
 from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, pyqtSlot
 
@@ -65,6 +66,7 @@ class MonitorWorker(QObject):
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
+        self._log_dir = Path(config.path).parent  # 服务模式下日志落在配置所在目录
         self._timer: QTimer | None = None
         self._update_timer: QTimer | None = None
         self._busy = False
@@ -230,6 +232,7 @@ class MonitorWorker(QObject):
                     self.log(tr("log.proactive"))
                     self._do_login(client=client)
                     return
+                self._check_traffic_limit(int(status.get("all_bytes") or 0))
                 self._emit(
                     "online",
                     username=status["username"],
@@ -314,11 +317,30 @@ class MonitorWorker(QObject):
             self._maybe_push("notify.fail_title", tr("notify.fail_body", msg=msg))
         self._emit("login_fail", username=result["username"], detail=msg)
 
+    def _check_traffic_limit(self, all_bytes: int) -> None:
+        """月度流量上限提醒：超过用户设定值时每月推送一次。"""
+        cfg = self._config
+        limit_gb = float(cfg.traffic_limit_gb or 0)
+        if limit_gb <= 0 or all_bytes <= 0:
+            return
+        used_gb = all_bytes / 1024 ** 3
+        if used_gb < limit_gb:
+            return
+        month = time.strftime("%Y-%m")
+        if cfg.last_traffic_alert == month:
+            return
+        cfg.last_traffic_alert = month
+        cfg.save()
+        used = f"{used_gb:.2f} GB"
+        self.log(tr("log.traffic_alert", used=used, limit=f"{limit_gb:g} GB"))
+        self._maybe_push("notify.traffic_title",
+                         tr("notify.traffic_body", used=used, limit=f"{limit_gb:g} GB"))
+
     def _emit(self, state: str, username: str = "", ip: str = "",
               login_time: str = "", detail: str = "", ecode: str = "",
               billing: str = "", all_bytes: int = 0) -> None:
         if state != self._prev_state:
-            append_event(state, detail)
+            append_event(state, detail, self._log_dir)
             self._prev_state = state
         self.statusChanged.emit({
             "state": state,
@@ -351,6 +373,7 @@ class Monitor(QObject):
 
     def __init__(self, config: Config, parent: QObject | None = None) -> None:
         super().__init__(parent)
+        self._config = config
         self._thread = QThread(self)
         self._worker = MonitorWorker(config)
         self._worker.moveToThread(self._thread)

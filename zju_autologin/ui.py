@@ -354,6 +354,17 @@ class MainWindow(QMainWindow):
                                  else resource_path("zju_seal_blue.png")))
         self.resize(800, 860)
         self.setMinimumSize(740, 700)
+        geo = str(config.win_geometry or "")
+        if geo:
+            try:
+                x, y, w, h = (int(v) for v in geo.split(","))
+                screen = QApplication.primaryScreen().availableGeometry()
+                if w >= self.minimumWidth() and h >= self.minimumHeight()                         and screen.contains(x + w // 2, y + 20):
+                    self.setGeometry(x, y, w, h)
+                else:
+                    self.resize(w, h)
+            except (ValueError, TypeError):
+                pass
         self.setStyleSheet(theme.get_qss(config.theme))
 
         self._build_ui()
@@ -562,6 +573,8 @@ class MainWindow(QMainWindow):
         self._btn_notify_test.clicked.connect(self._monitor.notify_test)
         self._spin_threshold = QSpinBox()
         self._spin_threshold.setRange(1, 10)
+        self._spin_traffic = QSpinBox()
+        self._spin_traffic.setRange(0, 2048)
         self._chk_recovery = QCheckBox()
         self._notify_labels: list[QLabel] = []
         for col, (label_key, widget) in enumerate((
@@ -582,6 +595,11 @@ class MainWindow(QMainWindow):
         actions.addWidget(self._spin_threshold)
         actions.addSpacing(14)
         actions.addWidget(self._chk_recovery)
+        actions.addSpacing(14)
+        self._lbl_traffic = QLabel()
+        self._lbl_traffic.setObjectName("fieldKey")
+        actions.addWidget(self._lbl_traffic)
+        actions.addWidget(self._spin_traffic)
         actions.addStretch(1)
         actions.addWidget(self._btn_notify_test)
         notify_grid.addLayout(actions, 1, 0, 1, 4)
@@ -653,8 +671,12 @@ class MainWindow(QMainWindow):
         self._btn_stats = QPushButton()
         self._btn_stats.setObjectName("secondary")
         self._btn_stats.clicked.connect(lambda: StatsDialog(self).exec())
+        self._btn_openlog = QPushButton()
+        self._btn_openlog.setObjectName("secondary")
+        self._btn_openlog.clicked.connect(self._open_log_folder)
         log_head.addWidget(self._btn_diag)
         log_head.addWidget(self._btn_stats)
+        log_head.addWidget(self._btn_openlog)
         llay.addLayout(log_head)
         self._log = QPlainTextEdit()
         self._log.setObjectName("log")
@@ -704,6 +726,7 @@ class MainWindow(QMainWindow):
         self._save_hint.setText("")
         self._btn_diag.setText(tr("btn.copy_diag"))
         self._btn_stats.setText(tr("btn.stats"))
+        self._btn_openlog.setText(tr("btn.open_log"))
 
         for key, label in self._field_labels.items():
             if key == "billing":
@@ -736,6 +759,8 @@ class MainWindow(QMainWindow):
         self._notify_title.setText(tr("settings.notify"))
         self._chk_recovery.setText(tr("notify.recovery"))
         self._lbl_threshold.setText(tr("notify.threshold"))
+        self._lbl_traffic.setText(tr("settings.traffic_limit"))
+        self._spin_traffic.setSuffix(" GB")
         self._btn_notify_test.setText(tr("btn.notify_test"))
         self._btn_advanced.setText(tr("settings.advanced"))
         self._chk_proactive.setText(tr("chk.proactive"))
@@ -806,6 +831,9 @@ class MainWindow(QMainWindow):
     def _refresh_tray_tooltip(self) -> None:
         status = tr(f"status.{self._last_status.get('state', 'checking')}")
         ip = self._last_status.get("ip") or ""
+        traffic = self._last_status.get("all_bytes") or 0
+        if traffic:
+            status += f" · {_fmt_bytes(traffic)}"
         self._tray.setToolTip(
             tr("tray.tooltip_ip", app=tr("app.name"), status=status, ip=ip)
             if ip else tr("tray.tooltip", app=tr("app.name"), status=status))
@@ -829,6 +857,7 @@ class MainWindow(QMainWindow):
         self._edit_key.setText(cfg.notify_key or "")
         self._spin_threshold.setValue(cfg.notify_threshold)
         self._chk_recovery.setChecked(bool(cfg.notify_recovery))
+        self._spin_traffic.setValue(int(cfg.traffic_limit_gb or 0))
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
         self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
@@ -867,6 +896,7 @@ class MainWindow(QMainWindow):
         cfg.notify_key = self._edit_key.text().strip()
         cfg.notify_threshold = self._spin_threshold.value()
         cfg.notify_recovery = self._chk_recovery.isChecked()
+        cfg.traffic_limit_gb = self._spin_traffic.value()
         cfg.base_url = self._edit_base.text().strip() or "https://net.zju.edu.cn"
         cfg.ac_id = self._edit_acid.text().strip() or "80"
         cfg.proactive_relogin = self._chk_proactive.isChecked()
@@ -913,6 +943,27 @@ class MainWindow(QMainWindow):
                             backend=tr(f"password.storage.{cfg.password_backend_key()}")))
         self._monitor.check_once()
 
+    def _apply_service_toggle(self, enable: bool) -> None:
+        """后台线程安装/卸载系统级计划任务，完成后回填状态。"""
+        cfg = self._config
+        self._chk_service.setEnabled(False)
+
+        def work():
+            return service.install(cfg) if enable else service.uninstall()
+
+        def done(result):
+            ok = bool(result and result[0])
+            self._chk_service.setEnabled(True)
+            self._chk_service.setChecked(ok if enable else not ok)
+            if enable:
+                self._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
+            else:
+                self._append_log(tr("service.off_ok") if ok else tr("service.on_fail"))
+
+        self._service_thread = _FnThread(work, self)
+        self._service_thread.done.connect(done)
+        self._service_thread.start()
+
     def _toggle_autostart_from_tray(self, on: bool) -> None:
         result = autostart.set_enabled(on)
         self._chk_boot.setChecked(result)
@@ -936,6 +987,10 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText("\n".join(lines))
         self._save_hint.setText(tr("diag.copied"))
         QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
+
+    def _open_log_folder(self) -> None:
+        from .config import config_dir
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
 
     def _show_devices(self) -> None:
         dlg = DevicesDialog(self._config, self)
@@ -1045,13 +1100,20 @@ class MainWindow(QMainWindow):
 
     def quit_app(self) -> None:
         self._force_quit = True
+        self._save_geometry()
         self._monitor.stop()
         self._tray.hide()
         QApplication.quit()
 
     # ---------------------------------------------------------------- 关闭
 
+    def _save_geometry(self) -> None:
+        g = self.geometry()
+        self._config.win_geometry = f"{g.x()},{g.y()},{g.width()},{g.height()}"
+        self._config.save()
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._save_geometry()
         if self._force_quit or not self._config.minimize_to_tray:
             self._monitor.stop()
             event.accept()
