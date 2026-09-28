@@ -240,5 +240,6 @@
   "route.add_ok": "Direct portal route added: auth traffic now bypasses VPN/TUN",
   "route.remove_ok": "Direct portal route removed",
   "route.add_fail": "Route operation failed: confirm the UAC prompt and retry",
-  "route.hint": "TUN-mode VPNs take over at the routing layer. This adds a persistent /32 route for the portal IP via your physical gateway (admin), so auth traffic bypasses the VPN. Remove it when switching networks."
+  "route.hint": "TUN-mode VPNs take over at the routing layer. This adds a persistent /32 route for the portal IP via your physical gateway (admin), so auth traffic bypasses the VPN. Remove it when switching networks.",
+  "route.remove_fail": "Remove failed: confirm the UAC prompt and retry"
 }

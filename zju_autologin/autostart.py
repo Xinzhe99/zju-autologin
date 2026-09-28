@@ -67,10 +67,13 @@ def _mac_set(enable: bool) -> bool:
     path = _mac_plist_path()
     try:
         if enable:
+            from xml.sax.saxutils import escape
+
             plist_dir = os.path.dirname(path)
             os.makedirs(plist_dir, exist_ok=True)
             program = _command()
             args = program if isinstance(program, list) else [program]
+            args = [escape(str(x)) for x in args]
             plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

@@ -1049,7 +1049,7 @@ class MainWindow(QMainWindow):
                 self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
                 self._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
             else:
-                self._append_log(tr("route.add_fail") if want_add else tr("route.add_fail"))
+                self._append_log(tr("route.add_fail") if want_add else tr("route.remove_fail"))
 
         self._route_thread = _FnThread(work, self)
         self._route_thread.done.connect(done)
@@ -1377,6 +1377,8 @@ class MainWindow(QMainWindow):
         self._append_log(tr("log.auto_login_on") if on else tr("log.auto_login_off"))
 
     def _toggle_autostart_from_tray(self, on: bool) -> None:
+        if self._chk_boot.isChecked() == on:
+            return  # 保存设置后的程序性回显, 不重复写注册表/记日志
         result = autostart.set_enabled(on)
         self._chk_boot.setChecked(result)
         self._tray_boot.setChecked(result)
@@ -1488,7 +1490,7 @@ class MainWindow(QMainWindow):
                 self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
                 self._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
             else:
-                self._append_log(tr("route.add_fail") if want_add else tr("route.add_fail"))
+                self._append_log(tr("route.add_fail") if want_add else tr("route.remove_fail"))
 
         self._route_thread = _FnThread(work, self)
         self._route_thread.done.connect(done)
