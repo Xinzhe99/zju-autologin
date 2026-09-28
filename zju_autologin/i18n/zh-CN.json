@@ -207,5 +207,19 @@
   "msg.cfg_imported": "配置已导入，请补填密码后保存",
   "msg.cfg_import_fail": "导入失败：{msg}",
   "btn.export_cfg": "导出配置",
-  "btn.import_cfg": "导入配置"
+  "btn.import_cfg": "导入配置",
+  "crash.tray_title": "程序遇到错误",
+  "crash.tray_body": "已记录到日志，程序继续运行",
+  "update.hash_fail": "安装包校验失败，已取消安装",
+  "stats.usage_title": "近 30 天每日流量",
+  "stats.online_days": "本次会话已在线 {days} 天",
+  "stats.no_data": "暂无流量记录",
+  "log.auto_login_on": "自动登录已开启",
+  "log.auto_login_off": "自动登录已关闭",
+  "btn.portal_wizard": "接入其他高校门户",
+  "portal.title": "接入其他深澜高校门户",
+  "portal.detect": "探测并测试",
+  "portal.detecting": "正在探测…",
+  "portal.result_ok": "探测成功：ac_id={acid}，本机 IP {ip}，challenge 测试通过 ✓ 保存后请在主窗口填写账号密码",
+  "portal.result_fail": "探测失败：{msg}。请确认地址正确且已在校园网内"
 }

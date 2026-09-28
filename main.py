@@ -14,7 +14,7 @@ from pathlib import Path
 from PyQt6.QtCore import QLockFile
 from PyQt6.QtWidgets import QApplication
 
-from zju_autologin import i18n
+from zju_autologin import crash, i18n
 from zju_autologin.config import Config, config_dir
 from zju_autologin.monitor import Monitor
 from zju_autologin.ui import MainWindow
@@ -22,6 +22,7 @@ from zju_autologin.wizard import SetupWizard
 
 
 def main() -> int:
+    crash.install()  # 全局异常钩子：写日志 + 托盘提示，避免无声退出
     if len(sys.argv) > 1 and sys.argv[1] in ("watch", "--watch"):
         from zju_autologin.cli import main as cli_main
         return cli_main()

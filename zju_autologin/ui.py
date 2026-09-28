@@ -36,11 +36,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, autostart, i18n, service, theme, updates
+from . import __version__, autostart, crash, i18n, service, theme, updates
 from .config import (
     Config,
     append_file_log,
     read_events,
+    read_usage,
     resource_path,
 )
 from .i18n import tr
@@ -158,6 +159,7 @@ class UpdateDownloadThread(QThread):
             url = str(target.get("browser_download_url") or "")
             name = str(target.get("name") or "update.bin")
             total = int(target.get("size") or 0)
+            digest = str(target.get("digest") or "")  # GitHub API: "sha256:..."
             self.progress.emit(0)
             req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
             path = os.path.join(tempfile.gettempdir(), name)
@@ -173,6 +175,20 @@ class UpdateDownloadThread(QThread):
                     got += len(chunk)
                     if total:
                         self.progress.emit(int(got * 100 / total))
+            if digest.startswith("sha256:"):
+                import hashlib
+
+                sha = hashlib.sha256()
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                        sha.update(chunk)
+                if sha.hexdigest() != digest.split(":", 1)[1]:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    self.finished_err.emit(tr("update.hash_fail"))
+                    return
             self.finished_ok.emit(path)
         except Exception as exc:  # noqa: BLE001
             self.finished_err.emit(str(exc))
@@ -314,23 +330,87 @@ class DevicesDialog(QDialog):
             self._btn_kick.setEnabled(True)
 
 
+class UsageChart(QWidget):
+    """近 30 天每日流量柱状图（QPainter 手绘，不引第三方依赖）。"""
+
+    def __init__(self, values: list[float]) -> None:
+        super().__init__()
+        self._values = values  # 每日增量 GB
+        self.setMinimumHeight(110)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        from PyQt6.QtGui import QPainter
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        if not self._values:
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, tr("stats.no_data"))
+            return
+        peak = max(self._values) or 1.0
+        n = len(self._values)
+        gap = 3
+        bar_w = max(2, (w - 8 - gap * (n - 1)) / n)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#1a5ec4"))
+        for i, v in enumerate(self._values):
+            bh = max(2, (h - 18) * v / peak)
+            x = 4 + i * (bar_w + gap)
+            painter.drawRoundedRect(int(x), int(h - 14 - bh), int(bar_w), int(bh), 2, 2)
+        painter.setPen(QColor("#8ba1bd" if self.palette().color(
+            self.backgroundRole()).lightness() < 128 else "#7a8aa2"))
+        painter.drawText(4, h - 2, f"max {peak:.2f} GB")
+        painter.drawText(w - 90, h - 2, f"{n} days")
+
+
 class StatsDialog(QDialog):
-    """网络事件时间线与近 7 天掉线统计。"""
+    """网络事件时间线、近 7 天掉线统计与每日流量曲线。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(tr("stats.title"))
         self.setModal(True)
-        self.resize(520, 420)
+        self.resize(560, 500)
         lay = QVBoxLayout(self)
         events = read_events(300)
-        week_ago = time.time() - 7 * 86400
-        drops = sum(1 for e in events if e.get("event") == "offline" and e.get("ts", 0) >= week_ago)
-        title = QLabel(tr("stats.drop_count", n=drops))
-        title.setObjectName("cardTitle")
-        lay.addWidget(title)
 
+        # 每日流量增量
+        usage = read_usage(40)
+        deltas: list[float] = []
+        for i, row in enumerate(usage):
+            prev = usage[i - 1]["bytes"] if i > 0 else 0
+            delta = row["bytes"] - prev
+            if delta < 0:  # 计费周期重置
+                delta = row["bytes"]
+            deltas.append(delta / 1024 ** 3)
+        if deltas:
+            usage_title = QLabel(tr("stats.usage_title"))
+            usage_title.setObjectName("cardTitle")
+            lay.addWidget(usage_title)
+            lay.addWidget(UsageChart(deltas[-30:]), 1)
+
+        # 会话在线天数
+        main = parent if isinstance(parent, MainWindow) else None
+        login_time = (main._last_status.get("login_time") or "") if main else ""
+        days = 0
+        if login_time:
+            try:
+                ts = time.mktime(time.strptime(login_time, "%Y-%m-%d %H:%M"))
+                days = int((time.time() - ts) / 86400) + 1
+            except (ValueError, OverflowError):
+                days = 0
+        if days:
+            head = QLabel(tr("stats.online_days", days=days))
+            head.setObjectName("cardTitle")
+            lay.addWidget(head)
+
+        drops_title = QLabel(tr("stats.drop_count", n=sum(
+            1 for e in events if e.get("event") == "offline" and e.get("ts", 0) >= time.time() - 7 * 86400)))
+        drops_title.setObjectName("cardTitle")
+        lay.addWidget(drops_title)
         table = QTableWidget(0, 3)
+        week_ago = time.time() - 7 * 86400
+
         table.setHorizontalHeaderLabels(["#", tr("field.last_check"), tr("status.offline")])
         table.horizontalHeader().setStretchLastSection(True)
         table.setColumnWidth(0, 40)
@@ -349,6 +429,88 @@ class StatsDialog(QDialog):
             table.setItem(0, 0, QTableWidgetItem("-"))
             table.setItem(0, 1, QTableWidgetItem(tr("stats.empty")))
         lay.addWidget(table, 1)
+
+
+class PortalWizardDialog(QDialog):
+    """其他深澜高校门户接入向导：填门户地址 → 自动探测 ac_id/IP → 保存。"""
+
+    def __init__(self, config: Config, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._config = config
+        self._thread: _FnThread | None = None
+        self._detected_acid = ""
+        self.setWindowTitle(tr("portal.title"))
+        self.setModal(True)
+        self.setFixedWidth(480)
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+        self._lbl_url = QLabel()
+        self._lbl_url.setObjectName("fieldKey")
+        lay.addWidget(self._lbl_url)
+        self._edit_url = QLineEdit()
+        self._edit_url.setPlaceholderText("https://xxx.edu.cn")
+        lay.addWidget(self._edit_url)
+
+        self._result = QLabel("")
+        self._result.setObjectName("statusDetail")
+        self._result.setWordWrap(True)
+        lay.addWidget(self._result)
+
+        btns = QHBoxLayout()
+        self._btn_detect = QPushButton(tr("portal.detect"))
+        self._btn_detect.setObjectName("secondary")
+        self._btn_detect.clicked.connect(self._detect)
+        self._btn_save = QPushButton(tr("portal.save"))
+        self._btn_save.setObjectName("primary")
+        self._btn_save.setEnabled(False)
+        self._btn_save.clicked.connect(self._save)
+        btn_close = QPushButton(tr("btn.close"))
+        btn_close.setObjectName("secondary")
+        btn_close.clicked.connect(self.reject)
+        btns.addWidget(self._btn_detect)
+        btns.addStretch(1)
+        btns.addWidget(self._btn_save)
+        btns.addSpacing(8)
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+
+    def _detect(self) -> None:
+        base = self._edit_url.text().strip().rstrip("/")
+        if not base.startswith("http"):
+            self._result.setText(tr("msg.cfg_import_fail", msg="URL"))
+            return
+        self._btn_detect.setEnabled(False)
+        self._result.setText(tr("portal.detecting"))
+
+        def work():
+            client = SrunClient(base_url=base, timeout=8)
+            return base, client.probe_portal()
+
+        self._thread = _FnThread(work, self)
+        self._thread.done.connect(self._apply)
+        self._thread.start()
+
+    def _apply(self, result) -> None:
+        self._btn_detect.setEnabled(True)
+        if isinstance(result, Exception):
+            self._result.setText(tr("portal.result_fail", msg=result))
+            return
+        base, probe = result
+        self._detected_base = base
+        if probe.get("ok"):
+            self._detected_acid = probe.get("acid", "")
+            self._result.setText(tr("portal.result_ok",
+                                    acid=probe.get("acid", "?"), ip=probe.get("ip", "?")))
+            self._btn_save.setEnabled(True)
+        else:
+            self._result.setText(tr("portal.result_fail", msg=probe.get("msg", "?")))
+
+    def _save(self) -> None:
+        self._config.base_url = getattr(self, "_detected_base", "")
+        self._config.ac_id = self._detected_acid or "80"
+        self._config.save()
+        self.accept()
 
 
 class MainWindow(QMainWindow):
@@ -391,6 +553,7 @@ class MainWindow(QMainWindow):
         monitor.statusChanged.connect(self._on_status)
         monitor.logLine.connect(self._append_log)
         monitor.updateAvailable.connect(self._on_update_available)
+        crash.UiHolder.window = self
 
     # ------------------------------------------------------------------ UI
 
@@ -670,6 +833,10 @@ class MainWindow(QMainWindow):
         self._btn_import.clicked.connect(self._import_config)
         prow.addWidget(self._btn_export)
         prow.addWidget(self._btn_import)
+        self._btn_portal = QPushButton()
+        self._btn_portal.setObjectName("secondary")
+        self._btn_portal.clicked.connect(self._show_portal_wizard)
+        prow.addWidget(self._btn_portal)
         adv_grid.addLayout(prow, 2, 0, 1, 2)
         self._advanced_host.setVisible(False)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
@@ -813,11 +980,13 @@ class MainWindow(QMainWindow):
             label.setText(tr(key))
         self._btn_export.setText(tr("btn.export_cfg"))
         self._btn_import.setText(tr("btn.import_cfg"))
+        self._btn_portal.setText(tr("btn.portal_wizard"))
 
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
                          (self._act_login, "tray.login"), (self._act_about, "tray.about"),
                          (self._act_quit, "tray.quit")):
             act.setText(tr(key))
+        self._act_auto.setText(tr("chk.auto_login"))
         self._tray_boot.setText(tr("tray.autostart"))
 
         if self._update_banner.isVisible():
@@ -837,6 +1006,9 @@ class MainWindow(QMainWindow):
         self._act_show = QAction(menu)
         self._act_check = QAction(menu)
         self._act_login = QAction(menu)
+        self._act_auto = QAction(menu)
+        self._act_auto.setCheckable(True)
+        self._act_auto.toggled.connect(self._toggle_auto_login)
         self._tray_boot = QAction(menu)
         self._tray_boot.setCheckable(True)
         self._act_about = QAction(menu)
@@ -849,6 +1021,7 @@ class MainWindow(QMainWindow):
         self._act_quit.triggered.connect(self.quit_app)
         for act in (self._act_show, self._act_check, self._act_login):
             menu.addAction(act)
+        menu.addAction(self._act_auto)
         menu.addSeparator()
         menu.addAction(self._tray_boot)
         menu.addSeparator()
@@ -905,6 +1078,7 @@ class MainWindow(QMainWindow):
         except (ValueError, AttributeError):
             pass
         self._tray_boot.setChecked(autostart.is_enabled())
+        self._act_auto.setChecked(bool(cfg.auto_login))
         if cfg.get_password():
             self._edit_pwd.setPlaceholderText(
                 tr("ph.password_saved", backend=tr(f"password.storage.{cfg.password_backend_key()}")))
@@ -1003,6 +1177,12 @@ class MainWindow(QMainWindow):
         self._service_thread.done.connect(done)
         self._service_thread.start()
 
+    def _toggle_auto_login(self, on: bool) -> None:
+        self._config.auto_login = on
+        self._config.save()
+        self._chk_auto.setChecked(on)
+        self._append_log(tr("log.auto_login_on") if on else tr("log.auto_login_off"))
+
     def _toggle_autostart_from_tray(self, on: bool) -> None:
         result = autostart.set_enabled(on)
         self._chk_boot.setChecked(result)
@@ -1097,6 +1277,9 @@ class MainWindow(QMainWindow):
     def _open_log_folder(self) -> None:
         from .config import config_dir
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
+
+    def _show_portal_wizard(self) -> None:
+        PortalWizardDialog(self._config, self).exec()
 
     def _show_devices(self) -> None:
         dlg = DevicesDialog(self._config, self._last_status.get("ip") or "", self)

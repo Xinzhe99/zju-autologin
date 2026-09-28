@@ -19,7 +19,7 @@ from pathlib import Path
 from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, pyqtSlot
 
 from . import updates
-from .config import Config, append_event
+from .config import Config, append_event, append_usage_snapshot
 from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
@@ -80,6 +80,7 @@ class MonitorWorker(QObject):
         self._last_login_attempt = 0.0
         self._last_proactive_date = ""
         self._last_heartbeat = 0.0
+        self._usage_date = ""
         self._battery_mode_on = False
         self._running = True
 
@@ -260,6 +261,12 @@ class MonitorWorker(QObject):
                 self._fail_count = 0
                 self._auth_error = ""
                 self._ping_heartbeat()
+                all_bytes = int(status.get("all_bytes") or 0)
+                if all_bytes > 0:
+                    today = time.strftime("%Y-%m-%d")
+                    if today != self._usage_date:
+                        self._usage_date = today
+                        append_usage_snapshot(all_bytes, self._log_dir)
                 if self._notify_sent and self._config.notify_recovery:
                     self._maybe_push_recovery(status.get("ip") or "")
                 self._reset_notify()

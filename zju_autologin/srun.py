@@ -299,11 +299,59 @@ class SrunClient:
             pass
         return ""
 
+    def parse_portal_config(self) -> dict:
+        """解析门户的 acid 与服务端识别的本机 IP。
+
+        门户首页可能是跳转壳：CONFIG 不在首页，而是带着 ac_id 链到
+        srun_portal_pc 登录页 —— 此时跟进登录页再解析 CONFIG。
+        """
+        body = self._get("/index_1.html", {})
+        result = {"acid": "", "ip": ""}
+        match = re.search(r'acid\s*:\s*"?(\w+)"?', body)
+        if match:
+            result["acid"] = match.group(1)
+        match = re.search(r"ip\s*:\s*\"(\d{1,3}(?:\.\d{1,3}){3})\"", body)
+        if match:
+            result["ip"] = match.group(1)
+        if not result["acid"]:
+            idx = body.find("srun_portal_pc")
+            if idx != -1:
+                match = re.search(r"ac_id=(\w+)", body[idx:idx + 300])
+            else:
+                match = None
+            if match:
+                result["acid"] = match.group(1)
+                try:
+                    page = self._get(f"/srun_portal_pc?ac_id={match.group(1)}", {})
+                    match = re.search(r"ip\s*:\s*\"(\d{1,3}(?:\.\d{1,3}){3})\"", page)
+                    if match:
+                        result["ip"] = match.group(1)
+                except SrunError:
+                    pass
+        return result
+
     def get_portal_ip(self) -> str:
         """从门户首页 CONFIG 里读取服务端识别到的本机 IP（最可靠）。"""
-        body = self._get("/index_1.html", {})
-        match = re.search(r"ip\s*:\s*\"(\d{1,3}(?:\.\d{1,3}){3})\"", body)
-        return match.group(1) if match else ""
+        return self.parse_portal_config().get("ip", "")
+
+    def probe_portal(self, username: str = "probe", ip: str = "") -> dict:
+        """探测当前门户可用性（接入向导用）：CONFIG 解析 + challenge 实测。"""
+        try:
+            cfg = self.parse_portal_config()
+        except SrunError as exc:
+            return {"ok": False, "acid": "", "ip": "", "challenge_ok": False, "msg": str(exc)}
+        acid = cfg.get("acid") or ""
+        ip = ip or cfg.get("ip") or self.get_local_ip()
+        challenge_ok = False
+        if acid:
+            try:
+                resp = self._jsonp("/cgi-bin/get_challenge", {"username": username, "ip": ip})
+                challenge_ok = resp.get("error") == "ok"
+            except SrunError:
+                challenge_ok = False
+        ok = bool(acid) and challenge_ok
+        msg = "ok" if ok else ("no acid" if not acid else "challenge failed")
+        return {"ok": ok, "acid": acid, "ip": ip, "challenge_ok": challenge_ok, "msg": msg}
 
     def resolve_ac_id(self) -> str:
         """ac_id 配置为 auto 时，从 captive portal 重定向自动探测（其他 srun 学校可用）。"""

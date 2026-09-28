@@ -113,6 +113,49 @@ def append_event(kind: str, detail: str = "", directory: Path | None = None) -> 
         pass
 
 
+def append_usage_snapshot(all_bytes: int, directory: Path | None = None) -> None:
+    """记录每日流量读数（usage.jsonl，一天一行，保留最近 60 天）。"""
+    if all_bytes <= 0:
+        return
+    try:
+        base = directory or config_dir()
+        base.mkdir(parents=True, exist_ok=True)
+        path = base / "usage.jsonl"
+        today = time.strftime("%Y-%m-%d")
+        rows: list[dict] = []
+        if path.exists():
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+        rows = [r for r in rows if r.get("date") != today]
+        rows.append({"date": today, "bytes": int(all_bytes)})
+        rows = rows[-60:]
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + chr(10) for r in rows),
+                       encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def read_usage(limit: int = 40, directory: Path | None = None) -> list[dict]:
+    try:
+        path = (directory or config_dir()) / "usage.jsonl"
+        if not path.exists():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+        return rows[-limit:]
+    except OSError:
+        return []
+
+
 def read_events(limit: int = 200, directory: Path | None = None) -> list[dict]:
     try:
         path = (directory or config_dir()) / "events.jsonl"

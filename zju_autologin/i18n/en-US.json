@@ -207,5 +207,19 @@
   "msg.cfg_imported": "Config imported — please re-enter your password and save",
   "msg.cfg_import_fail": "Import failed: {msg}",
   "btn.export_cfg": "Export",
-  "btn.import_cfg": "Import"
+  "btn.import_cfg": "Import",
+  "crash.tray_title": "App error",
+  "crash.tray_body": "Logged; the app keeps running",
+  "update.hash_fail": "Checksum mismatch — installation cancelled",
+  "stats.usage_title": "Daily traffic (30 days)",
+  "stats.online_days": "Session online for {days} days",
+  "stats.no_data": "No traffic data yet",
+  "log.auto_login_on": "Auto-login enabled",
+  "log.auto_login_off": "Auto-login disabled",
+  "btn.portal_wizard": "Connect another portal",
+  "portal.title": "Connect another Srun portal",
+  "portal.detect": "Detect & test",
+  "portal.detecting": "Detecting…",
+  "portal.result_ok": "Detected: ac_id={acid}, local IP {ip}, challenge OK ✓ — save it, then fill your account in the main window",
+  "portal.result_fail": "Detection failed: {msg}. Check the URL and make sure you are on that campus network"
 }
