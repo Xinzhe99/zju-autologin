@@ -2,11 +2,28 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://www.riverbankcomputing.com/software/pyqt/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)](releases)
+[![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](releases)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 一个挂在 Windows 桌面托盘的后台小程序：**自动检测浙江大学校园网认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因为认证过期而失联。
 
-![主界面](docs/screenshot_online.png)
+| 主界面 | 首次引导 |
+| --- | --- |
+| ![主界面](docs/screenshot_online.png) | ![首次引导](docs/wizard_welcome.png) |
+
+## 下载安装
+
+到 [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 下载（由 GitHub Actions 自动构建）：
+
+| 平台 | 安装版 | 便携版 |
+| --- | --- | --- |
+| Windows | `ZJUAutoLogin-*-windows-setup.exe` | `ZJUAutoLogin-*-windows-portable.zip` |
+| macOS | `ZJUAutoLogin-*-macos.dmg` | `ZJUAutoLogin-*-macos-portable.zip` |
+
+- Windows 安装包按用户安装（无需管理员），可选桌面图标与开机自启
+- macOS 未做代码签名：首次打开若被 Gatekeeper 拦截，请右键 App →"打开"，或到"系统设置 → 隐私与安全性"放行
+- 界面支持**简体中文 / English**，默认跟随系统语言，可在设置中切换
 
 ## 为什么需要它
 
@@ -20,13 +37,17 @@
 
 ## 功能
 
-- ✅ **自动保活**：按可配置间隔（默认 60 秒）检测在线状态，掉线自动重登，失败指数退避（60s → 10min）
+- ✅ **首次引导**：初次打开自动检测网络；若已登录校园网，**自动带出当前账号**让你确认，只需再补一次密码（密码在门户侧不可获取，任何工具都拿不到）
+- ✅ **多语言**：简体中文 / English，默认跟随系统语言，可随时切换
+- ✅ **自动保活**：按可配置间隔（默认 60 秒）检测在线状态，掉线自动重登，失败指数退避（60s → 10min）；自动重登成功会弹托盘通知
 - ✅ **托盘常驻**：关闭窗口即最小化到托盘，托盘图标实时反映网络状态（绿=在线 / 红=掉线 / 蓝=检测中 / 灰=无校园网）
 - ✅ **账号设置**：图形界面填入学号密码，密码默认存入 **Windows 凭据管理器**（不明文落盘）
 - ✅ **开机自启**：一键开关（写入 HKCU 注册表，无需管理员权限）
 - ✅ **认证失败提醒**：密码错误等不可自动恢复的错误会弹托盘通知，并停止重试避免锁号
 - ✅ **CLI 模式**：无界面运行，可配合 Windows 任务计划或 SSH 使用
 - ✅ **在线状态面板**：认证账号、本机 IP、上线时间一目了然
+- ✅ **更新检查**：发现新版本时托盘提醒，点击直达下载页（可关闭）
+- ✅ **本地日志**：运行日志同时写入 `app.log`，远程排查掉线原因更方便
 
 ## 校园网认证机制解析
 
@@ -121,6 +142,12 @@ python cli.py watch 30  # 常驻守护（每 30 秒检测，可配合任务计�
 **Q: 密码改了怎么办？**
 在设置里重新输入密码保存即可，程序会自动清除错误锁存并重试。
 
+**Q: 已在线时打开，为什么账号被自动填上了？**
+程序从门户在线状态接口读出当前会话的账号（仅限本机），方便你确认。密码任何工具都无法获取，需要你自己输入一次。
+
+**Q: macOS 提示"已损坏，无法打开"？**
+未签名应用在部分 macOS 上会这样提示。终端执行 `xattr -cr /Applications/ZJU\ AutoLogin.app` 后再打开。
+
 ## 项目结构
 
 ```
@@ -129,11 +156,16 @@ zju-autologin/
 ├── cli.py                     # 命令行入口（check / login / watch）
 ├── zju_autologin/
 │   ├── srun.py                # 深澜 Srun 协议实现（get_challenge / srun_portal / rad_user_info）
-│   ├── monitor.py             # 后台监控线程（定时检测 + 自动重登 + 退避）
-│   ├── config.py              # 配置持久化 + Windows 凭据管理器
-│   ├── autostart.py           # 开机自启（注册表 HKCU\...\Run）
+│   ├── monitor.py             # 后台监控线程（定时检测 + 自动重登 + 退避 + 更新检查）
+│   ├── wizard.py              # 首次引导向导（自动检测在线账号）
+│   ├── i18n.py + i18n/        # 多语言模块与翻译文件（zh-CN / en-US）
+│   ├── config.py              # 配置持久化（跨平台路径）+ 系统凭据管理器
+│   ├── autostart.py           # 开机自启（Windows 注册表 / macOS LaunchAgent）
+│   ├── updates.py             # GitHub Releases 更新检查
 │   ├── ui.py                  # PyQt6 主窗口 + 托盘
 │   └── theme.py               # 浙大蓝 QSS 主题
+├── .github/workflows/release.yml  # 打 tag 自动构建三平台安装包/便携包并发布 Release
+├── installer.iss              # Inno Setup 安装包脚本（Windows）
 ├── resources/                 # 校徽 logo、图标
 ├── tools/                     # 开发工具（资源生成、JS 交叉验证、UI 截图）
 └── build_exe.bat              # PyInstaller 打包脚本

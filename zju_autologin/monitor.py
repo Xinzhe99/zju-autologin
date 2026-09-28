@@ -2,6 +2,7 @@
 
 基于 QObject + QThread：worker 移动到工作线程，内部 QTimer 驱动检测循环。
 UI 与 worker 之间全部通过信号-槽（跨线程排队调用）交互，不阻塞界面。
+另负责低频的 GitHub Releases 更新检查（每 24 小时一次）。
 """
 
 from __future__ import annotations
@@ -11,7 +12,9 @@ import urllib.request
 
 from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, pyqtSlot
 
+from . import __version__, updates
 from .config import Config
+from .i18n import tr
 from .srun import SrunClient, SrunError
 
 # 状态含义（UI 据此着色）：
@@ -28,6 +31,7 @@ _PROBE_URLS = (
     ("http://www.msftconnecttest.com/connecttest.txt", "Microsoft Connect Test"),
     ("http://connect.rom.miui.com/generate_204", None),
 )
+_UPDATE_INTERVAL = 24 * 3600
 
 
 def probe_internet(timeout: float = 4.0) -> bool:
@@ -50,11 +54,13 @@ def probe_internet(timeout: float = 4.0) -> bool:
 class MonitorWorker(QObject):
     statusChanged = pyqtSignal(dict)
     logLine = pyqtSignal(str)
+    updateAvailable = pyqtSignal(str, str)  # 最新版本号, 下载页
 
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
         self._timer: QTimer | None = None
+        self._update_timer: QTimer | None = None
         self._busy = False
         self._auth_error = ""
         self._fail_count = 0
@@ -69,14 +75,21 @@ class MonitorWorker(QObject):
         self._timer.setInterval(self._config.interval * 1000)
         self._timer.timeout.connect(self.check_once)
         self._timer.start()
-        self.log(f"监控已启动，每 {self._config.interval} 秒检测一次")
+        self.log(tr("log.monitor_started", n=self._config.interval))
+        if self._config.check_updates:
+            self.check_updates()
+        self._update_timer = QTimer()
+        self._update_timer.setInterval(_UPDATE_INTERVAL * 1000)
+        self._update_timer.timeout.connect(self.check_updates)
+        self._update_timer.start()
         self.check_once()
 
     @pyqtSlot()
     def stop(self) -> None:
         self._running = False
-        if self._timer is not None:
-            self._timer.stop()
+        for timer in (self._timer, self._update_timer):
+            if timer is not None:
+                timer.stop()
 
     # ------------------------------------------------------- UI 触发的槽
 
@@ -91,7 +104,6 @@ class MonitorWorker(QObject):
     @pyqtSlot()
     def login_now(self) -> None:
         if self._busy:
-            self.log("当前有检测正在进行，请稍候")
             return
         self._busy = True
         try:
@@ -106,11 +118,20 @@ class MonitorWorker(QObject):
         seconds = max(10, min(600, int(seconds)))
         if self._timer is not None:
             self._timer.setInterval(seconds * 1000)
-        self.log(f"检测间隔已调整为 {seconds} 秒")
+        self.log(tr("log.interval_changed", n=seconds))
 
     @pyqtSlot()
     def clear_auth_error(self) -> None:
         self._auth_error = ""
+
+    @pyqtSlot()
+    def check_updates(self) -> None:
+        if not self._config.check_updates:
+            return
+        newer, version, url = updates.check_newer()
+        if newer:
+            self.log(tr("log.update_found", version=version))
+            self.updateAvailable.emit(version, url)
 
     # --------------------------------------------------------------- 内部
 
@@ -128,10 +149,10 @@ class MonitorWorker(QObject):
 
             if not status["online"]:
                 if not self._config.username or not self._config.get_password():
-                    self._emit("need_config", detail="未配置账号，请在下方填写学号密码并保存")
+                    self._emit("need_config", detail=tr("detail.need_config"))
                     return
                 if not self._config.auto_login and not manual:
-                    self._emit("offline", detail="门户未认证（自动登录已关闭）")
+                    self._emit("offline", detail=tr("detail.offline_manual"))
                     return
                 if self._auth_error and not manual:
                     self._emit("auth_error", detail=self._auth_error)
@@ -139,7 +160,7 @@ class MonitorWorker(QObject):
                 # 连续失败后指数退避（60s 起步，封顶 10 分钟）
                 backoff = min(60 * (2 ** min(self._fail_count, 4)), 600)
                 if not manual and time.time() - self._last_login_attempt < backoff:
-                    self._emit("offline", detail="登录暂未成功，稍后自动重试")
+                    self._emit("offline", detail=tr("detail.wait_retry"))
                     return
                 self._last_login_attempt = time.time()
                 self._do_login(client=client)
@@ -154,21 +175,21 @@ class MonitorWorker(QObject):
                     username=status["username"],
                     ip=status["ip"],
                     login_time=status.get("login_time", ""),
-                    detail="网络正常",
+                    detail=tr("detail.online_ok"),
                 )
             else:
                 self._emit(
                     "authed_no_internet",
                     username=status["username"],
                     ip=status["ip"],
-                    detail="校园网已认证，但外网不可用",
+                    detail=tr("detail.authed_no_internet"),
                 )
         finally:
             self._busy = False
 
     def _do_login(self, client: SrunClient | None = None) -> None:
         client = client or SrunClient(base_url=self._config.base_url)
-        self.log(f"正在登录校园网（{self._config.username}{self._config.domain}）…")
+        self.log(tr("log.logging_in", username=self._config.username + self._config.domain))
         try:
             result = client.login(
                 self._config.username,
@@ -182,7 +203,7 @@ class MonitorWorker(QObject):
         if result["ok"]:
             self._fail_count = 0
             self._auth_error = ""
-            self.log("登录成功 ✓")
+            self.log(tr("log.login_ok"))
             try:
                 status = client.get_status()
             except SrunError:
@@ -192,15 +213,15 @@ class MonitorWorker(QObject):
                 username=status.get("username") or result["username"],
                 ip=status.get("ip") or result.get("ip") or "",
                 login_time=status.get("login_time", ""),
-                detail="刚刚完成认证",
+                detail=tr("detail.just_logged"),
             )
             return
 
         resp = result.get("resp", {})
         err_code = str(resp.get("error", ""))
         msg = result["msg"]
-        self.log(f"登录失败：{msg}")
-        if err_code in _AUTH_ERRORS or "密码错误" in msg or "账号不存在" in msg:
+        self.log(tr("log.login_failed", msg=msg))
+        if err_code in _AUTH_ERRORS or tr("err.password_error") in msg or tr("err.username_error") in msg:
             self._auth_error = msg
             self._fail_count = 0
             self._emit("auth_error", username=result["username"], detail=msg)
@@ -228,6 +249,12 @@ class Monitor(QObject):
 
     statusChanged = pyqtSignal(dict)
     logLine = pyqtSignal(str)
+    updateAvailable = pyqtSignal(str, str)
+
+    checkRequested = pyqtSignal()
+    loginRequested = pyqtSignal()
+    intervalChanged = pyqtSignal(int)
+    credentialsChanged = pyqtSignal()
 
     def __init__(self, config: Config, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -237,17 +264,13 @@ class Monitor(QObject):
 
         self._worker.statusChanged.connect(self.statusChanged)
         self._worker.logLine.connect(self.logLine)
+        self._worker.updateAvailable.connect(self.updateAvailable)
 
         self.checkRequested.connect(self._worker.check_manual)
         self.loginRequested.connect(self._worker.login_now)
         self.intervalChanged.connect(self._worker.apply_interval)
         self.credentialsChanged.connect(self._worker.clear_auth_error)
         self._thread.started.connect(self._worker.start)
-
-    checkRequested = pyqtSignal()
-    loginRequested = pyqtSignal()
-    intervalChanged = pyqtSignal(int)
-    credentialsChanged = pyqtSignal()
 
     def start(self) -> None:
         self._thread.start()

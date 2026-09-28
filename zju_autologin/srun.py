@@ -40,6 +40,8 @@ import time
 import urllib.parse
 import urllib.request
 
+from .i18n import tr
+
 __all__ = [
     "SrunClient",
     "SrunError",
@@ -68,25 +70,30 @@ class SrunError(Exception):
 
 
 def friendly_error(resp: dict) -> str:
-    """把 srun 的错误响应翻译成中文提示。"""
+    """把 srun 的错误响应翻译成本地化提示。"""
+    from .i18n import tr
+
     err = str(resp.get("error", ""))
     msg = str(resp.get("error_msg", "") or "").strip()
-    ecodes = {
-        "E2620": "该账号在线数已达上限，或本机 IP 已在线（无需重复登录）",
-        "E1002": "账号或密码错误",
-        "E2901": "认证被拒绝，请到自助服务 myvpn.zju.edu.cn 检查账号状态",
-        "ip_already_online_error": "本机 IP 已在线，无需重复登录",
-        "password_error": "账号或密码错误",
-        "username_error": "账号不存在",
-        "not_online_error": "账号不在认证在线表中",
-        "access_denied": "认证被拒绝",
-        "nonce_error": "请求校验失败，请重试",
-        "traffic_mismatch_error": "流量校验失败，请重试",
+    keys = {
+        "E2620": "err.E2620",
+        "E2901": "err.E2901",
+        "ip_already_online_error": "err.ip_already_online_error",
+        "password_error": "err.password_error",
+        "E1002": "err.E1002",
+        "username_error": "err.username_error",
+        "not_online_error": "err.not_online_error",
+        "access_denied": "err.access_denied",
+        "nonce_error": "err.nonce_error",
+        "traffic_mismatch_error": "err.traffic_mismatch_error",
     }
-    text = ecodes.get(err, ecodes.get(msg, ""))
-    if msg and msg not in (err,):
-        return f"{text}（{err or msg}: {msg}）" if text else msg
-    return text or err or "未知错误"
+    key = keys.get(err) or keys.get(msg)
+    text = tr(key) if key else ""
+    if msg and msg != err:
+        if text:
+            return tr("err.detail_fmt", text=text, code=err or msg, msg=msg)
+        return msg
+    return text or err or tr("err.unknown")
 
 
 def _b64_custom(data: bytes) -> str:
@@ -120,7 +127,7 @@ def _unpack_words(words: list[int], trim_len: bool) -> bytes:
         declared = words[-1]
         max_len = (len(words) - 1) << 2
         if declared < max_len - 3 or declared > max_len:
-            raise SrunError("XXTEA 解包长度校验失败")
+            raise SrunError(tr("srun.xxtea_fail"))
         limit = declared
     else:
         limit = len(words) << 2
@@ -173,9 +180,9 @@ def _parse_jsonp(text: str) -> dict:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise SrunError(f"门户响应解析失败: {text[:120]!r}") from exc
+        raise SrunError(tr("srun.parse_failed", raw=text[:120])) from exc
     if not isinstance(data, dict):
-        raise SrunError("门户响应格式异常")
+        raise SrunError(tr("srun.response_bad"))
     return data
 
 
@@ -211,9 +218,9 @@ class SrunClient:
             body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             if body:
                 return body
-            raise SrunError(f"访问门户失败: {exc}") from exc
+            raise SrunError(tr("srun.request_failed", err=exc)) from exc
         except Exception as exc:  # noqa: BLE001 - 统一转成 SrunError
-            raise SrunError(f"访问门户失败: {exc}") from exc
+            raise SrunError(tr("srun.request_failed", err=exc)) from exc
 
     def _jsonp(self, path: str, params: dict) -> dict:
         self._callback_seq += 1
@@ -300,7 +307,7 @@ class SrunClient:
         """
         username = (username + domain).strip()
         if not username:
-            return {"ok": False, "msg": "未填写学号/账号", "username": "", "ip": ip, "resp": {}}
+            return {"ok": False, "msg": tr("srun.no_account"), "username": "", "ip": ip, "resp": {}}
         if not ip:
             ip = self.get_portal_ip() or self.get_local_ip()
 
@@ -311,7 +318,7 @@ class SrunClient:
             if challenge.get("error") != "ok" or not challenge.get("challenge"):
                 return {
                     "ok": False,
-                    "msg": friendly_error(challenge) or "获取 challenge 失败",
+                    "msg": friendly_error(challenge) or tr("srun.challenge_fail"),
                     "username": username,
                     "ip": ip,
                     "resp": challenge,
@@ -365,9 +372,9 @@ class SrunClient:
         ok = resp.get("error") == "ok"
         suc_msg = str(resp.get("suc_msg", "") or "")
         if ok and suc_msg == "ip_already_online_error":
-            msg = "本机 IP 已在线，认证会话有效"
+            msg = tr("srun.already_online")
         elif ok:
-            msg = "登录成功"
+            msg = tr("srun.login_ok")
         else:
             msg = friendly_error(resp)
         return {"ok": ok, "msg": msg, "username": username, "ip": ip, "resp": resp}

@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('resources', 'resources')],
+    datas=[('resources', 'resources'), ('zju_autologin/i18n', 'zju_autologin/i18n')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

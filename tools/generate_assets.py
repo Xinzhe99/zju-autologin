@@ -66,4 +66,12 @@ icon.save(
     os.path.join(RES, "zju.ico"),
     sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)],
 )
+
+# ---- 5. macOS icns ----
+try:
+    icon.save(os.path.join(RES, "zju.icns"), format="ICNS")
+    print("icns generated")
+except Exception as exc:  # noqa: BLE001
+    print("icns skipped:", exc)
+
 print("assets generated in", RES)

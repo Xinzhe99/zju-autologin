@@ -1,20 +1,23 @@
 """ZJU 校园网自动登录 —— 程序入口。
 
 用法：
-    python main.py              打开主窗口
+    python main.py              打开主窗口（首次运行先进入引导向导）
     python main.py --minimized  启动后最小化到托盘（开机自启用）
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from PyQt6.QtCore import QLockFile, QTemporaryDir
+from PyQt6.QtCore import QLockFile
 from PyQt6.QtWidgets import QApplication
 
-from zju_autologin.config import Config
+from zju_autologin import i18n
+from zju_autologin.config import Config, config_dir
 from zju_autologin.monitor import Monitor
 from zju_autologin.ui import MainWindow
+from zju_autologin.wizard import SetupWizard
 
 
 def main() -> int:
@@ -23,14 +26,21 @@ def main() -> int:
     app.setApplicationDisplayName("ZJU 校园网自动登录")
     app.setQuitOnLastWindowClosed(False)
 
-    # 单实例保护
-    temp_dir = QTemporaryDir()
-    lock = QLockFile(f"{temp_dir.path()}/zju-autologin.lock")
+    # 单实例保护（固定锁路径，跨进程互斥）
+    lock = QLockFile(str(Path(config_dir()) / "app.lock"))
     if not lock.tryLock(100):
         print("已有实例在运行（托盘图标处查看）。")
         return 0
 
     config = Config()
+    i18n.set_lang(config.language)
+
+    # 首次使用 → 引导向导（含在线账号自动检测）
+    if not config.username:
+        wizard = SetupWizard(config)
+        wizard.exec()
+        i18n.set_lang(config.language)
+
     monitor = Monitor(config)
     window = MainWindow(config, monitor)
     monitor.start()

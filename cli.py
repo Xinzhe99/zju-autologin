@@ -11,16 +11,11 @@ from __future__ import annotations
 import sys
 import time
 
+from zju_autologin import i18n
 from zju_autologin.config import Config
+from zju_autologin.i18n import tr
 from zju_autologin.monitor import probe_internet
 from zju_autologin.srun import SrunClient, SrunError
-
-STATE_TEXT = {
-    "online": "已认证，外网可用",
-    "authed_no_internet": "已认证，但外网不可用",
-    "offline": "门户可达，未认证",
-    "no_campus": "门户不可达（不在校园网或网络未连接）",
-}
 
 
 def cmd_check(cfg: Config) -> int:
@@ -31,45 +26,49 @@ def cmd_check(cfg: Config) -> int:
         print(f"[x] {exc}")
         return 2
     if not status["online"]:
-        print(f"[!] {STATE_TEXT['offline']}  base_url={cfg.base_url}")
+        print(tr("cli.offline_line", state=tr("cli.offline"), url=cfg.base_url))
         return 1
     ok = probe_internet()
-    print(f"[ok] 在线  账号={status['username']}  IP={status['ip']}  "
-          f"上线时间={status.get('login_time') or '-'}  外网={'正常' if ok else '不可用'}")
+    print(tr("cli.ok_line",
+             username=status['username'], ip=status['ip'],
+             since=status.get('login_time') or '-',
+             internet=tr("cli.internet_ok") if ok else tr("cli.internet_bad")))
     return 0 if ok else 1
 
 
 def cmd_login(cfg: Config) -> int:
     if not cfg.username or not cfg.get_password():
-        print("[x] 尚未配置账号密码，请先运行 GUI 版保存设置，或手动编辑：")
+        print(tr("cli.config_missing"))
         print(f"    {cfg.path}")
         return 2
     client = SrunClient(base_url=cfg.base_url)
     result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
-    print(("[ok] " if result["ok"] else "[x] ") + result["msg"])
+    print((tr("cli.login_ok_prefix") if result["ok"] else tr("cli.login_fail_prefix")) + result["msg"])
     return 0 if result["ok"] else 1
 
 
 def cmd_watch(cfg: Config, interval: int | None) -> int:
     seconds = interval or cfg.interval
-    print(f"守护模式启动，每 {seconds} 秒检测一次（Ctrl+C 退出）")
+    print(tr("cli.watching", n=seconds))
     while True:
         try:
             code = cmd_check(cfg)
             if code != 0:
                 result = SrunClient(base_url=cfg.base_url).login(
                     cfg.username, cfg.get_password(), domain=cfg.domain)
-                print(("[ok] 自动登录：" if result["ok"] else "[x] 自动登录失败：") + result["msg"])
+                print((tr("cli.login_ok_prefix") if result["ok"]
+                       else tr("cli.login_fail_prefix")) + tr("cli.auto_relogin", msg=result["msg"]))
         except KeyboardInterrupt:
-            print("已退出")
+            print(tr("cli.exited"))
             return 0
         except Exception as exc:  # noqa: BLE001 - 守护进程不因单次异常退出
-            print(f"[x] {exc}")
+            print(tr("cli.exc", msg=exc))
         time.sleep(seconds)
 
 
 def main() -> int:
     cfg = Config()
+    i18n.set_lang(cfg.language)
     action = sys.argv[1] if len(sys.argv) > 1 else "check"
     if action == "check":
         return cmd_check(cfg)

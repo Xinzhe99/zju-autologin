@@ -1,7 +1,9 @@
-"""配置持久化：JSON 文件 + Windows 凭据管理器（keyring，可选）存密码。
+"""配置持久化：JSON 文件 + 系统凭据管理器（keyring，可选）存密码。
 
-密码优先写入系统凭据管理器（keyring → Windows Credential Locker）；
-keyring 不可用时退化为 base64 混淆存放在配置文件中（并在 loaded_from 中标记）。
+- 路径跨平台：Windows %APPDATA%/ZJUAutoLogin，macOS ~/Library/Application Support/ZJUAutoLogin，
+  Linux ~/.config/zju-autologin
+- 密码优先写入系统凭据管理器（Windows Credential Locker / macOS Keychain）；
+  keyring 不可用时退化为 base64 混淆存放在配置文件中
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import base64
 import json
 import os
 import sys
+from pathlib import Path
 
 APP_ID = "ZJUAutoLogin"
 KEYRING_SERVICE = "ZJUAutoLogin"
@@ -17,22 +20,31 @@ KEYRING_SERVICE = "ZJUAutoLogin"
 _DEFAULTS = {
     "username": "",
     "domain": "",
-    "interval": 60,          # 检测间隔（秒）
-    "auto_login": True,      # 掉线后自动登录
+    "interval": 60,            # 检测间隔（秒）
+    "auto_login": True,        # 掉线后自动登录
     "minimize_to_tray": True,  # 关闭窗口时最小化到托盘
-    "autostart": False,      # 开机自启
+    "autostart": False,        # 开机自启
+    "language": "auto",        # auto / zh-CN / en-US
+    "check_updates": True,     # 自动检查更新
     "base_url": "https://net.zju.edu.cn",
 }
 
 
-def config_path() -> str:
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    if base == os.path.expanduser("~"):
-        base = os.path.join(base, ".zju-autologin")
+def config_dir() -> Path:
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA") or Path.home())
+        path = base / "ZJUAutoLogin"
+    elif sys.platform == "darwin":
+        path = Path.home() / "Library" / "Application Support" / "ZJUAutoLogin"
     else:
-        base = os.path.join(base, "ZJUAutoLogin")
-    os.makedirs(base, exist_ok=True)
-    return os.path.join(base, "config.json")
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+        path = base / "zju-autologin"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def config_path() -> str:
+    return str(config_dir() / "config.json")
 
 
 class Config:
@@ -143,12 +155,9 @@ class Config:
         except Exception:  # noqa: BLE001
             self.password_backend = "file"  # 退化为混淆存储
 
-    def password_backend_label(self) -> str:
-        return {
-            "keyring": "Windows 凭据管理器",
-            "file": "配置文件（混淆存储）",
-            "none": "未保存",
-        }.get(self.password_backend, self.password_backend)
+    def password_backend_key(self) -> str:
+        """返回 'keyring' / 'file' / 'none'，由 UI 翻译成可见文案。"""
+        return self.password_backend
 
 
 def resource_path(relative: str) -> str:
