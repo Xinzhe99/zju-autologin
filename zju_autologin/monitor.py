@@ -44,11 +44,12 @@ _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
 
 
 def probe_internet(timeout: float = 4.0) -> bool:
-    """探测外网连通性；captive portal 劫持的响应会被内容校验识破。"""
+    """探测外网连通性（直连，不经过系统代理）；captive portal 劫持会被内容校验识破。"""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     for url, expect_body in _PROBE_URLS:
         try:
             req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 if resp.status == 204:
                     return True
                 if expect_body and expect_body in resp.read(256).decode("utf-8", "replace"):

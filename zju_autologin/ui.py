@@ -576,22 +576,33 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(16, 16, 16, 12)
         root.setSpacing(12)
 
-        # ---- 头部（深蓝渐变 + 官方白色校徽）----
-        header = QFrame()
-        header.setObjectName("header")
-        header.setFixedHeight(88)
-        hlay = QHBoxLayout(header)
-        hlay.setContentsMargins(20, 12, 20, 12)
-        logo = _load_pixmap("zju_logo.png")
-        logo_label = QLabel()
-        if not logo.isNull():
-            logo_label.setPixmap(logo.scaledToHeight(52, Qt.TransformationMode.SmoothTransformation))
-        hlay.addWidget(logo_label)
+        # ---- 顶栏（Codex 风格：小校徽 + 应用名 + 版本）----
+        topbar = QFrame()
+        topbar.setObjectName("topbar")
+        topbar.setFixedHeight(46)
+        hlay = QHBoxLayout(topbar)
+        hlay.setContentsMargins(4, 0, 4, 0)
+        hlay.setSpacing(10)
+        seal = _load_pixmap("zju_seal_blue.png")
+        seal_label = QLabel()
+        if not seal.isNull():
+            seal_label.setPixmap(seal.scaled(26, 26, Qt.AspectRatioMode.KeepAspectRatio,
+                                             Qt.TransformationMode.SmoothTransformation))
+        hlay.addWidget(seal_label)
+        title_col = QVBoxLayout()
+        title_col.setSpacing(0)
+        self._topbar_title = QLabel()
+        self._topbar_title.setObjectName("topbarTitle")
+        self._topbar_sub = QLabel()
+        self._topbar_sub.setObjectName("topbarSub")
+        title_col.addWidget(self._topbar_title)
+        title_col.addWidget(self._topbar_sub)
+        hlay.addLayout(title_col)
         hlay.addStretch(1)
         self._version_label = QLabel()
-        self._version_label.setObjectName("headerHint")
+        self._version_label.setObjectName("topbarHint")
         hlay.addWidget(self._version_label)
-        root.addWidget(header)
+        root.addWidget(topbar)
 
         # ---- 更新横幅（有新版本时显示）----
         self._update_banner = QPushButton()
@@ -691,7 +702,11 @@ class MainWindow(QMainWindow):
         self._eye = QToolButton()
         self._eye.setObjectName("eye")
         self._eye.setCheckable(True)
-        self._eye.setText("👁")
+        eye_icon_path = resource_path("icon_eye.png")
+        if os.path.isfile(eye_icon_path):
+            self._eye.setIcon(QIcon(eye_icon_path))
+        else:
+            self._eye.setText("👁")
         self._eye.setCursor(Qt.CursorShape.PointingHandCursor)
         self._eye.setFixedWidth(34)
         self._eye.toggled.connect(
@@ -915,6 +930,8 @@ class MainWindow(QMainWindow):
     def retranslate_ui(self) -> None:
         """运行时切换语言后刷新全部文本。"""
         self.setWindowTitle(tr("app.name"))
+        self._topbar_title.setText(tr("app.name"))
+        self._topbar_sub.setText(tr("app.tagline"))
         self._version_label.setText(tr("app.header_badge", version=__version__))
         self._btn_check.setText(tr("btn.check_now"))
         self._btn_login.setText(tr("btn.login_now"))

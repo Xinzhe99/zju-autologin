@@ -221,5 +221,7 @@
   "portal.detect": "Detect & test",
   "portal.detecting": "Detecting…",
   "portal.result_ok": "Detected: ac_id={acid}, local IP {ip}, challenge OK ✓ — save it, then fill your account in the main window",
-  "portal.result_fail": "Detection failed: {msg}. Check the URL and make sure you are on that campus network"
+  "portal.result_fail": "Detection failed: {msg}. Check the URL and make sure you are on that campus network",
+  "app.tagline": "ZJU campus keep-alive",
+  "log.http_fallback": "HTTPS blocked; switched to direct HTTP"
 }

@@ -20,7 +20,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     config = Config()
     config.data["username"] = ""
+    SetupWizard._start_detect = lambda self: None  # 防止真实检测写入真实账号
     wizard = SetupWizard(config)
+    wizard._edit_user.setText("3230104321")
     wizard.show()
     app.processEvents()
 

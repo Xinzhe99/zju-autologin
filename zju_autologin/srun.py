@@ -72,6 +72,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+# 绕过系统代理的直连 opener（门户与认证 API 只应走校园网直连）
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 class SrunError(Exception):
     """门户请求失败（网络不通、响应异常等）。"""
 
@@ -212,14 +216,15 @@ class SrunClient:
 
     # ------------------------------------------------------------------ HTTP
 
-    def _get(self, path: str, params: dict) -> str:
-        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-        url = f"{self.base_url}{path}?{query}"
+    def _request_once(self, url: str) -> str:
+        """单次请求。门户必须在校园网内直达：显式绕过系统代理
+        （Clash/v2ray 等代理工具会拦截或断开发往门户的 TLS 连接，
+        表现为 WinError 10053 / SSL UNEXPECTED_EOF）。"""
         req = urllib.request.Request(
             url, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with _DIRECT_OPENER.open(req, timeout=self.timeout) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             # srun 的部分错误以 HTTP 400 + JSONP 错误体返回，需读出内容
@@ -229,6 +234,23 @@ class SrunClient:
             raise SrunError(tr("srun.request_failed", err=exc)) from exc
         except Exception as exc:  # noqa: BLE001 - 统一转成 SrunError
             raise SrunError(tr("srun.request_failed", err=exc)) from exc
+
+    def _get(self, path: str, params: dict) -> str:
+        query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        url = f"{self.base_url}{path}?{query}"
+        try:
+            return self._request_once(url)
+        except SrunError as first_exc:
+            # HTTPS 被代理/防火墙掐断时自动降级 HTTP 直连重试（srun 门户双协议监听）
+            if not self.base_url.startswith("https://"):
+                raise
+            alt_base = "http://" + self.base_url[len("https://"):]
+            try:
+                body = self._request_once(f"{alt_base}{path}?{query}")
+            except SrunError:
+                raise first_exc from None
+            self.base_url = alt_base  # 本次会话记住可用协议
+            return body
 
     def _jsonp(self, path: str, params: dict) -> dict:
         self._callback_seq += 1
@@ -368,7 +390,7 @@ class SrunClient:
         probe = "http://www.msftconnecttest.com/redirect"
         try:
             req = urllib.request.Request(probe, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"})
-            opener = urllib.request.build_opener(_NoRedirect())
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
             with opener.open(req, timeout=self.timeout) as resp:
                 location = resp.headers.get("Location", "")
         except urllib.error.HTTPError as exc:

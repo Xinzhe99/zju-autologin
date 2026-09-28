@@ -221,5 +221,7 @@
   "portal.detect": "探测并测试",
   "portal.detecting": "正在探测…",
   "portal.result_ok": "探测成功：ac_id={acid}，本机 IP {ip}，challenge 测试通过 ✓ 保存后请在主窗口填写账号密码",
-  "portal.result_fail": "探测失败：{msg}。请确认地址正确且已在校园网内"
+  "portal.result_fail": "探测失败：{msg}。请确认地址正确且已在校园网内",
+  "app.tagline": "浙江大学校园网保活",
+  "log.http_fallback": "HTTPS 被拦截，已改用 HTTP 直连门户"
 }

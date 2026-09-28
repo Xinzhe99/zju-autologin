@@ -64,6 +64,7 @@
 - ✅ **配置导出/导入**：换机迁移一键完成（不含密码）
 - ✅ **笔记本智能降频**：电池供电时检测间隔自动放慢一倍，插电恢复
 - ✅ **崩溃自报告**：未捕获异常写入日志并托盘提示，程序不无声退出
+- ✅ **直连门户**：认证请求绕过系统代理（Clash 等代理工具不再拦截门户连接），HTTPS 被掐断时自动降级 HTTP 重试
 - ✅ **更新包校验**：一键更新前校验安装包 SHA256（GitHub 官方 digest）
 - ✅ **流量历史曲线**：统计面板显示近 30 天每日流量柱状图与会话在线天数
 - ✅ **托盘快速开关**：托盘菜单直接启停"自动登录"
@@ -186,7 +187,7 @@ zju-autologin/
 │   ├── autostart.py           # 开机自启（Windows 注册表 / macOS LaunchAgent）
 │   ├── updates.py             # GitHub Releases 更新检查
 │   ├── ui.py                  # PyQt6 主窗口 + 托盘
-│   └── theme.py               # 浙大蓝 QSS 主题
+│   └── theme.py               # 极简双主题（Codex 风格，浅/深，自绘控件图标）
 ├── .github/workflows/release.yml  # 打 tag 自动构建三平台安装包/便携包并发布 Release
 ├── .github/workflows/test.yml     # push/PR 自动跑 pytest
 ├── tests/                         # 协议加密基准向量（门户 JS 生成）与单元测试

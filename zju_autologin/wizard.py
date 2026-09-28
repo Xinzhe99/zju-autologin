@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -135,7 +138,12 @@ class SetupWizard(QDialog):
         self._eye = QToolButton()
         self._eye.setObjectName("eye")
         self._eye.setCheckable(True)
-        self._eye.setText("👁")
+        from .config import resource_path
+        eye_icon_path = resource_path("icon_eye.png")
+        if os.path.isfile(eye_icon_path):
+            self._eye.setIcon(QIcon(eye_icon_path))
+        else:
+            self._eye.setText("👁")
         self._eye.setFixedWidth(34)
         self._eye.toggled.connect(
             lambda on: self._edit_pwd.setEchoMode(
