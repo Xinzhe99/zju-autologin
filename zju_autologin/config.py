@@ -55,6 +55,9 @@ _DEFAULTS = {
     # system=跟随系统代理, direct=强制直连, custom=使用 proxy_url
     "proxy_mode": "system",
     "proxy_url": "",
+    # 门户直连路由（Windows 管理员添加的持久化 /32 路由，绕过 TUN/VPN）
+    "portal_route_added": False,
+    "portal_route_ips": [],
     # 笔记本电池供电时自动放慢检测节奏
     "battery_mode": True,
 }

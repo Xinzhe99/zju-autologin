@@ -258,11 +258,3 @@ def test_portal_double_failure_reports_no_campus(tmp_path):
         assert info["state"] == "no_campus"
 
 
-def test_scheme_cache_prevents_repeated_downgrade(tmp_path):
-    """HTTPS 降级成功后按门户缓存, 新客户端直接走可用协议。"""
-    from zju_autologin import srun as S
-    from zju_autologin.srun import SrunClient
-    S._SCHEME_CACHE.clear()
-    S._SCHEME_CACHE["net.zju.edu.cn"] = "http"
-    client = SrunClient(base_url="https://net.zju.edu.cn")
-    assert client.base_url.startswith("http://")

@@ -234,5 +234,11 @@
   "nav.logs": "Logs",
   "btn.open_portal": "Open login page",
   "notify.keyword_hint": "DingTalk/Feishu bots with keyword security: all push titles contain the word 校园网 — add that keyword in the bot settings. Webhook keys stay on this machine.",
-  "log.portal_retry": "Portal request failed; retrying…"
+  "log.portal_retry": "Portal request failed; retrying…",
+  "route.add": "Direct portal route (bypass VPN)",
+  "route.remove": "Remove direct route",
+  "route.add_ok": "Direct portal route added: auth traffic now bypasses VPN/TUN",
+  "route.remove_ok": "Direct portal route removed",
+  "route.add_fail": "Route operation failed: confirm the UAC prompt and retry",
+  "route.hint": "TUN-mode VPNs take over at the routing layer. This adds a persistent /32 route for the portal IP via your physical gateway (admin), so auth traffic bypasses the VPN. Remove it when switching networks."
 }

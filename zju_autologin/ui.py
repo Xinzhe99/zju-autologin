@@ -959,6 +959,10 @@ class MainWindow(QMainWindow):
         prow.addWidget(self._btn_export)
         prow.addWidget(self._btn_import)
         prow.addWidget(self._btn_portal)
+        self._btn_route = QPushButton()
+        self._btn_route.setObjectName("secondary")
+        self._btn_route.clicked.connect(self._toggle_portal_route)
+        prow.addWidget(self._btn_route)
         adv_grid.addLayout(prow, 5, 0, 1, 2)
         self._advanced_host.setVisible(False)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
@@ -1027,6 +1031,30 @@ class MainWindow(QMainWindow):
         btn = self._seg_buttons.get(data if data in ("auto", "light", "dark") else "auto")
         if btn is not None:
             btn.setChecked(True)
+
+    def _toggle_portal_route(self) -> None:
+        """添加/移除门户直连路由（UAC 提权, 后台线程执行）。"""
+        cfg = self._config
+        want_add = not cfg.portal_route_added
+        self._btn_route.setEnabled(False)
+
+        def work():
+            import zju_autologin.routes as routes
+            return routes.add_direct_routes(cfg) if want_add else routes.remove_direct_routes(cfg)
+
+        def done(result):
+            ok = bool(result and result[0])
+            self._btn_route.setEnabled(True)
+            if ok:
+                self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
+                self._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
+            else:
+                self._append_log(tr("route.add_fail") if want_add else tr("route.add_fail"))
+
+        self._route_thread = _FnThread(work, self)
+        self._route_thread.done.connect(done)
+        self._route_thread.finished.connect(self._route_thread.deleteLater)
+        self._route_thread.start()
 
     def _on_proxy_mode_changed(self) -> None:
         custom = self._combo_proxy.currentData() == "custom"
@@ -1132,6 +1160,8 @@ class MainWindow(QMainWindow):
         self._btn_export.setText(tr("btn.export_cfg"))
         self._btn_import.setText(tr("btn.import_cfg"))
         self._btn_portal.setText(tr("btn.portal_wizard"))
+        self._btn_route.setText(tr("route.remove" if self._config.portal_route_added else "route.add"))
+        self._btn_route.setToolTip(tr("route.hint"))
 
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
                          (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
@@ -1440,6 +1470,30 @@ class MainWindow(QMainWindow):
     def _open_log_folder(self) -> None:
         from .config import config_dir
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
+
+    def _toggle_portal_route(self) -> None:
+        """添加/移除门户直连路由（UAC 提权, 后台线程执行）。"""
+        cfg = self._config
+        want_add = not cfg.portal_route_added
+        self._btn_route.setEnabled(False)
+
+        def work():
+            import zju_autologin.routes as routes
+            return routes.add_direct_routes(cfg) if want_add else routes.remove_direct_routes(cfg)
+
+        def done(result):
+            ok = bool(result and result[0])
+            self._btn_route.setEnabled(True)
+            if ok:
+                self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
+                self._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
+            else:
+                self._append_log(tr("route.add_fail") if want_add else tr("route.add_fail"))
+
+        self._route_thread = _FnThread(work, self)
+        self._route_thread.done.connect(done)
+        self._route_thread.finished.connect(self._route_thread.deleteLater)
+        self._route_thread.start()
 
     def _on_proxy_mode_changed(self) -> None:
         custom = self._combo_proxy.currentData() == "custom"

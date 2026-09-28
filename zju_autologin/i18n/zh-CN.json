@@ -234,5 +234,11 @@
   "nav.logs": "运行日志",
   "btn.open_portal": "打开登录页",
   "notify.keyword_hint": "钉钉/飞书机器人若启用安全设置，请将关键词设为「校园网」（所有推送标题均含此词）；Key/Webhook 会随配置文件保存在本机。",
-  "log.portal_retry": "门户请求失败，正在重试…"
+  "log.portal_retry": "门户请求失败，正在重试…",
+  "route.add": "门户直连路由(绕过VPN)",
+  "route.remove": "移除直连路由",
+  "route.add_ok": "门户直连路由已添加：认证流量将绕过 VPN/TUN",
+  "route.remove_ok": "门户直连路由已移除",
+  "route.add_fail": "直连路由操作失败：请在 UAC 弹窗中确认后重试",
+  "route.hint": "TUN/全局 VPN 在路由层接管流量，应用层无法绕过。此操作以管理员权限为门户 IP 添加持久化直连路由，使认证流量绕过 VPN；换网络环境后可点「移除直连路由」清理。"
 }

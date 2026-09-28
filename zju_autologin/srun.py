@@ -41,6 +41,7 @@ import urllib.parse
 import urllib.request
 
 from .i18n import tr
+from .net import bound_opener, candidate_source_ips
 
 __all__ = [
     "SrunClient",
@@ -75,9 +76,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # 绕过系统代理的直连 opener（门户与认证 API 只应走校园网直连）
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-# HTTPS 被掐断后成功降级的门户（host -> "http"）：后续检测直接走可用协议，
-# 不再每次重付一次 HTTPS 超时代价
-_SCHEME_CACHE: dict[str, str] = {}
+# 门户连接策略缓存（host -> "策略|协议"）：命中后跳过全部失败尝试
+_STRATEGY_CACHE: dict[str, str] = {}
 
 
 class SrunError(Exception):
@@ -86,8 +86,6 @@ class SrunError(Exception):
 
 def friendly_error(resp: dict) -> str:
     """把 srun 的错误响应翻译成本地化提示。"""
-    from .i18n import tr
-
     err = str(resp.get("error", ""))
     msg = str(resp.get("error_msg", "") or "").strip()
     keys = {
@@ -217,21 +215,18 @@ class SrunClient:
         self.timeout = timeout
         self._callback_seq = 0
         self._resolved_ac_id: str | None = None
-        host = urllib.parse.urlsplit(self.base_url).netloc
-        if _SCHEME_CACHE.get(host) == "http" and self.base_url.startswith("https://"):
-            self.base_url = "http://" + self.base_url[len("https://"):]
 
     # ------------------------------------------------------------------ HTTP
 
-    def _request_once(self, url: str) -> str:
-        """单次请求。门户必须在校园网内直达：显式绕过系统代理
-        （Clash/v2ray 等代理工具会拦截或断开发往门户的 TLS 连接，
-        表现为 WinError 10053 / SSL UNEXPECTED_EOF）。"""
+    def _request_once(self, url: str, opener: urllib.request.OpenerDirector | None = None) -> str:
+        """单次请求。opener 缺省为直连（门户必须在校园网内直达，
+        显式绕过系统代理——Clash/v2ray 等会拦截发往门户的 TLS 连接）。"""
         req = urllib.request.Request(
             url, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"}
         )
+        opener = opener or _DIRECT_OPENER
         try:
-            with _DIRECT_OPENER.open(req, timeout=self.timeout) as resp:
+            with opener.open(req, timeout=self.timeout) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             # srun 的部分错误以 HTTP 400 + JSONP 错误体返回，需读出内容
@@ -242,24 +237,45 @@ class SrunClient:
         except Exception as exc:  # noqa: BLE001 - 统一转成 SrunError
             raise SrunError(tr("srun.request_failed", err=exc)) from exc
 
+    def _strategies(self) -> list[tuple[str, urllib.request.OpenerDirector, str]]:
+        """门户连接策略候选（标识, opener, 协议），命中缓存的排最前。
+
+        顺序：系统代理绕过直连 → 绑定校园网网卡源地址直发（绕过 TUN 默认路由）
+        × HTTPS/HTTP 双协议。VPN(TUN) 在 IP 层劫持时，绑定通常仍可从物理网卡直发。
+        """
+        host = urllib.parse.urlsplit(self.base_url).netloc
+        pairs: list[tuple[str, urllib.request.OpenerDirector, str]] = [
+            ("direct", _DIRECT_OPENER, "https"),
+            ("direct", _DIRECT_OPENER, "http"),
+        ]
+        for ip in candidate_source_ips():
+            opener = bound_opener(ip)
+            pairs.append((f"bind:{ip}", opener, "https"))
+            pairs.append((f"bind:{ip}", opener, "http"))
+        cached = _STRATEGY_CACHE.get(host)
+        if cached:
+            key, scheme = cached.rsplit("|", 1)
+            opener = (bound_opener(key[len("bind:"):])
+                      if key.startswith("bind:") else _DIRECT_OPENER)
+            rest = [p for p in pairs if f"{p[0]}|{p[2]}" != cached]
+            return [(key, opener, scheme)] + rest
+        return pairs
+
     def _get(self, path: str, params: dict) -> str:
         query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-        url = f"{self.base_url}{path}?{query}"
-        try:
-            return self._request_once(url)
-        except SrunError as first_exc:
-            # HTTPS 被代理/防火墙掐断时自动降级 HTTP 直连重试（srun 门户双协议监听）
-            if not self.base_url.startswith("https://"):
-                raise
-            alt_base = "http://" + self.base_url[len("https://"):]
+        host = urllib.parse.urlsplit(self.base_url).netloc
+        first_exc: SrunError | None = None
+        for key, opener, scheme in self._strategies():
+            base = f"{scheme}://{host}"
             try:
-                body = self._request_once(f"{alt_base}{path}?{query}")
-            except SrunError:
-                raise first_exc from None
-            self.base_url = alt_base  # 本次会话记住可用协议
-            host = urllib.parse.urlsplit(alt_base).netloc
-            _SCHEME_CACHE[host] = "http"
+                body = self._request_once(f"{base}{path}?{query}", opener)
+            except SrunError as exc:
+                first_exc = first_exc or exc
+                continue
+            self.base_url = base
+            _STRATEGY_CACHE[host] = f"{key}|{scheme}"
             return body
+        raise first_exc or SrunError(tr("srun.request_failed", err="all strategies failed"))
 
     def _jsonp(self, path: str, params: dict) -> dict:
         self._callback_seq += 1

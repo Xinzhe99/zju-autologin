@@ -8,6 +8,8 @@ proxy_mode:
 
 from __future__ import annotations
 
+import http.client
+import socket
 import urllib.request
 
 PROXY_MODES = ("system", "direct", "custom")
@@ -22,3 +24,80 @@ def build_opener(proxy_mode: str = "system", proxy_url: str = "") -> urllib.requ
             urllib.request.ProxyHandler({"http": url, "https": url})
         )
     return urllib.request.build_opener()  # 跟随系统代理设置
+
+
+# ---------------------------------------------------------------- 接口绑定
+
+def candidate_source_ips() -> list[str]:
+    """枚举本机候选出口 IPv4（校园网网段优先），用于源地址绑定绕过 TUN 路由。
+
+    过滤：回环/链路本地/Clash TUN fake-ip(198.18.0.0/15)；排序：10/8 优先
+    （浙大校园网网段），其次其他内网，最后公网。
+    """
+    import ipaddress
+
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:
+        return []
+    fake_pool = ipaddress.ip_network("198.18.0.0/15")
+    campus_pool = ipaddress.ip_network("10.0.0.0/8")
+    seen: set[str] = set()
+    pools: dict[str, list[str]] = {"campus": [], "private": [], "other": []}
+    for info in infos:
+        ip = info[4][0]
+        if ip in seen:
+            continue
+        seen.add(ip)
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if addr.is_loopback or addr.is_link_local or addr in fake_pool:
+            continue
+        if addr in campus_pool:
+            pools["campus"].append(ip)
+        elif addr.is_private:
+            pools["private"].append(ip)
+        else:
+            pools["other"].append(ip)
+    return pools["campus"] + pools["private"] + pools["other"]
+
+
+class _BoundHTTPConnection(http.client.HTTPConnection):
+    """绑定源地址的 HTTP 连接（绕过 TUN 默认路由，从指定网卡直发）。"""
+
+    source: tuple[str, int] | None = None
+
+    def connect(self):
+        self.sock = socket.create_connection((self.host, self.port), self.timeout, self.source)
+
+
+class _BoundHTTPSConnection(http.client.HTTPSConnection):
+    source: tuple[str, int] | None = None
+
+    def connect(self):
+        sock = socket.create_connection((self.host, self.port), self.timeout, self.source)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def bound_opener(source_ip: str) -> urllib.request.OpenerDirector:
+    """构造把 TCP 源地址绑定到指定网卡 IP 的 opener。"""
+    import functools
+
+    import ssl
+
+    class _H(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            cls = functools.partial(_BoundHTTPConnection, source=(source_ip, 0))
+            return self.do_open(cls, req)
+
+    class _HS(urllib.request.HTTPSHandler):
+        def __init__(self):
+            super().__init__(context=ssl.create_default_context())
+
+        def https_open(self, req):
+            cls = functools.partial(_BoundHTTPSConnection, source=(source_ip, 0))
+            return self.do_open(cls, req)
+
+    return urllib.request.build_opener(_H(), _HS())
