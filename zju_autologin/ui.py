@@ -46,7 +46,7 @@ from .config import (
 )
 from .i18n import tr
 from .monitor import Monitor
-from .srun import SrunClient, SrunError
+from .srun import SrunClient
 
 STATUS_KEYS = (
     "online", "authed_no_internet", "offline", "need_config",
@@ -409,7 +409,6 @@ class StatsDialog(QDialog):
         drops_title.setObjectName("cardTitle")
         lay.addWidget(drops_title)
         table = QTableWidget(0, 3)
-        week_ago = time.time() - 7 * 86400
 
         table.setHorizontalHeaderLabels(["#", tr("field.last_check"), tr("status.offline")])
         table.horizontalHeader().setStretchLastSection(True)

@@ -6,6 +6,7 @@ PyQt6 中槽函数抛出的未捕获异常默认会调用 sys.excepthook —— 
 
 from __future__ import annotations
 
+import sys
 import threading
 import traceback
 

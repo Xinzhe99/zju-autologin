@@ -251,8 +251,8 @@ class SrunClient:
         if body.startswith("not_online"):
             return {"portal_ok": True, "online": False, "username": "", "ip": "", "raw": raw}
 
-        if body.startswith("{"):
-            # 带 callback 时门户返回 JSON 形态
+        # JSON / JSONP 形态（cb1({...}) 或纯 {...}）
+        if body.startswith("{") or (body.startswith("cb") and body.endswith(")")):
             try:
                 data = json.loads(body[body.find("(") + 1 : body.rfind(")")] if "(" in body else body)
             except json.JSONDecodeError:

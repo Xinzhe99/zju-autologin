@@ -253,6 +253,7 @@ class MonitorWorker(QObject):
                     self._emit("offline", detail=tr("detail.wait_retry"))
                     return
                 self._last_login_attempt = time.time()
+                self._emit("checking", detail=tr("detail.logging_in"))
                 self._do_login(client=client)
                 return
 
