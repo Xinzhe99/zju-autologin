@@ -156,12 +156,10 @@ class UpdateDownloadThread(QThread):
             with api_opener.open(req, timeout=10) as resp:
                 data = _json.load(resp)
             target = None
+            suffix = "-windows-setup.exe" if sys.platform == "win32" else "-macos-portable.zip"
             for asset in data.get("assets") or []:
                 name = str(asset.get("name", ""))
-                if sys.platform == "win32" and name.endswith("-windows-setup.exe"):
-                    target = asset
-                    break
-                if sys.platform == "darwin" and name.endswith("-macos.dmg"):
+                if name.endswith(suffix):
                     target = asset
                     break
             if not target:
@@ -1637,18 +1635,70 @@ class MainWindow(QMainWindow):
         self._downloader = None
         self._append_log(tr("update.downloaded"))
         self._tray.hide()
-        # Windows 单文件版: 原地自更新（重命名运行中的 exe → 新版归位 → 重启）,
-        # 与 Codex 等应用相同的体验, 无需再走安装程序
-        if sys.platform == "win32" and getattr(sys, "frozen", False):
+        # 原地自更新（Codex 式体验, 无需安装器）:
+        #   Windows 单文件: 重命名运行中的 exe → 新版归位 → 重启
+        #   macOS .app 包: 解压 zip 得新 .app → 移动覆盖旧 .app → 重启
+        if getattr(sys, "frozen", False):
             try:
-                self._inplace_swap(path)
+                if sys.platform == "darwin":
+                    self._inplace_swap_mac(path)
+                else:
+                    self._inplace_swap(path)
                 return
             except OSError:
-                pass  # 目录不可写等场景回退到安装器
+                pass  # 目录不可写等场景回退到打开安装文件
         if sys.platform == "win32":
             subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        QApplication.quit()
+
+    def _inplace_swap_mac(self, zip_path: str) -> None:
+        """macOS 原地替换 .app：解压 → 用新 .app 覆盖旧 .app → 重启。
+
+        POSIX 语义下移动覆盖正在运行的 .app 是安全的: 已运行进程持有
+        旧可执行文件的 inode, 替换目录不影响其继续执行。
+        """
+        import shutil
+        import tempfile
+        import zipfile
+
+        staging = tempfile.mkdtemp(prefix="zju_aul_upd_")
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(staging)
+        # zip 内为 ZJUAutoLogin.app/（便携 zip 由 CI 的 zip -r 打包）
+        new_app = None
+        for entry in os.listdir(staging):
+            if entry.endswith(".app"):
+                new_app = os.path.join(staging, entry)
+                break
+        if not new_app:
+            raise OSError("no .app in update archive")
+
+        # 定位当前 .app：运行中的二进制位于 <App>.app/Contents/MacOS/
+        cur_app = Path(sys.executable)
+        for _ in range(4):
+            cur_app = cur_app.parent
+            if cur_app.suffix == ".app":
+                break
+        else:
+            raise OSError("not running from a .app bundle")
+
+        backup = cur_app.with_suffix(".app.old")
+        if backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+        os.rename(cur_app, backup)
+        shutil.move(new_app, str(cur_app))
+        try:
+            shutil.rmtree(backup, ignore_errors=True)
+            shutil.rmtree(staging, ignore_errors=True)
+            os.remove(zip_path)
+        except OSError:
+            pass
+        if runtime.app_lock is not None:
+            runtime.app_lock.unlock()
+        self._append_log(tr("update.swapped"))
+        subprocess.Popen(["open", "-n", str(cur_app)])
         QApplication.quit()
 
     def _inplace_swap(self, new_path: str) -> None:
