@@ -31,6 +31,7 @@ XXTEA：标准 XXTEA（delta=0x9E3779B9），输入按 UTF-16 码元打包（ASC
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -263,7 +264,8 @@ class SrunClient:
             # srun 的部分错误以 HTTP 400 + JSONP 错误体返回，需读出内容;
             # read 本身也可能因 socket 超时抛 OSError, 统一转 SrunError
             try:
-                body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+                with contextlib.closing(exc):
+                    body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             except OSError as rd_exc:
                 raise SrunError(tr("srun.request_failed", err=rd_exc)) from rd_exc
             if body:
@@ -368,7 +370,7 @@ class SrunClient:
         latency = int((time.perf_counter() - t0) * 1000)
         if body.endswith(")") and "(" in body:
             try:
-                data = json.loads(body[body.find("(") + 1: body.rfind(")")] if "(" in body else body)
+                data = json.loads(body[body.find("(") + 1: body.rfind(")")])
             except json.JSONDecodeError:
                 data = None
             if isinstance(data, dict):

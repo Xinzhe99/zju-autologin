@@ -249,5 +249,7 @@
   "btn.update_ready": "更新 v{version} 已就绪，点击立即重启到新版",
   "update.predl_done": "新版本已预下载完成，可随时一键更新",
   "update.predl_fail": "预下载失败（点击更新时将重新下载）：{msg}",
-  "field.theme": "界面主题"
+  "field.theme": "界面主题",
+  "import.sensitive_confirm": "导入的配置将修改以下敏感设置（可能重定向认证/通知目标）：\n{keys}\n确定继续吗？",
+  "msg.cfg_import_cancel": "已取消导入"
 }

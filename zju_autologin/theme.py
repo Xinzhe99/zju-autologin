@@ -56,25 +56,9 @@ QMainWindow {
 QDialog {
     background: #f9f9f9;
 }
-QFrame#sidebar {
-    background: #f7f7f8;
-    border: none;
-    border-right: 1px solid #ececec;
-}
 QLabel#sidebarTitle { font-size: 13px; font-weight: 600; color: #0d0d0d; }
 QLabel#sidebarSub { font-size: 10px; color: #8f8f8f; }
 QLabel#sidebarHint { font-size: 11px; color: #9a9a9a; }
-QPushButton#nav {
-    text-align: left;
-    border: none;
-    border-radius: 8px;
-    padding: 9px 12px;
-    color: #4b4b4b;
-    background: transparent;
-    font-size: 13px;
-}
-QPushButton#nav:hover { background: #efefef; color: #0d0d0d; }
-QPushButton#nav:checked { background: #e9e9e9; color: #0d0d0d; font-weight: 600; }
 QFrame#segHost { background: #f1f1f3; border-radius: 9px; }
 QPushButton#seg {
     border: 1px solid transparent;
@@ -146,7 +130,7 @@ QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
     padding: 6.5px 9.5px;
     background: #ffffff;
 }
-QLineEdit:disabled, QComboBox:disabled { background: #f5f5f5; color: #9a9a9a; }
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { background: #f5f5f5; color: #9a9a9a; }
 
 QComboBox { padding-right: 30px; }
 QComboBox::drop-down {
@@ -250,25 +234,9 @@ QMainWindow {
 QDialog {
     background: #191919;
 }
-QFrame#sidebar {
-    background: #191919;
-    border: none;
-    border-right: 1px solid #282828;
-}
 QLabel#sidebarTitle { font-size: 13px; font-weight: 600; color: #ececec; }
 QLabel#sidebarSub { font-size: 10px; color: #8d8d8d; }
 QLabel#sidebarHint { font-size: 11px; color: #8d8d8d; }
-QPushButton#nav {
-    text-align: left;
-    border: none;
-    border-radius: 8px;
-    padding: 9px 12px;
-    color: #a8a8a8;
-    background: transparent;
-    font-size: 13px;
-}
-QPushButton#nav:hover { background: #242424; color: #ffffff; }
-QPushButton#nav:checked { background: #2c2c2c; color: #ffffff; font-weight: 600; }
 QFrame#segHost { background: #242424; border-radius: 9px; }
 QPushButton#seg {
     border: 1px solid transparent;
@@ -340,7 +308,7 @@ QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
     padding: 6.5px 9.5px;
     background: #1c1c1c;
 }
-QLineEdit:disabled, QComboBox:disabled { background: #1a1a1a; color: #6a6a6a; }
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { background: #1a1a1a; color: #6a6a6a; }
 
 QComboBox { padding-right: 30px; }
 QComboBox::drop-down {

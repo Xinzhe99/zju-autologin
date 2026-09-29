@@ -117,8 +117,9 @@ class _BoundHTTPSConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
+@functools.lru_cache(maxsize=8)
 def bound_opener(source_ip: str) -> urllib.request.OpenerDirector:
-    """构造把 TCP 源地址绑定到指定网卡 IP 的 opener。"""
+    """构造把 TCP 源地址绑定到指定网卡 IP 的 opener（按源 IP 缓存）。"""
 
     class _H(urllib.request.HTTPHandler):
         def http_open(self, req):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import shutil
@@ -76,9 +77,12 @@ REPO_URL = "https://github.com/Xinzhe99/zju-autologin"
 
 
 def _is_installed_win() -> bool:
-    """Windows 安装版判定: 位于 Program Files 或 exe 目录不可写(不可原地替换)。"""
+    """Windows 安装版判定: Inno 安装目录 / Program Files / 目录不可写。"""
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return False
+    # Inno 每用户安装目录带 unins*.exe(目录可写, 曾被误判为便携版)
+    if glob.glob(os.path.join(os.path.dirname(sys.executable), "unins*.exe")):
+        return True
     exe_dir = os.path.normcase(os.path.dirname(sys.executable))
     for env in ("ProgramFiles", "ProgramFiles(x86)"):
         root = os.environ.get(env)
@@ -294,18 +298,22 @@ class DevicesDialog(QDialog):
     def reload(self) -> None:
         self._status.setText("…")
         self._btn_kick.setEnabled(False)
+        self._reload_gen = getattr(self, "_reload_gen", 0) + 1  # 代计数: 丢弃过期响应
         cfg = self._config
 
         def work():
             client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
             return client.list_online_devices(cfg.username, cfg.get_password(), cfg.domain)
 
+        self._apply_gen = self._reload_gen
         self._load_thread = _FnThread(work, self)
         self._load_thread.done.connect(self._apply_devices)
         self._load_thread.finished.connect(self._load_thread.deleteLater)
         self._load_thread.start()
 
     def _apply_devices(self, devices) -> None:
+        if getattr(self, "_reload_gen", 1) != getattr(self, "_apply_gen", 0):
+            return  # 过期响应(期间又点过刷新), 丢弃防覆盖新结果
         if isinstance(devices, Exception):
             self._status.setText(tr("devices.load_fail"))
             self._table.setRowCount(0)
@@ -851,6 +859,7 @@ class SettingsWindow(QDialog):
         save_row = QHBoxLayout()
         self._save_hint = QLabel("")
         self._save_hint.setObjectName("statusDetail")
+        self._save_hint.setWordWrap(True)
         self._btn_save = QPushButton()
         self._btn_save.setObjectName("primary")
         self._btn_save.clicked.connect(self._save_settings)
@@ -1190,6 +1199,21 @@ class SettingsWindow(QDialog):
             self._save_hint.setText(tr("msg.cfg_import_fail", msg=exc))
             QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
             return
+        # 敏感字段(base_url/代理/通知/心跳)变更需用户确认: 恶意配置文件可把
+        # 编码后的凭据重定向到任意主机
+        sensitive = [k for k in ("base_url", "ac_id", "proxy_mode", "proxy_url",
+                                 "notify_provider", "notify_key", "heartbeat_url",
+                                 "smtp_host", "smtp_user", "smtp_to")
+                     if payload.get(k) != self._config.data.get(k)]
+        if sensitive:
+            answer = QMessageBox.question(
+                self, tr("btn.import_cfg"),
+                tr("import.sensitive_confirm", keys=", ".join(sensitive)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                self._save_hint.setText(tr("msg.cfg_import_cancel"))
+                QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
+                return
         for key in _DEFAULTS:
             if key != "win_geometry" and key in payload:
                 self._config.data[key] = payload[key]
@@ -1715,6 +1739,7 @@ class MainWindow(QMainWindow):
     def _predownload_done(self, path: str) -> None:
         self._downloader = None
         self._update_pkg = path
+        self._pkg_verified = True  # 下载线程已做 SHA256 校验
         # 预下载完成：横幅提示即点即更
         if self._update_banner.isVisible():
             self._update_banner.setText(tr("btn.update_ready", version=self._update_version))

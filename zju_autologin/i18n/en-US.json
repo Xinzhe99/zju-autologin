@@ -249,5 +249,7 @@
   "btn.update_ready": "v{version} ready — click to restart into the new version",
   "update.predl_done": "New version pre-downloaded; one click to update anytime",
   "update.predl_fail": "Pre-download failed (will re-download on click): {msg}",
-  "field.theme": "Theme"
+  "field.theme": "Theme",
+  "import.sensitive_confirm": "This import changes sensitive settings (may redirect auth/notifications):\n{keys}\nContinue?",
+  "msg.cfg_import_cancel": "Import cancelled"
 }

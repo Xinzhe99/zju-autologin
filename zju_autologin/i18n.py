@@ -49,7 +49,7 @@ def detect_system_lang() -> str:
         import os
 
         env = os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
-        code = env.split(".")[0].replace("_", "-") or (locale.getdefaultlocale()[0] or "")
+        code = env.split(".")[0].replace("_", "-") or (locale.getlocale()[0] or "")
     if code.lower().startswith("zh"):
         return "zh-CN"
     return "en-US"
