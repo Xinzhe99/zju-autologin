@@ -1767,10 +1767,19 @@ class MainWindow(QMainWindow):
                 self._update_banner.setText(tr("update.failed", msg=exc))
                 self._append_log(tr("update.failed", msg=exc))
                 return
-        if sys.platform == "win32":
-            subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
-        else:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
+            elif not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+                raise OSError(tr("update.open_fail"))
+        except Exception as exc:  # noqa: BLE001 - 安装器被杀软拦截/文件被占用等
+            # 托盘已隐藏, 这里是 hide 之后唯一不退出进程的出口: 必须恢复入口
+            self._update_pkg = ""
+            self._tray.show()
+            self._update_banner.setText(tr("update.failed", msg=exc))
+            self._append_log(tr("update.launch_fail",
+                                url=self._update_url or updates.RELEASE_PAGE))
+            return
         QApplication.quit()
 
     @staticmethod

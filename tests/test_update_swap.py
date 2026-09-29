@@ -3,7 +3,14 @@
 import os
 import zipfile
 
+import pytest
+from PyQt6.QtWidgets import QApplication
 from zju_autologin.ui import MainWindow, _is_installed_win
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    return QApplication.instance() or QApplication([])
 
 
 def test_extract_win_exe(tmp_path):
@@ -34,3 +41,19 @@ def test_pkg_version_parsed():
     assert MainWindow._pkg_version(
         "/tmp/ZJUAutoLogin-1.16.0-windows-portable.zip") == "1.16.0"
     assert MainWindow._pkg_version("/tmp/update.bin") == ""
+
+
+def test_installer_launch_failure_restores_ui(qapp, tmp_path):
+    """拉起安装器失败(被杀软拦截/文件缺失)不得异常逸出, 且要留下面向用户的提示。"""
+    from zju_autologin.config import Config
+    from zju_autologin.monitor import Monitor
+    from zju_autologin.ui import MainWindow
+
+    cfg = Config(str(tmp_path / "cfg.json"))
+    cfg.load()
+    win = MainWindow(cfg, Monitor(cfg))
+    win._update_url = "https://example.invalid/releases/latest"
+    win._update_downloaded(str(tmp_path / "ZJUAutoLogin-9.9.9-windows-setup.exe"))
+    assert win._update_pkg == ""
+    assert win._update_banner.text()
+    assert "example.invalid" in list(win._log_buffer)[-1]

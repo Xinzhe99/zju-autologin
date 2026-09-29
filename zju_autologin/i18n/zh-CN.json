@@ -154,6 +154,8 @@
   "update.downloading": "正在下载新版本… {percent}%",
   "update.downloaded": "下载完成，即将启动安装程序…",
   "update.failed": "下载失败：{msg}",
+  "update.open_fail": "系统未能打开安装包",
+  "update.launch_fail": "更新未能启动，请到 Releases 页面手动下载：{url}",
   "update.frozen_only": "脚本运行模式请到 Releases 页面手动更新",
   "devices.title": "在线设备管理",
   "devices.hint": "设备数超限时，可把其他设备踢下线后再重新登录。",

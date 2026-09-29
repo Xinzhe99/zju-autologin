@@ -154,6 +154,8 @@
   "update.downloading": "Downloading new version… {percent}%",
   "update.downloaded": "Downloaded; launching installer…",
   "update.failed": "Download failed: {msg}",
+  "update.open_fail": "The system could not open the installer",
+  "update.launch_fail": "Update could not start — download manually from Releases: {url}",
   "update.frozen_only": "Running from source — please update manually from Releases",
   "devices.title": "Online device manager",
   "devices.hint": "When the device limit is reached, kick another device offline and log in again.",
