@@ -256,5 +256,8 @@
   "btn.reconfig": "重新配置",
   "reconfig.title": "重新配置",
   "reconfig.confirm": "将清除已保存的账号密码并重新进入引导向导（其他设置保留）。\n确定继续吗？",
-  "reconfig.cleared": "凭据已清除，即将重启进入引导向导…"
+  "reconfig.cleared": "凭据已清除，即将重启进入引导向导…",
+  "btn.update_ready": "更新 v{version} 已就绪，点击立即重启到新版",
+  "update.predl_done": "新版本已预下载完成，可随时一键更新",
+  "update.predl_fail": "预下载失败（点击更新时将重新下载）：{msg}"
 }

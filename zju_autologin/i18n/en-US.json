@@ -256,5 +256,8 @@
   "btn.reconfig": "Reconfigure",
   "reconfig.title": "Reconfigure",
   "reconfig.confirm": "This clears the saved credentials and restarts the setup wizard (other settings are kept).\nContinue?",
-  "reconfig.cleared": "Credentials cleared; restarting into the setup wizard…"
+  "reconfig.cleared": "Credentials cleared; restarting into the setup wizard…",
+  "btn.update_ready": "v{version} ready — click to restart into the new version",
+  "update.predl_done": "New version pre-downloaded; one click to update anytime",
+  "update.predl_fail": "Pre-download failed (will re-download on click): {msg}"
 }

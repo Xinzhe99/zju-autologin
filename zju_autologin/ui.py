@@ -1295,6 +1295,7 @@ class MainWindow(QMainWindow):
         self._last_status: dict = {"state": "checking", "detail": ""}
         self._update_version = ""
         self._update_url = ""
+        self._update_pkg: str = ""          # 预下载完成的新版本包路径
         self._downloader: UpdateDownloadThread | None = None
         self._settings_window: SettingsWindow | None = None
         self._logs_window: LogsWindow | None = None
@@ -1611,13 +1612,43 @@ class MainWindow(QMainWindow):
             tr("tray.msg_update_title", version=version),
             tr("tray.msg_update_body", current=__version__),
             QSystemTrayIcon.MessageIcon.Information, 8000)
+        self._predownload_update()
+
+    def _predownload_update(self) -> None:
+        """发现新版本即后台预下载：用户点「更新」时直接替换重启，零等待。
+
+        预下载静默进行，失败只记日志，不影响任何功能。
+        """
+        if self._downloader is not None or self._update_pkg:
+            return
+        if not getattr(sys, "frozen", False):
+            return  # 源码模式无自更新
+        self._downloader = UpdateDownloadThread(
+            self._config.proxy_mode, self._config.proxy_url, self)
+        self._downloader.finished_ok.connect(self._predownload_done)
+        self._downloader.finished_err.connect(
+            lambda err: self._append_log(tr("update.predl_fail", msg=err)))
+        self._downloader.start()
+
+    def _predownload_done(self, path: str) -> None:
+        self._downloader = None
+        self._update_pkg = path
+        # 预下载完成：横幅提示即点即更
+        if self._update_banner.isVisible():
+            self._update_banner.setText(tr("btn.update_ready", version=self._update_version))
+        self._append_log(tr("update.predl_done"))
 
     def _do_update(self) -> None:
+        # 预下载已就绪 → 直接替换重启（零等待）
+        if self._update_pkg:
+            self._update_downloaded(self._update_pkg)
+            return
         if self._downloader is not None:
             return
         if not getattr(sys, "frozen", False):
             QDesktopServices.openUrl(QUrl(self._update_url or updates.RELEASE_PAGE))
             return
+        # 预下载未完成（或失败）→ 现场下载, 横幅显示进度
         self._update_banner.setText(tr("update.downloading", percent=0))
         self._downloader = UpdateDownloadThread(
             self._config.proxy_mode, self._config.proxy_url, self)
