@@ -140,7 +140,7 @@ jobs:
     container: alpine:latest
     steps:
       - name: Install deps
-        run: apk add --no-cache python3 py3-pip git
+        run: apk add --no-cache python3 py3-pip git binutils
 
       - uses: actions/checkout@v4
 
