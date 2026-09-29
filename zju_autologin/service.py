@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from .config import service_config_dir
@@ -85,8 +86,15 @@ def _run_elevated_ps(script: str) -> bool:
                 pass
 
 
-def is_installed() -> bool:
-    """检查系统级计划任务是否存在。"""
+_installed_cache: tuple[float, bool] | None = None
+_INSTALLED_TTL = 60.0
+
+
+def is_installed(max_age: float = _INSTALLED_TTL) -> bool:
+    """检查系统级计划任务是否存在（schtasks 较慢, 结果缓存 60 秒）。"""
+    global _installed_cache
+    if _installed_cache is not None and time.time() - _installed_cache[0] < max_age:
+        return _installed_cache[1]
     if sys.platform != "win32":
         return False
     try:
@@ -94,9 +102,11 @@ def is_installed() -> bool:
             ["schtasks", "/query", "/tn", TASK_NAME],
             capture_output=True, timeout=15,
         )
-        return out.returncode == 0
+        result = out.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        result = False
+    _installed_cache = (time.time(), result)
+    return result
 
 
 def install(cfg) -> tuple[bool, str]:
@@ -113,7 +123,9 @@ Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $action -Trigger $trigger
 """
     if not _run_elevated_ps(script):
         return False, "elevation failed"
-    return (True, "installed") if is_installed() else (False, "task not found")
+    result = (True, "installed") if is_installed(max_age=0) else (False, "task not found")
+    global _installed_cache
+    return result
 
 
 def uninstall() -> tuple[bool, str]:

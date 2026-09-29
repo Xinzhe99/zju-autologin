@@ -1222,6 +1222,10 @@ class MainWindow(QMainWindow):
         monitor.updateAvailable.connect(self._on_update_available)
         crash.UiHolder.window = self
 
+        # 预创建设置/日志窗口(隐藏): 首次点击瞬时显示, 无一次性构建等待
+        self._settings_window = SettingsWindow(self._config, self._monitor, self)
+        self._logs_window = LogsWindow(self)
+
     # ------------------------------------------------------------------ UI
 
     def _card(self) -> QFrame:
