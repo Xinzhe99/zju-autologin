@@ -27,7 +27,7 @@ jobs:
           EOF
 
   build-windows:
-    needs: verify-version:
+    needs: verify-version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
