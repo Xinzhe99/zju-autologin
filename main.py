@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -57,7 +58,10 @@ def main() -> int:
     else:
         window.show()
 
-    return app.exec()
+    ret = app.exec()
+    # 保活等后台线程可能仍卡在长网络操作中, 令进程退出被拖住形成"假死";
+    # 所有配置/日志均为即时落盘, 此处以进程退出兜底, 保证托盘退出即时响应
+    os._exit(ret)
 
 
 if __name__ == "__main__":

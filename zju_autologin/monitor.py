@@ -459,10 +459,14 @@ class Monitor(QObject):
         self._thread.start()
 
     def stop(self) -> None:
-        # 先在工作线程内同步停掉定时器，再退出线程，避免跨线程 killTimer
-        QMetaObject.invokeMethod(self._worker, "stop", Qt.ConnectionType.BlockingQueuedConnection)
+        # 异步请求停止: 绝不在主线程同步等待工作线程的长网络操作
+        # (否则托盘退出时界面冻结数秒到数十秒); 残留线程由 main.py 的
+        # 进程级退出兜底, 所有数据均已即时落盘。
+        QMetaObject.invokeMethod(self._worker, "stop", Qt.ConnectionType.QueuedConnection)
         self._thread.quit()
-        self._thread.wait(3000)
+        if not self._thread.wait(300):
+            self._thread.terminate()
+            self._thread.wait(300)
 
     # UI 调用的公开方法（发信号 → 排队到工作线程执行）
 
