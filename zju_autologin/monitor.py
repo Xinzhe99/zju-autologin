@@ -339,7 +339,7 @@ class MonitorWorker(QObject):
             self._auth_error = ""
             self.log(tr("log.login_ok"))
             try:
-                status = client.get_status_detail()
+                status = client.get_status()
             except SrunError:
                 status = {}
             self._emit(

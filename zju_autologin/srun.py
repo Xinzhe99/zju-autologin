@@ -292,41 +292,47 @@ class SrunClient:
 
     # ------------------------------------------------------------------ 状态
 
+    @staticmethod
+    def _offline_status(raw: str = "") -> dict:
+        return {"portal_ok": True, "online": False, "username": "", "ip": "",
+                "login_time": "", "billing": "", "all_bytes": 0, "raw": raw}
+
     def get_status(self) -> dict:
-        """查询门户在线状态。
+        """查询门户在线状态（富形态：含套餐/累计流量；自动回退纯文本形态）。
 
-        返回 {
-            portal_ok: 门户是否可达（即本机是否处于校园网内）,
-            online:    是否已认证在线,
-            username, ip, login_time(可读), raw
-        }
+        返回 {portal_ok, online, username, ip, login_time, billing, all_bytes, raw}
         """
-        body = self._get("/cgi-bin/rad_user_info", {}).strip()
-        raw = body
-        if body.startswith("not_online"):
-            return {"portal_ok": True, "online": False, "username": "", "ip": "", "raw": raw}
-
-        # JSON / JSONP 形态（cb1({...}) 或纯 {...}）
-        if body.startswith("{") or (body.startswith("cb") and body.endswith(")")):
+        # 1) JSONP 富形态（带 callback 时返回 JSON，含套餐/流量/余额）
+        body = self._get("/cgi-bin/rad_user_info",
+                         {"callback": "zjulogin_status"}).strip()
+        if body.endswith(")") and "(" in body:
             try:
-                data = json.loads(body[body.find("(") + 1 : body.rfind(")")] if "(" in body else body)
+                data = json.loads(body[body.find("(") + 1: body.rfind(")")] if "(" in body else body)
             except json.JSONDecodeError:
-                data = {}
-            online = data.get("error") == "ok" and bool(data.get("user_name"))
-            login_ts = int(data.get("add_time") or 0)
-            return {
-                "portal_ok": True,
-                "online": online,
-                "username": str(data.get("user_name") or ""),
-                "ip": str(data.get("user_ip") or data.get("online_ip") or ""),
-                "login_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(login_ts)) if login_ts else "",
-                "raw": raw,
-            }
+                data = None
+            if isinstance(data, dict):
+                if data.get("error") == "ok" and data.get("user_name"):
+                    login_ts = int(data.get("add_time") or 0)
+                    return {
+                        "portal_ok": True,
+                        "online": True,
+                        "username": str(data.get("user_name") or ""),
+                        "ip": str(data.get("user_ip") or data.get("online_ip") or ""),
+                        "login_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(login_ts)) if login_ts else "",
+                        "billing": str(data.get("billing_name") or ""),
+                        "all_bytes": int(data.get("all_bytes") or 0),
+                        "raw": body,
+                    }
+                if data.get("error") in ("not_online_error", "login_error") or                         "not_online" in str(data.get("error_msg", "")):
+                    return self._offline_status(body)
 
-        # 纯文本形态：逗号分隔字段（第 1 列用户名、第 2 列上线时间戳、第 9 列 IP）
+        # 2) 纯文本形态：逗号分隔（第 1 列用户名、第 2 列上线时间戳、第 9 列 IP）
+        body = self._get("/cgi-bin/rad_user_info", {}).strip()
+        if body.startswith("not_online"):
+            return self._offline_status(body)
         fields = body.split(",")
         if len(fields) < 10:
-            return {"portal_ok": True, "online": False, "username": "", "ip": "", "raw": raw}
+            return self._offline_status(body)
         login_ts = int(fields[_IDX_LOGIN_TIME]) if fields[_IDX_LOGIN_TIME].isdigit() else 0
         return {
             "portal_ok": True,
@@ -334,8 +340,14 @@ class SrunClient:
             "username": fields[_IDX_USERNAME],
             "ip": fields[_IDX_IP],
             "login_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(login_ts)) if login_ts else "",
-            "raw": raw,
+            "billing": "",
+            "all_bytes": 0,
+            "raw": body,
         }
+
+    def get_status_detail(self) -> dict:
+        """向后兼容别名：get_status 现已自带套餐/流量字段。"""
+        return self.get_status()
 
     def get_local_ip(self) -> str:
         """探测本机在校园网的 IPv4 地址（路由到门户所在网段）。"""
