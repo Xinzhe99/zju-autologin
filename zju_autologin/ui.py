@@ -671,6 +671,7 @@ class SettingsWindow(QDialog):
         self._btn_notify_test = QPushButton()
         self._btn_notify_test.setObjectName("secondary")
         self._btn_notify_test.clicked.connect(self._monitor.notify_test)
+        self._combo_provider.currentIndexChanged.connect(self._on_provider_changed)
         self._spin_threshold = QSpinBox()
         self._spin_threshold.setRange(1, 10)
         self._spin_traffic = QSpinBox()
@@ -701,7 +702,50 @@ class SettingsWindow(QDialog):
         actions.addStretch(1)
         actions.addWidget(self._btn_notify_test)
         notify_grid.addLayout(actions, 1, 0, 1, 4)
-        glay.addLayout(notify_grid)
+
+        # SMTP 表单（仅邮件渠道显示）
+        self._smtp_frame = QFrame()
+        smtp_grid = QGridLayout(self._smtp_frame)
+        smtp_grid.setContentsMargins(0, 0, 0, 0)
+        smtp_grid.setHorizontalSpacing(10)
+        smtp_grid.setVerticalSpacing(8)
+        self._edit_smtp_host = QLineEdit()
+        self._edit_smtp_host.setPlaceholderText("smtp.qq.com")
+        self._spin_smtp_port = QSpinBox()
+        self._spin_smtp_port.setRange(1, 65535)
+        self._spin_smtp_port.setValue(465)
+        self._edit_smtp_user = QLineEdit()
+        self._edit_smtp_user.setPlaceholderText("you@qq.com")
+        self._edit_smtp_pass = QLineEdit()
+        self._edit_smtp_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self._edit_smtp_pass.setPlaceholderText(tr("smtp.pass_ph"))
+        self._edit_smtp_to = QLineEdit()
+        self._edit_smtp_to.setPlaceholderText("you@qq.com")
+        self._smtp_labels: list[QLabel] = []
+        smtp_rows = (
+            ("smtp.host", self._edit_smtp_host),
+            ("smtp.port", self._spin_smtp_port),
+            ("smtp.user", self._edit_smtp_user),
+            ("smtp.pass", self._edit_smtp_pass),
+            ("smtp.to", self._edit_smtp_to),
+        )
+        for row, (key, widget) in enumerate(smtp_rows):
+            label = QLabel()
+            label.setObjectName("fieldKey")
+            label.setFixedWidth(110)
+            smtp_grid.addWidget(label, row, 0)
+            smtp_grid.addWidget(widget, row, 1)
+            self._smtp_labels.append(label)
+        self._smtp_frame.setVisible(False)
+        glay.addWidget(self._smtp_frame)
+
+        # 渠道教程链接
+        self._lbl_guide = QLabel()
+        self._lbl_guide.setObjectName("statusDetail")
+        self._lbl_guide.setOpenExternalLinks(True)
+        self._lbl_guide.setText(
+            f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
+        glay.addWidget(self._lbl_guide)
 
         self._btn_advanced = QToolButton()
         self._btn_advanced.setObjectName("eye")
@@ -860,6 +904,11 @@ class SettingsWindow(QDialog):
         self._btn_portal.setText(tr("btn.portal_wizard"))
         self._btn_route.setText(tr("route.remove" if self._config.portal_route_added else "route.add"))
         self._btn_route.setToolTip(tr("route.hint"))
+        self._lbl_guide.setText(
+            f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
+        for label, key in zip(self._smtp_labels, ("smtp.host", "smtp.port", "smtp.user", "smtp.pass", "smtp.to")):
+            label.setText(tr(key))
+        self._edit_smtp_pass.setPlaceholderText(tr("smtp.pass_ph"))
 
     def _apply_theme(self, mode: str) -> None:
         qss = theme.get_qss(mode)
@@ -871,6 +920,9 @@ class SettingsWindow(QDialog):
     def _on_proxy_mode_changed(self) -> None:
         custom = self._combo_proxy.currentData() == "custom"
         self._edit_proxy_url.setEnabled(custom)
+
+    def _on_provider_changed(self) -> None:
+        self._smtp_frame.setVisible(self._combo_provider.currentData() == "smtp")
 
     def _load_settings_into_ui(self) -> None:
         cfg = self._config
@@ -894,6 +946,12 @@ class SettingsWindow(QDialog):
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
         self._edit_heartbeat.setText(cfg.heartbeat_url or "")
+        self._edit_smtp_host.setText(cfg.smtp_host or "")
+        self._spin_smtp_port.setValue(cfg.smtp_port)
+        self._edit_smtp_user.setText(cfg.smtp_user or "")
+        self._edit_smtp_pass.setText(cfg.smtp_pass or "")
+        self._edit_smtp_to.setText(cfg.smtp_to or "")
+        self._smtp_frame.setVisible((cfg.notify_provider or "none") == "smtp")
         pm = cfg.proxy_mode if cfg.proxy_mode in ("system", "direct", "custom") else "system"
         self._combo_proxy.setCurrentIndex(max(0, self._combo_proxy.findData(pm)))
         self._edit_proxy_url.setText(cfg.proxy_url or "")
@@ -933,6 +991,11 @@ class SettingsWindow(QDialog):
         cfg.theme = self._seg_theme_data()
         cfg.notify_provider = self._combo_provider.currentData() or "none"
         cfg.notify_key = self._edit_key.text().strip()
+        cfg.smtp_host = self._edit_smtp_host.text().strip()
+        cfg.smtp_port = self._spin_smtp_port.value()
+        cfg.smtp_user = self._edit_smtp_user.text().strip()
+        cfg.smtp_pass = self._edit_smtp_pass.text()
+        cfg.smtp_to = self._edit_smtp_to.text().strip()
         cfg.notify_threshold = self._spin_threshold.value()
         cfg.notify_recovery = self._chk_recovery.isChecked()
         cfg.traffic_limit_gb = self._spin_traffic.value()

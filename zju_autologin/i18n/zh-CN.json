@@ -243,5 +243,12 @@
   "route.hint": "TUN/全局 VPN 在路由层接管流量，应用层无法绕过。此操作以管理员权限为门户 IP 添加持久化直连路由，使认证流量绕过 VPN；换网络环境后可点「移除直连路由」清理。",
   "route.remove_fail": "移除直连路由失败：请在 UAC 弹窗中确认后重试",
   "btn.settings": "设置",
-  "btn.logs": "日志"
+  "btn.logs": "日志",
+  "smtp.host": "SMTP 服务器",
+  "smtp.port": "端口",
+  "smtp.user": "发件邮箱",
+  "smtp.pass": "授权码",
+  "smtp.to": "收件邮箱",
+  "smtp.pass_ph": "邮箱授权码（非登录密码）",
+  "notify.guide": "各渠道 Key 获取教程 →"
 }

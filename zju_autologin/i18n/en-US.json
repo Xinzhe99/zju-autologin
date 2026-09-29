@@ -243,5 +243,12 @@
   "route.hint": "TUN-mode VPNs take over at the routing layer. This adds a persistent /32 route for the portal IP via your physical gateway (admin), so auth traffic bypasses the VPN. Remove it when switching networks.",
   "route.remove_fail": "Remove failed: confirm the UAC prompt and retry",
   "btn.settings": "Settings",
-  "btn.logs": "Logs"
+  "btn.logs": "Logs",
+  "smtp.host": "SMTP server",
+  "smtp.port": "Port",
+  "smtp.user": "From address",
+  "smtp.pass": "App password",
+  "smtp.to": "To address",
+  "smtp.pass_ph": "app password (not your login password)",
+  "notify.guide": "How to get each key →"
 }
