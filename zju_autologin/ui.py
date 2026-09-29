@@ -1319,7 +1319,7 @@ class MainWindow(QMainWindow):
         grid_lay.setVerticalSpacing(4)
         self._fields: dict[str, QLabel] = {}
         self._field_labels: dict[str, QLabel] = {}
-        keys = ("account", "ip", "login_time", "last_check", "billing", "traffic")
+        keys = ("account", "ip", "login_time", "last_check")
         for idx, key in enumerate(keys):
             klabel = QLabel()
             klabel.setObjectName("fieldKey")
@@ -1519,9 +1519,6 @@ class MainWindow(QMainWindow):
         self._fields["ip"].setText(info.get("ip") or "—")
         self._fields["login_time"].setText(info.get("login_time") or "—")
         self._fields["last_check"].setText(time.strftime("%H:%M:%S"))
-        self._fields["billing"].setText(info.get("billing") or "—")
-        self._fields["traffic"].setText(
-            _fmt_bytes(info.get("all_bytes") or 0) if info.get("all_bytes") else "—")
         self._btn_devices.setVisible(state == "auth_error" and info.get("ecode") == "E2620")
 
         icon_state = state if state in DOT_COLORS else "checking"
@@ -1588,12 +1585,7 @@ class MainWindow(QMainWindow):
         self._tip.setText(tr("tip.footer"))
 
         for key, label in self._field_labels.items():
-            if key == "billing":
-                label.setText(tr("field.billing"))
-            elif key == "traffic":
-                label.setText(tr("field.traffic"))
-            else:
-                label.setText(tr(f"field.{key}"))
+            label.setText(tr(f"field.{key}"))
 
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
                          (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
