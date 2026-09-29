@@ -4,6 +4,7 @@
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)](releases)
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](releases)
+[![Stars](https://img.shields.io/github/stars/Xinzhe99/zju-autologin?style=social)](https://github.com/Xinzhe99/zju-autologin/stargazers)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 
@@ -227,6 +228,16 @@ build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 - `tools/generate_assets.py`：从门户原始 logo 生成各尺寸图标与控件图标
 
 参与贡献见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 支持与贡献
+
+如果这个工具帮到了你，欢迎点一个 ⭐ Star——是对作者最大的鼓励，也能让更多需要的同学看到：
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Xinzhe99/zju-autologin&type=Date)](https://star-history.com/#Xinzhe99/zju-autologin&Date)
+
+- 🐛 遇到问题欢迎提 [Issue](https://github.com/Xinzhe99/zju-autologin/issues)，「复制诊断」的内容附上能更快定位
+- 💡 有功能建议或想法，欢迎开 Issue 讨论
+- 🔧 欢迎提交 PR：开发环境搭建、测试要求与新增翻译语言的步骤见 [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## 免责声明
 

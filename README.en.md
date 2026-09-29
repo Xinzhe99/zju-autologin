@@ -4,6 +4,7 @@
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://www.riverbankcomputing.com/software/pyqt/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)](releases)
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](releases)
+[![Stars](https://img.shields.io/github/stars/Xinzhe99/zju-autologin?style=social)](https://github.com/Xinzhe99/zju-autologin/stargazers)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 **[English](README.en.md) | [简体中文](README.md)**
@@ -59,6 +60,16 @@ Recommended for remote access: enable **System-level keep-alive** in Settings (a
 > Running from source (developers): see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 > macOS builds are unsigned — right-click the app → **Open**, or run `xattr -cr /Applications/ZJU\ AutoLogin.app`.
+
+## Support & Contributing
+
+If this tool saved you from a dead remote session, consider leaving a ⭐ — it helps more students find it:
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Xinzhe99/zju-autologin&type=Date)](https://star-history.com/#Xinzhe99/zju-autologin&Date)
+
+- 🐛 Found a bug? Open an [Issue](https://github.com/Xinzhe99/zju-autologin/issues) — attach the output of "Copy diagnostics"
+- 💡 Feature ideas are welcome via Issues
+- 🔧 PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) (includes how to add a new language)
 
 ## License
 
