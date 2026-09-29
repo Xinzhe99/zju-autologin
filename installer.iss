@@ -23,7 +23,6 @@ WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=*.exe
 RestartApplications=yes
-RestartApplicationsByRun=yes
 SetupIconFile=resources\zju.ico
 UninstallDisplayIcon={app}\ZJUAutoLogin.exe
 
