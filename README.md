@@ -102,9 +102,9 @@
 适用于树莓派、实验室服务器、任何有 Python ≥3.10 的 Linux 设备（协议层零第三方依赖）：
 
 ```bash
-# 安装（二选一）
-pip install git+https://github.com/Xinzhe99/zju-autologin     # 从 GitHub 直装
-# pip install zju-autologin                                   # PyPI（发布后）
+# 安装
+pip install zju-autologin          # PyPI（推荐）
+# pip install git+https://github.com/Xinzhe99/zju-autologin   # 从 GitHub 直装最新
 
 # 一行启用：装 systemd 服务 + 写凭据(root:600) + 立即启动
 sudo zju-autologin enable -u 学号 -p 密码
