@@ -635,6 +635,8 @@ class SettingsWindow(QDialog):
         self._chk_updates = QCheckBox()
         self._chk_boot = QCheckBox()
         self._chk_service = QCheckBox()
+        self._chk_service.toggled.connect(self._on_service_toggled)
+        self._service_busy = False
         opts = QHBoxLayout()
         opts.setSpacing(16)
         for chk in (self._chk_auto, self._chk_tray, self._chk_updates, self._chk_boot):
@@ -1023,9 +1025,12 @@ class SettingsWindow(QDialog):
         cfg.autostart = boot_ok
         cfg.save()
 
-        # 系统级保活（后台线程执行, 等待 UAC 期间不冻结界面）
-        if self._chk_service.isChecked() != service.is_installed():
-            self._apply_service_toggle(self._chk_service.isChecked())
+        # 系统级保活在勾选时已即时生效; 此处仅校正异常状态不一致
+        actual = service.is_installed()
+        if self._chk_service.isChecked() != actual:
+            self._chk_service.blockSignals(True)
+            self._chk_service.setChecked(actual)
+            self._chk_service.blockSignals(False)
 
         # 语言/主题实时切换（含主窗与日志窗）
         if i18n.current_lang() != cfg.language:
@@ -1043,17 +1048,27 @@ class SettingsWindow(QDialog):
                                   backend=tr(f"password.storage.{cfg.password_backend_key()}")))
         self._monitor.check_once()
 
+    def _on_service_toggled(self, on: bool) -> None:
+        if self._service_busy:
+            return
+        self._apply_service_toggle(on)
+
     def _apply_service_toggle(self, enable: bool) -> None:
         cfg = self._config
+        self._service_busy = True
         self._chk_service.setEnabled(False)
 
         def work():
             return service.install(cfg) if enable else service.uninstall()
 
         def done(result):
+            self._service_busy = False
             ok = bool(result and result[0])
             self._chk_service.setEnabled(True)
+            self._chk_service.blockSignals(True)
             self._chk_service.setChecked(ok if enable else not ok)
+            self._chk_service.blockSignals(False)
+            self._refresh_service_heartbeat()
             if enable:
                 self._main._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
             else:

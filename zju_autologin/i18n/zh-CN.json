@@ -176,7 +176,7 @@
   "theme.dark": "深色",
   "chk.proactive": "每天定时重新认证",
   "service.chk": "系统级保活（无需登录桌面即可认证，推荐远程用户开启）",
-  "service.hint": "重启 / 停电后无需登录 Windows 即可自动认证（需要 UAC 确认一次）",
+  "service.hint": "勾选立即生效：将弹出管理员确认窗口（若当前账户已是管理员且关闭了 UAC 通知，则静默完成）。下方显示运行心跳。",
   "service.on_ok": "系统级保活已开启（计划任务 ZJUAutoLogin）",
   "service.on_fail": "系统级保活开启失败：请在 UAC 弹窗中确认后重试",
   "service.off_ok": "系统级保活已关闭",

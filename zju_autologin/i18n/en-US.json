@@ -176,7 +176,7 @@
   "theme.dark": "Dark",
   "chk.proactive": "Re-authenticate daily at",
   "service.chk": "System-level keep-alive (authenticates before login; recommended for remote access)",
-  "service.hint": "Re-authenticates after reboot / power loss without anyone logging into Windows (one UAC confirmation needed)",
+  "service.hint": "Takes effect on check: an admin consent prompt appears (silent if your account is an admin with UAC notifications off). Heartbeat shown below.",
   "service.on_ok": "System-level keep-alive enabled (scheduled task ZJUAutoLogin)",
   "service.on_fail": "Failed to enable — confirm the UAC prompt and try again",
   "service.off_ok": "System-level keep-alive disabled",
