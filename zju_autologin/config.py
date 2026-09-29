@@ -108,14 +108,23 @@ def append_file_log(line: str, directory: Path | None = None) -> None:
         pass
 
 
+_EVENTS_FILE_MAX = 256 * 1024  # events.jsonl 超限后仅保留尾部行
+
+
 def append_event(kind: str, detail: str = "", directory: Path | None = None) -> None:
-    """记录网络事件（events.jsonl，一行一个 JSON），供统计面板使用。"""
+    """记录网络事件（events.jsonl，一行一个 JSON，超限自动截断）。"""
     try:
         base = directory or config_dir()
         base.mkdir(parents=True, exist_ok=True)
-        with open(base / "events.jsonl", "a", encoding="utf-8") as fh:
+        path = base / "events.jsonl"
+        with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"ts": time.time(), "event": kind, "detail": detail},
                                 ensure_ascii=False) + "\n")
+        if path.exists() and path.stat().st_size > _EVENTS_FILE_MAX:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            tmp.replace(path)
     except OSError:
         pass
 

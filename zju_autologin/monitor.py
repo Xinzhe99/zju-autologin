@@ -35,7 +35,8 @@ from .srun import SrunClient, SrunError
 #   auth_error          认证被拒（密码错误/设备数超限），不再自动重试
 #   login_fail          自动登录失败（临时性错误，退避后重试）
 
-_AUTH_ERRORS = {"password_error", "username_error", "E1002", "access_denied"}
+_AUTH_ERRORS = {"password_error", "username_error", "E1002", "access_denied",
+                "user_must_modify_password"}
 _PROBE_URLS = (
     ("http://www.msftconnecttest.com/connecttest.txt", "Microsoft Connect Test"),
     ("http://connect.rom.miui.com/generate_204", None),
@@ -293,12 +294,16 @@ class MonitorWorker(QObject):
                     self._do_login(client=client)
                     return
                 self._check_traffic_limit(int(status.get("all_bytes") or 0))
+                latency_ms = status.get("latency_ms")
+                detail_online = tr("detail.online_ok")
+                if latency_ms is not None:
+                    detail_online += f" · {latency_ms}ms"
                 self._emit(
                     "online",
                     username=status["username"],
                     ip=status["ip"],
                     login_time=status.get("login_time", ""),
-                    detail=tr("detail.online_ok"),
+                    detail=detail_online,
                     billing=status.get("billing", ""),
                     all_bytes=status.get("all_bytes", 0),
                 )

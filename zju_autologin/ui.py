@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -911,10 +912,8 @@ class SettingsWindow(QDialog):
         self._btn_route.setText(tr("route.remove" if self._config.portal_route_added else "route.add"))
         self._btn_route.setToolTip(tr("route.hint"))
         if sys.platform != "win32":
-            # 系统级保活/直连路由为 Windows 专属
-            for w in (self._chk_service, self._service_hint, self._service_heartbeat,
-                      self._btn_route):
-                w.setVisible(False)
+            # 直连路由为 Windows 专属; 系统级保活在 macOS 由 LaunchDaemon 提供
+            self._btn_route.setVisible(False)
         self._lbl_guide.setText(
             f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
         for label, key in zip(self._smtp_labels, ("smtp.host", "smtp.port", "smtp.user", "smtp.pass", "smtp.to")):
@@ -1600,7 +1599,8 @@ class MainWindow(QMainWindow):
         self._append_log(tr("update.downloaded"))
         self._tray.hide()
         if sys.platform == "win32":
-            os.startfile(path)  # noqa: S606 - 启动官方安装包
+            # 静默安装: 自动关闭运行中的实例, 安装完成后自动重启应用
+            subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         QApplication.quit()
@@ -1717,6 +1717,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._save_geometry()
+        # 系统发起的关闭(如安装器经 Restart Manager 关闭应用)始终放行
+        if event.spontaneous():
+            if self._downloader is not None:
+                self._downloader.stop()
+                self._downloader.wait(2000)
+            self._monitor.stop()
+            event.accept()
+            return
         if self._force_quit or not self._config.minimize_to_tray:
             if self._downloader is not None:
                 self._downloader.stop()

@@ -103,6 +103,7 @@ def friendly_error(resp: dict) -> str:
         "access_denied": "err.access_denied",
         "nonce_error": "err.nonce_error",
         "traffic_mismatch_error": "err.traffic_mismatch_error",
+        "user_must_modify_password": "err.user_must_modify_password",
     }
     key = keys.get(err) or keys.get(msg)
     text = tr(key) if key else ""
@@ -303,8 +304,10 @@ class SrunClient:
         返回 {portal_ok, online, username, ip, login_time, billing, all_bytes, raw}
         """
         # 1) JSONP 富形态（带 callback 时返回 JSON，含套餐/流量/余额）
+        t0 = time.perf_counter()
         body = self._get("/cgi-bin/rad_user_info",
                          {"callback": "zjulogin_status"}).strip()
+        latency = int((time.perf_counter() - t0) * 1000)
         if body.endswith(")") and "(" in body:
             try:
                 data = json.loads(body[body.find("(") + 1: body.rfind(")")] if "(" in body else body)
@@ -321,6 +324,7 @@ class SrunClient:
                         "login_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(login_ts)) if login_ts else "",
                         "billing": str(data.get("billing_name") or ""),
                         "all_bytes": int(data.get("all_bytes") or 0),
+                        "latency_ms": latency,
                         "raw": body,
                     }
                 if data.get("error") in ("not_online_error", "login_error") or                         "not_online" in str(data.get("error_msg", "")):

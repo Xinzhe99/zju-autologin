@@ -9,7 +9,25 @@ permissions:
   contents: write
 
 jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version matches tag
+        run: |
+          python - <<'EOF'
+          import os, re, sys
+          src = open('zju_autologin/__init__.py', encoding='utf-8').read()
+          v = re.search(r'__version__ = "([^"]+)"', src).group(1)
+          tag = os.environ['GITHUB_REF_NAME'].lstrip('v')
+          if v != tag:
+              print(f'版本号 {v} 与 tag {tag} 不一致 — 请先更新 __init__.py')
+              sys.exit(1)
+          print(f'version {v} == tag {tag} OK')
+          EOF
+
   build-windows:
+    needs: verify-version:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +72,7 @@ jobs:
             dist/ZJUAutoLogin-*-windows-portable.zip
 
   build-macos:
+    needs: verify-version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

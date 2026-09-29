@@ -123,12 +123,44 @@ def _run_elevated_ps(script: str) -> tuple[bool, str]:
     return False, detail or tail or "no-marker (UAC 取消或提权进程未运行)"
 
 
+PLIST_ID = "com.zju.autologin"
+
+
+def _darwin_plist_path() -> Path:
+    return Path("/Library/LaunchDaemons") / f"{PLIST_ID}.plist"
+
+
+def _darwin_plist_content(exe: str, args: str, config_path: str) -> str:
+    """macOS LaunchDaemon plist：root 常驻, 开机即运行 + 崩溃自动重启(KeepAlive)。"""
+    import html
+
+    program_args = "".join(f"<string>{html.escape(a)}</string>" for a in ([exe] + args.split()))
+    nl = chr(10)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>' + nl
+        + '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        + '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">' + nl
+        + '<plist version="1.0">' + nl + '<dict>' + nl
+        + f"  <key>Label</key><string>{PLIST_ID}</string>" + nl
+        + "  <key>ProgramArguments</key>" + nl + "  <array>" + nl
+        + program_args + nl + "  </array>" + nl
+        + "  <key>RunAtLoad</key><true/>" + nl
+        + "  <key>KeepAlive</key><true/>" + nl
+        + "  <key>StandardOutPath</key><string>/tmp/zju-autologin.log</string>" + nl
+        + "</dict>" + nl + "</plist>" + nl
+    )
+
+
 def is_installed(max_age: float = 60.0) -> bool:
-    """检查系统级计划任务是否存在（schtasks 较慢, 结果缓存 60 秒）。"""
+    """检查系统级保活是否已安装（Windows 计划任务 / macOS LaunchDaemon）。"""
     global _installed_cache
     now = time.time()
     if _installed_cache is not None and now - _installed_cache[0] < max_age:
         return _installed_cache[1]
+    if sys.platform == "darwin":
+        result = _darwin_plist_path().exists()
+        _installed_cache = (now, result)
+        return result
     if sys.platform != "win32":
         return False
     try:
@@ -149,9 +181,9 @@ def is_installed(max_age: float = 60.0) -> bool:
 
 
 def install(cfg) -> tuple[bool, str]:
-    """创建系统级计划任务并立即启动（需要 UAC 确认）。返回 (成功?, 详情)。"""
-    if sys.platform != "win32":
-        return False, "windows only"
+    """创建系统级保活并立即启动（Windows 弹 UAC / macOS 输管理员密码）。"""
+    if sys.platform == "darwin":
+        return _install_darwin(cfg)
     cfg_path = write_service_config(cfg)
     exe, args = _exe_and_args(str(cfg_path))
     script = (
@@ -169,9 +201,9 @@ def install(cfg) -> tuple[bool, str]:
 
 
 def uninstall() -> tuple[bool, str]:
-    """停止并删除系统级计划任务（需要 UAC 确认）。"""
-    if sys.platform != "win32":
-        return False, "windows only"
+    """停止并删除系统级保活（Windows 弹 UAC / macOS 输管理员密码）。"""
+    if sys.platform == "darwin":
+        return _uninstall_darwin()
     script = (
         f"  Stop-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue" + chr(10)
         + f"  Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false -ErrorAction SilentlyContinue" + chr(10)
@@ -184,3 +216,58 @@ def uninstall() -> tuple[bool, str]:
     except OSError:
         pass
     return (True, "removed") if not is_installed(max_age=0) else (False, "task still present")
+
+# ------------------------------------------------------------------ macOS
+
+
+def _mac_elevated(sh_command: str) -> tuple[bool, str]:
+    """通过 osascript 以管理员权限执行 shell 命令（弹出系统管理员密码框）。"""
+    import shlex
+
+    proc = subprocess.run(
+        ["osascript", "-e",
+         f'do shell script {shlex.quote(sh_command)} with administrator privileges'],
+        capture_output=True, timeout=300,
+    )
+    out = (proc.stdout + proc.stderr).decode("utf-8", errors="replace").strip()
+    return proc.returncode == 0, out
+
+
+def _install_darwin(cfg) -> tuple[bool, str]:
+    """注册 root LaunchDaemon（开机即认证 + KeepAlive 崩溃自动重启）。"""
+    cfg_path = write_service_config(cfg)
+    exe, args = _exe_and_args(str(cfg_path))
+    plist = _darwin_plist_path()
+    tmp_plist = Path(tempfile.gettempdir()) / f"{PLIST_ID}.plist"
+    tmp_plist.write_text(_darwin_plist_content(exe, args, str(cfg_path)), encoding="utf-8")
+    svc_dir = service_config_dir()
+    sh = (
+        f"mkdir -p '{svc_dir}' && "
+        f"cp '{tmp_plist}' '{plist}' && "
+        f"chown root:wheel '{plist}' && chmod 644 '{plist}' && "
+        f"launchctl bootstrap system '{plist}' 2>/dev/null || launchctl load -w '{plist}'"
+    )
+    ok, out = _mac_elevated(sh)
+    try:
+        tmp_plist.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if not ok:
+        return False, out or "elevation failed"
+    installed = is_installed(max_age=0)
+    return (True, "installed") if installed else (False, out or "plist not found")
+
+
+def _uninstall_darwin() -> tuple[bool, str]:
+    plist = _darwin_plist_path()
+    sh = (
+        f"launchctl bootout system '{plist}' 2>/dev/null; "
+        f"launchctl unload -w '{plist}' 2>/dev/null; "
+        f"rm -f '{plist}'"
+    )
+    ok, out = _mac_elevated(sh)
+    try:
+        (service_config_dir() / "config.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+    return (True, "removed") if not _darwin_plist_path().exists() else (False, out)

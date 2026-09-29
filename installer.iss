@@ -20,6 +20,10 @@ OutputBaseFilename=ZJUAutoLogin-{#AppVersion}-windows-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=yes
+CloseApplicationsFilter=*.exe
+RestartApplications=yes
+RestartApplicationsByRun=yes
 SetupIconFile=resources\zju.ico
 UninstallDisplayIcon={app}\ZJUAutoLogin.exe
 
