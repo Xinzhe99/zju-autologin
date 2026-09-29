@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from . import autostart, i18n, theme
 from .config import Config
 from .i18n import tr
-from .srun import SrunClient, SrunError
+from .srun import SrunClient
 from .ui import _load_pixmap
 
 
@@ -37,7 +37,7 @@ class _DetectThread(QThread):
     def run(self) -> None:
         try:
             self.detected.emit(SrunClient(timeout=3.0).get_status())
-        except SrunError as exc:
+        except Exception as exc:  # noqa: BLE001 - 超时/网络栈异常也要发信号, 否则欢迎页永远停在「正在检测…」
             self.detected.emit({"portal_ok": False, "online": False, "username": "",
                                 "ip": "", "raw": str(exc)})
 

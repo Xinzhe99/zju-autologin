@@ -31,22 +31,37 @@ def build_opener(proxy_mode: str = "system", proxy_url: str = "") -> urllib.requ
 
 # ---------------------------------------------------------------- 接口绑定
 
+def _default_route_source_ip(target: str = "223.5.5.5") -> str:
+    """UDP connect 探测默认路由源地址（不真正发包），补 getaddrinfo 漏掉的网卡 IP。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(2.0)
+            sock.connect((target, 53))
+            return sock.getsockname()[0]
+    except OSError:
+        return ""
+
+
 def candidate_source_ips() -> list[str]:
     """枚举本机候选出口 IPv4（校园网网段优先），用于源地址绑定绕过 TUN 路由。
 
     过滤：回环/链路本地/Clash TUN fake-ip(198.18.0.0/15)；排序：10/8 优先
     （浙大校园网网段），其次其他内网，最后公网。
     """
+    ips: list[str] = []
+    probe = _default_route_source_ip()  # Windows 上 getaddrinfo(主机名) 常漏真实网卡
+    if probe:
+        ips.append(probe)
     try:
         infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
     except OSError:
-        return []
+        infos = []
+    ips.extend(info[4][0] for info in infos)
     fake_pool = ipaddress.ip_network("198.18.0.0/15")
     campus_pool = ipaddress.ip_network("10.0.0.0/8")
     seen: set[str] = set()
     pools: dict[str, list[str]] = {"campus": [], "private": [], "other": []}
-    for info in infos:
-        ip = info[4][0]
+    for ip in ips:
         if ip in seen:
             continue
         seen.add(ip)
@@ -121,4 +136,4 @@ def bound_opener(source_ip: str) -> urllib.request.OpenerDirector:
                 source_address=(source_ip, 0), context=self._context)
             return self.do_open(cls, req)
 
-    return urllib.request.build_opener(_H(), _HS())
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _H(), _HS())

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import glob
-import os
 import sys
 
 
@@ -30,9 +29,10 @@ def on_battery() -> bool:
         except Exception:  # noqa: BLE001
             return False
     elif sys.platform.startswith("linux"):
+        # 适配器(AC/ADP)只有 online 文件，status 在电池(BAT*)上
         try:
-            for path in glob.glob("/sys/class/power_supply/A*"):
-                with open(os.path.join(path, "status"), encoding="ascii") as fh:
+            for path in glob.glob("/sys/class/power_supply/BAT*/status"):
+                with open(path, encoding="ascii") as fh:
                     if fh.read().strip() == "Discharging":
                         return True
         except OSError:

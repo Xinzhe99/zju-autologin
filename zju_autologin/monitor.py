@@ -60,8 +60,6 @@ def probe_internet(timeout: float = 4.0, opener: urllib.request.OpenerDirector |
                     return True
                 if expect_body and expect_body in resp.read(256).decode("utf-8", "replace"):
                     return True
-                if resp.status == 200 and not expect_body:
-                    return True
         except Exception:  # noqa: BLE001
             continue
     return False
@@ -229,10 +227,7 @@ class MonitorWorker(QObject):
             return False
         now_secs = now.tm_hour * 3600 + now.tm_min * 60
         target_secs = target.tm_hour * 3600 + target.tm_min * 60
-        if now_secs >= target_secs:
-            self._last_proactive_date = now_mark
-            return True
-        return False
+        return now_secs >= target_secs
 
     def _do_check(self, manual: bool) -> None:
         if self._busy or not self._running:
@@ -291,7 +286,9 @@ class MonitorWorker(QObject):
                 # 每日定时主动重登（成功后走登录路径刷新状态）
                 if self._should_proactive_relogin():
                     self.log(tr("log.proactive"))
-                    self._do_login(client=client)
+                    if self._do_login(client=client):
+                        # 成功才记日期: 失败则当天后续检测继续重试
+                        self._last_proactive_date = time.strftime("%Y-%m-%d")
                     return
                 self._check_traffic_limit(int(status.get("all_bytes") or 0))
                 latency_ms = status.get("latency_ms")
@@ -314,6 +311,8 @@ class MonitorWorker(QObject):
                     ip=status["ip"],
                     detail=tr("detail.authed_no_internet"),
                 )
+        except Exception as exc:  # noqa: BLE001 - 兜底: 异常逸出 Qt slot 会终止 worker 线程
+            self.log(f"{tr('err.unknown')}: {exc}")
         finally:
             self._busy = False
 
@@ -326,7 +325,7 @@ class MonitorWorker(QObject):
         )
         self.log(tr("notify.recovery_sent"))
 
-    def _do_login(self, client: SrunClient | None = None) -> None:
+    def _do_login(self, client: SrunClient | None = None) -> bool:
         client = client or self._client()
         self.log(tr("log.logging_in", username=self._config.username + self._config.domain))
         try:
@@ -336,6 +335,8 @@ class MonitorWorker(QObject):
                 domain=self._config.domain,
             )
         except SrunError as exc:
+            result = {"ok": False, "msg": str(exc), "username": "", "ip": "", "resp": {}}
+        except Exception as exc:  # noqa: BLE001 - keyring/OSError 等兜底, 防异常逸出 slot
             result = {"ok": False, "msg": str(exc), "username": "", "ip": "", "resp": {}}
         self._last_login_attempt = time.time()
 
@@ -356,7 +357,7 @@ class MonitorWorker(QObject):
                 billing=status.get("billing", ""),
                 all_bytes=status.get("all_bytes", 0),
             )
-            return
+            return True
 
         resp = result.get("resp", {})
         err_code = str(resp.get("error", ""))
@@ -370,18 +371,19 @@ class MonitorWorker(QObject):
             self._fail_count = 0
             self._emit("auth_error", username=result["username"], detail=msg, ecode="E2620")
             self._maybe_push("notify.limit_title", tr("notify.limit_body", msg=msg))
-            return
+            return False
         if err_code in _AUTH_ERRORS or tr("err.password_error") in msg or tr("err.username_error") in msg:
             self._auth_error = msg
             self._fail_count = 0
             self._emit("auth_error", username=result["username"], detail=msg)
             self._maybe_push("notify.fail_title", tr("notify.fail_body", msg=msg))
-            return
+            return False
 
         self._fail_count += 1
         if self._fail_streak >= self._config.notify_threshold:
             self._maybe_push("notify.fail_title", tr("notify.fail_body", msg=msg))
         self._emit("login_fail", username=result["username"], detail=msg)
+        return False
 
     def _check_traffic_limit(self, all_bytes: int) -> None:
         """月度流量上限提醒：超过用户设定值时每月推送一次。"""

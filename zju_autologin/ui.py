@@ -75,6 +75,18 @@ _NOTIFY_RELOGIN_FROM = {"offline", "auth_error", "login_fail", "authed_no_intern
 REPO_URL = "https://github.com/Xinzhe99/zju-autologin"
 
 
+def _is_installed_win() -> bool:
+    """Windows 安装版判定: 位于 Program Files 或 exe 目录不可写(不可原地替换)。"""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return False
+    exe_dir = os.path.normcase(os.path.dirname(sys.executable))
+    for env in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(env)
+        if root and exe_dir.startswith(os.path.normcase(root)):
+            return True
+    return not os.access(os.path.dirname(sys.executable), os.W_OK)
+
+
 def _load_pixmap(name: str) -> QPixmap:
     path = resource_path(name)
     if not os.path.isfile(path):
@@ -134,10 +146,11 @@ class UpdateDownloadThread(QThread):
     finished_err = pyqtSignal(str)
 
     def __init__(self, proxy_mode: str = "system", proxy_url: str = "",
-                 parent: QWidget | None = None) -> None:
+                 installed: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._proxy_mode = proxy_mode
         self._proxy_url = proxy_url
+        self._installed = installed
         self._stop = False
 
     def stop(self) -> None:
@@ -156,7 +169,11 @@ class UpdateDownloadThread(QThread):
             with api_opener.open(req, timeout=10) as resp:
                 data = _json.load(resp)
             target = None
-            suffix = "-windows-setup.exe" if sys.platform == "win32" else "-macos-portable.zip"
+            if sys.platform == "win32":
+                # 便携版下 zip 走原地替换; 安装版下 setup.exe 走 /SILENT 安装
+                suffix = "-windows-setup.exe" if self._installed else "-windows-portable.zip"
+            else:
+                suffix = "-macos-portable.zip"
             for asset in data.get("assets") or []:
                 name = str(asset.get("name", ""))
                 if name.endswith(suffix):
@@ -263,9 +280,7 @@ class DevicesDialog(QDialog):
         self.reload()
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        for thread in (self._load_thread, getattr(self, "_kick_thread", None)):
-            if thread is not None and thread.isRunning():
-                thread.wait(4000)
+        # 不在 UI 线程 wait 后台请求: 信号随对话框销毁自动断开
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
@@ -285,10 +300,13 @@ class DevicesDialog(QDialog):
         self._load_thread.start()
 
     def _apply_devices(self, devices) -> None:
-        if isinstance(devices, Exception) or not devices:
+        if isinstance(devices, Exception):
             self._status.setText(tr("devices.load_fail"))
             self._table.setRowCount(0)
-            self._btn_kick.setEnabled(bool(devices) and not isinstance(devices, Exception))
+            return
+        if not devices:
+            self._status.setText(tr("devices.empty"))
+            self._table.setRowCount(0)
             return
         self._devices = list(devices)
         self._table.setRowCount(len(self._devices))
@@ -333,6 +351,10 @@ class DevicesDialog(QDialog):
         self._kick_thread.start()
 
     def _kick_done(self, result) -> None:
+        if isinstance(result, Exception):
+            self._status.setText(tr("update.failed", msg=result))
+            self._btn_kick.setEnabled(True)
+            return
         ok = bool(result and result[0])
         if ok:
             self._kicked_ip = self._pending_ip
@@ -926,6 +948,10 @@ class SettingsWindow(QDialog):
         self._main.setStyleSheet(qss)
         if self._main._logs_window is not None:
             self._main._logs_window.setStyleSheet(qss)
+        # 胶囊切换即时生效, 同步落盘避免未点保存时重启回跳
+        if self._config.theme != mode:
+            self._config.theme = mode
+            self._config.save()
 
     def _on_proxy_mode_changed(self) -> None:
         custom = self._combo_proxy.currentData() == "custom"
@@ -946,7 +972,10 @@ class SettingsWindow(QDialog):
         self._combo_lang.setCurrentIndex(max(0, self._combo_lang.findData(lang)))
         self._set_seg_theme(cfg.theme if cfg.theme in ("auto", "light", "dark") else "auto")
         self._chk_boot.setChecked(autostart.is_enabled())
+        # setChecked 会触发已连接的 _on_service_toggled(误弹 UAC), 先屏蔽信号
+        self._chk_service.blockSignals(True)
         self._chk_service.setChecked(service.is_installed())
+        self._chk_service.blockSignals(False)
         self._combo_provider.setCurrentIndex(
             max(0, self._combo_provider.findData(cfg.notify_provider or "none")))
         self._edit_key.setText(cfg.notify_key or "")
@@ -991,6 +1020,11 @@ class SettingsWindow(QDialog):
 
     def _save_settings(self) -> None:
         cfg = self._config
+        pwd = self._edit_pwd.text()
+        # 先校验再写内存配置: 避免校验失败时已赋值的字段不落盘却生效
+        if not pwd and not cfg.get_password() and self._edit_user.text():
+            self._save_hint.setText(tr("hint.need_password"))
+            return
         cfg.username = self._edit_user.text()
         cfg.domain = self._edit_domain.text()
         cfg.interval = self._spin_interval.value()
@@ -1023,14 +1057,12 @@ class SettingsWindow(QDialog):
             self._edit_pwd.clear()
             self._edit_pwd.setPlaceholderText(
                 tr("ph.password_saved", backend=tr(f"password.storage.{cfg.password_backend_key()}")))
-        if not cfg.get_password() and cfg.username:
-            self._save_hint.setText(tr("hint.need_password"))
-            return
 
         boot_ok = autostart.set_enabled(self._chk_boot.isChecked())
         self._chk_boot.setChecked(boot_ok)
         cfg.autostart = boot_ok
         cfg.save()
+        self._main._load_settings_into_ui()  # 回填托盘 自动登录/开机自启 勾选
 
         # 系统级保活在勾选时已即时生效; 此处仅校正异常状态不一致
         actual = service.is_installed()
@@ -1070,7 +1102,7 @@ class SettingsWindow(QDialog):
 
         def done(result):
             self._service_busy = False
-            ok = bool(result and result[0])
+            ok = not isinstance(result, Exception) and bool(result and result[0])
             self._chk_service.setEnabled(True)
             self._chk_service.blockSignals(True)
             self._chk_service.setChecked(ok if enable else not ok)
@@ -1096,7 +1128,7 @@ class SettingsWindow(QDialog):
             return routes.add_direct_routes(cfg) if want_add else routes.remove_direct_routes(cfg)
 
         def done(result):
-            ok = bool(result and result[0])
+            ok = not isinstance(result, Exception) and bool(result and result[0])
             self._btn_route.setEnabled(True)
             if ok:
                 self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
@@ -1262,11 +1294,14 @@ class LogsWindow(QDialog):
 
     def _copy_diagnostics(self) -> None:
         cfg = self._main._config
+        user = cfg.username or ""
+        # 打码账号: 诊断文本常被直接贴给他人, 明文账号即半截凭据
+        masked = f"{user[:2]}{'*' * 3}{user[-1:]}" if len(user) > 4 else ("***" if user else "—")
         lines = [
             f"ZJU-AutoLogin v{__version__}",
             f"Python {sys.version.split()[0]} @ {sys.platform}",
             f"portal: {cfg.base_url} ac_id={cfg.ac_id}",
-            f"account: {cfg.username}{cfg.domain}",
+            f"account: {masked}{cfg.domain}",
             f"state: {self._main._last_status.get('state')} ip={self._main._last_status.get('ip')}",
             f"notify: {cfg.notify_provider}",
             "", "---- last logs ----",
@@ -1290,12 +1325,15 @@ class MainWindow(QMainWindow):
         self._config = config
         self._monitor = monitor
         self._force_quit = False
+        self._session_end = False
         self._warned_auth_error = False
         self._tray_state = ""
         self._last_status: dict = {"state": "checking", "detail": ""}
         self._update_version = ""
         self._update_url = ""
         self._update_pkg: str = ""          # 预下载完成的新版本包路径
+        self._notified_update_version = ""  # 本次运行已弹过托盘通知的版本(去重)
+        self._tray_msg_kind = ""            # 最近一条托盘气泡类型: "update" 或其他
         self._downloader: UpdateDownloadThread | None = None
         self._settings_window: SettingsWindow | None = None
         self._logs_window: LogsWindow | None = None
@@ -1320,6 +1358,11 @@ class MainWindow(QMainWindow):
         monitor.updateAvailable.connect(self._on_update_available)
         crash.UiHolder.window = self
 
+        # 关机/注销: 系统发起会话结束时必须放行关闭, 否则托盘常驻会拖住关机
+        app = QApplication.instance()
+        if app is not None:
+            app.commitDataRequest.connect(self._on_commit_data)
+
         # 预创建设置/日志窗口(隐藏): 首次点击瞬时显示, 无一次性构建等待
         self._settings_window = SettingsWindow(self._config, self._monitor, self)
         self._logs_window = LogsWindow(self)
@@ -1338,8 +1381,9 @@ class MainWindow(QMainWindow):
             return
         try:
             x, y, _w, _h = (int(v) for v in geo.split(","))
-            screen = QApplication.primaryScreen().availableGeometry()
-            if screen.contains(x + 100, y + 20):
+            # 校验所有屏幕: 副屏拔除后避免恢复到屏幕外
+            if any(s.availableGeometry().contains(x + 100, y + 20)
+                   for s in QApplication.screens()):
                 self.move(max(0, x), max(0, y))
         except (ValueError, TypeError):
             pass
@@ -1532,6 +1576,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         if self._settings_window is None:
             self._settings_window = SettingsWindow(self._config, self._monitor, self)
+        self._settings_window._refresh_service_heartbeat()  # 立即刷新, 不等首个 60s 定时
         self._settings_window.show()
         self._settings_window.raise_()
         self._settings_window.activateWindow()
@@ -1595,23 +1640,37 @@ class MainWindow(QMainWindow):
     def _toggle_auto_login(self, on: bool) -> None:
         self._config.auto_login = on
         self._config.save()
+        if self._settings_window is not None:
+            self._settings_window._chk_auto.setChecked(on)  # 与设置窗复选框保持同步
         self._append_log(tr("log.auto_login_on") if on else tr("log.auto_login_off"))
 
     def _toggle_autostart_from_tray(self, on: bool) -> None:
         result = autostart.set_enabled(on)
+        if self._settings_window is not None:
+            self._settings_window._chk_boot.setChecked(result)  # 与设置窗复选框保持同步
         self._append_log(tr("log.autostart_on") if result else tr("log.autostart_off"))
 
     # ---------------------------------------------------------------- 更新
 
     def _on_update_available(self, version: str, url: str) -> None:
+        if version != self._update_version and self._update_pkg:
+            # 检测到比预下载包更新的版本: 丢弃旧包, 避免装到旧版
+            try:
+                os.remove(self._update_pkg)
+            except OSError:
+                pass
+            self._update_pkg = ""
         self._update_version = version
         self._update_url = url
         self._update_banner.setText(tr("btn.update_now", version=version))
         self._update_banner.show()
-        self._tray.showMessage(
-            tr("tray.msg_update_title", version=version),
-            tr("tray.msg_update_body", current=__version__),
-            QSystemTrayIcon.MessageIcon.Information, 8000)
+        if version != self._notified_update_version:
+            self._notified_update_version = version
+            self._tray_msg_kind = "update"
+            self._tray.showMessage(
+                tr("tray.msg_update_title", version=version),
+                tr("tray.msg_update_body", current=__version__),
+                QSystemTrayIcon.MessageIcon.Information, 8000)
         self._predownload_update()
 
     def _predownload_update(self) -> None:
@@ -1624,7 +1683,8 @@ class MainWindow(QMainWindow):
         if not getattr(sys, "frozen", False):
             return  # 源码模式无自更新
         self._downloader = UpdateDownloadThread(
-            self._config.proxy_mode, self._config.proxy_url, self)
+            self._config.proxy_mode, self._config.proxy_url,
+            installed=_is_installed_win(), parent=self)
         self._downloader.finished_ok.connect(self._predownload_done)
         self._downloader.finished_err.connect(
             lambda err: self._append_log(tr("update.predl_fail", msg=err)))
@@ -1644,6 +1704,10 @@ class MainWindow(QMainWindow):
             self._update_downloaded(self._update_pkg)
             return
         if self._downloader is not None:
+            # 预下载进行中: 横幅接入进度反馈而非静默忽略
+            self._update_banner.setText(tr("update.downloading", percent=0))
+            self._downloader.progress.connect(
+                lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
             return
         if not getattr(sys, "frozen", False):
             QDesktopServices.openUrl(QUrl(self._update_url or updates.RELEASE_PAGE))
@@ -1651,7 +1715,8 @@ class MainWindow(QMainWindow):
         # 预下载未完成（或失败）→ 现场下载, 横幅显示进度
         self._update_banner.setText(tr("update.downloading", percent=0))
         self._downloader = UpdateDownloadThread(
-            self._config.proxy_mode, self._config.proxy_url, self)
+            self._config.proxy_mode, self._config.proxy_url,
+            installed=_is_installed_win(), parent=self)
         self._downloader.progress.connect(
             lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
         self._downloader.finished_ok.connect(self._update_downloaded)
@@ -1664,25 +1729,68 @@ class MainWindow(QMainWindow):
 
     def _update_downloaded(self, path: str) -> None:
         self._downloader = None
+        # 下载期间可能又发了新版: 丢弃旧包按最新重下, 否则「更新」反而降级
+        pkg_ver = self._pkg_version(path)
+        if pkg_ver and updates._version_tuple(pkg_ver) < updates._version_tuple(
+                self._update_version):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self._update_pkg = ""
+            self._predownload_update()
+            return
         self._append_log(tr("update.downloaded"))
         self._tray.hide()
         # 原地自更新（Codex 式体验, 无需安装器）:
-        #   Windows 单文件: 重命名运行中的 exe → 新版归位 → 重启
+        #   Windows 便携版: 解压 zip 出 exe → 重命名运行中的 exe → 新版归位 → 重启
         #   macOS .app 包: 解压 zip 得新 .app → 移动覆盖旧 .app → 重启
-        if getattr(sys, "frozen", False):
+        # Windows 安装版(setup.exe)不做原地替换, 直接走下方 /SILENT 安装
+        if getattr(sys, "frozen", False) and (
+                sys.platform == "darwin" or path.lower().endswith(".zip")):
             try:
                 if sys.platform == "darwin":
                     self._inplace_swap_mac(path)
                 else:
-                    self._inplace_swap(path)
+                    self._inplace_swap(self._extract_win_exe(path))
                 return
-            except OSError:
-                pass  # 目录不可写等场景回退到打开安装文件
+            except Exception as exc:  # noqa: BLE001 - 坏包/目录不可写等
+                # 清理残留坏包并恢复界面, 允许用户重试
+                self._update_pkg = ""
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                self._tray.show()
+                self._update_banner.setText(tr("update.failed", msg=exc))
+                self._append_log(tr("update.failed", msg=exc))
+                return
         if sys.platform == "win32":
             subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         QApplication.quit()
+
+    @staticmethod
+    def _pkg_version(path: str) -> str:
+        """从包名 ZJUAutoLogin-1.16.0-windows-portable.zip 取版本号, 取不到返回空。"""
+        import re
+
+        m = re.search(r"(\d+(?:\.\d+)+)", os.path.basename(path or ""))
+        return m.group(1) if m else ""
+
+    @staticmethod
+    def _extract_win_exe(zip_path: str) -> str:
+        """从便携 zip 解出 ZJUAutoLogin.exe 到临时目录, 返回 exe 路径。"""
+        import zipfile
+
+        staging = tempfile.mkdtemp(prefix="zju_aul_upd_")
+        with zipfile.ZipFile(zip_path) as zf:
+            for name in zf.namelist():
+                if os.path.basename(name) == "ZJUAutoLogin.exe":
+                    zf.extract(name, staging)
+                    return os.path.join(staging, name)
+        raise OSError("no ZJUAutoLogin.exe in update archive")
 
     def _inplace_swap_mac(self, zip_path: str) -> None:
         """macOS 原地替换 .app：解压 → 用新 .app 覆盖旧 .app → 重启。
@@ -1743,7 +1851,9 @@ class MainWindow(QMainWindow):
         if runtime.app_lock is not None:
             runtime.app_lock.unlock()
         self._append_log(tr("update.swapped"))
-        subprocess.Popen([str(cur), "--minimized"],
+        # 保持更新前的窗口状态: 原本开着窗就别重启进托盘
+        cmd = [str(cur)] if self.isVisible() else [str(cur), "--minimized"]
+        subprocess.Popen(cmd,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         QApplication.quit()
 
@@ -1773,6 +1883,7 @@ class MainWindow(QMainWindow):
 
         if state == "auth_error" and not self._warned_auth_error:
             self._warned_auth_error = True
+            self._tray_msg_kind = "auth_error"
             self._tray.showMessage(
                 tr("tray.msg_auth_failed_title"),
                 str(info.get("detail") or tr("tray.msg_auth_failed_body")),
@@ -1780,14 +1891,18 @@ class MainWindow(QMainWindow):
         elif state == "online":
             self._warned_auth_error = False
             if prev in _NOTIFY_RELOGIN_FROM:
+                self._tray_msg_kind = "relogin"
                 self._tray.showMessage(
                     tr("tray.msg_relogin_title"),
                     tr("tray.msg_relogin_body", ip=info.get("ip") or ""),
                     QSystemTrayIcon.MessageIcon.Information, 5000)
 
     def _on_message_clicked(self) -> None:
-        if self._update_url:
+        # 仅更新类气泡点击触发更新; 其他气泡点击只唤起主窗
+        if self._tray_msg_kind == "update" and self._update_url:
             self._do_update()
+        else:
+            self.show_normal()
 
     def _append_log(self, line: str) -> None:
         self._log_buffer.append(line)
@@ -1808,10 +1923,7 @@ class MainWindow(QMainWindow):
     def quit_app(self) -> None:
         self._force_quit = True
         self._save_geometry()
-        if self._downloader is not None:
-            self._downloader.stop()
-            self._downloader.wait(3000)
-        self._monitor.stop()
+        self._shutdown_background()
         self._tray.hide()
         QApplication.quit()
 
@@ -1861,19 +1973,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._save_geometry()
-        # 系统发起的关闭(如安装器经 Restart Manager 关闭应用)始终放行
-        if event.spontaneous():
-            if self._downloader is not None:
-                self._downloader.stop()
-                self._downloader.wait(2000)
-            self._monitor.stop()
-            event.accept()
-            return
-        if self._force_quit or not self._config.minimize_to_tray:
-            if self._downloader is not None:
-                self._downloader.stop()
-                self._downloader.wait(3000)
-            self._monitor.stop()
+        # 关机/注销时必须放行: 隐藏到托盘会拖住系统会话结束
+        if self._session_end or self._force_quit or not self._config.minimize_to_tray:
+            self._shutdown_background()
             event.accept()
             return
         event.ignore()
@@ -1884,3 +1986,14 @@ class MainWindow(QMainWindow):
                 tr("tray.msg_background_title"),
                 tr("tray.msg_background_body"),
                 QSystemTrayIcon.MessageIcon.Information, 4000)
+
+    def _shutdown_background(self) -> None:
+        if self._downloader is not None:
+            self._downloader.stop()
+            self._downloader.wait(3000)
+        self._monitor.stop()
+
+    def _on_commit_data(self, *_args) -> None:
+        self._session_end = True
+        self._shutdown_background()
+        QApplication.quit()

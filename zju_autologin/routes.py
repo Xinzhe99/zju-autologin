@@ -48,6 +48,11 @@ def route_script(ips: list[str], remove: bool = False) -> str:
                 f"Remove-NetRoute -DestinationPrefix '{ip}/32' -Confirm:$false "
                 "-PolicyStore All -ErrorAction SilentlyContinue"
             )
+        # 验证路由确已移除, 否则非零退出让 Python 侧报失败
+        for ip in ips:
+            lines.append(
+                f"if (Get-NetRoute -DestinationPrefix '{ip}/32') {{ exit 2 }}"
+            )
     else:
         lines.append(
             "$lan = Get-NetRoute -DestinationPrefix '0.0.0.0/0' | "
@@ -60,6 +65,11 @@ def route_script(ips: list[str], remove: bool = False) -> str:
                 f"New-NetRoute -DestinationPrefix '{ip}/32' -InterfaceIndex $lan.InterfaceIndex "
                 "-NextHop $lan.NextHop -RouteMetric 1 -PolicyStore PersistentStore "
                 "-ErrorAction SilentlyContinue"
+            )
+        # 验证路由确已写入, 否则非零退出让 Python 侧报失败
+        for ip in ips:
+            lines.append(
+                f"if (-not (Get-NetRoute -DestinationPrefix '{ip}/32')) {{ exit 2 }}"
             )
     return "\n".join(lines) + "\n"
 

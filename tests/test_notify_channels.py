@@ -134,7 +134,11 @@ def test_smtp_message_fields():
     with patch("zju_autologin.notify.smtplib.SMTP_SSL", return_value=server) as cls:
         ok, msg = send_notification(cfg, "校园网告警", "正文内容")
     assert ok and msg == "sent"
-    cls.assert_called_once_with("smtp.test.local", 465, timeout=8)
+    assert cls.call_count == 1
+    args, kwargs = cls.call_args
+    assert args == ("smtp.test.local", 465)
+    assert kwargs["timeout"] == 8
+    assert kwargs["context"] is not None  # 显式 SSL context，校验证书
     server.login.assert_called_once_with("a@test.local", "pw")
     sent_msg = server.send_message.call_args[0][0]
     assert sent_msg["Subject"] == "校园网告警"

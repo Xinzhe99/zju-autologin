@@ -31,7 +31,17 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0,
             result = json.loads(body)
         except ValueError:
             return resp.status < 400, body[:200]
-        return resp.status < 400, json.dumps(result, ensure_ascii=False)[:200]
+        detail = json.dumps(result, ensure_ascii=False)[:200]
+        if isinstance(result, dict):
+            # 企业微信/钉钉/飞书 errcode≠0 的 200 也是失败；Bark 成功为 code=200
+            code = result.get("errcode")
+            if code is None:
+                code = result.get("code")
+                if code == 200:
+                    code = 0
+            if isinstance(code, (int, float)) and code != 0:
+                return False, detail
+        return resp.status < 400, detail
     except Exception as exc:  # noqa: BLE001 - 通知失败不应影响主流程
         return False, str(exc)
 
@@ -46,7 +56,8 @@ def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
         msg["To"] = cfg.smtp_to
         msg.set_content(body)
         if cfg.smtp_port == 465:
-            server = smtplib.SMTP_SSL(cfg.smtp_host, 465, timeout=8)
+            server = smtplib.SMTP_SSL(cfg.smtp_host, 465, timeout=8,
+                                      context=ssl.create_default_context())
         else:
             server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=8)
             try:

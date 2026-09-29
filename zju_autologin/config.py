@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -191,6 +192,7 @@ def read_events(limit: int = 200, directory: Path | None = None) -> list[dict]:
 
 class Config:
     def __init__(self, path: str | None = None) -> None:
+        self._lock = threading.Lock()  # UI 与 monitor 线程会并发读写
         self.path = path or config_path()
         self.data: dict = dict(_DEFAULTS)
         self.password_backend = "none"
@@ -200,21 +202,32 @@ class Config:
     # ------------------------------------------------------------- 生命周期
 
     def load(self) -> None:
-        if os.path.isfile(self.path):
-            try:
-                with open(self.path, encoding="utf-8") as fh:
-                    stored = json.load(fh)
-                for key, default in _DEFAULTS.items():
-                    self.data[key] = stored.get(key, default)
-                self.password_backend = stored.get("password_backend", "none")
-                if self.password_backend == "file":
-                    self._plain_password = base64.b64decode(
-                        stored.get("password_b64", "")
-                    ).decode("utf-8", errors="replace")
-            except (OSError, ValueError):
+        with self._lock:
+            if os.path.isfile(self.path):
+                try:
+                    with open(self.path, encoding="utf-8") as fh:
+                        stored = json.load(fh)
+                    for key, default in _DEFAULTS.items():
+                        self.data[key] = stored.get(key, default)
+                    self.password_backend = stored.get("password_backend", "none")
+                    if self.password_backend == "file":
+                        self._plain_password = base64.b64decode(
+                            stored.get("password_b64", "")
+                        ).decode("utf-8", errors="replace")
+                except ValueError:
+                    # 配置损坏：改名备份再回退默认，避免用户名等无声丢失
+                    self.data = dict(_DEFAULTS)
+                    try:
+                        backup = f"{self.path}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
+                        os.replace(self.path, backup)
+                        print(f"[ZJUAutoLogin] config corrupted, backed up to {backup}",
+                              file=sys.stderr)
+                    except OSError:
+                        pass
+                except OSError:
+                    self.data = dict(_DEFAULTS)
+            else:
                 self.data = dict(_DEFAULTS)
-        else:
-            self.data = dict(_DEFAULTS)
         if self.password_backend != "file":
             self._plain_password = self._load_password_keyring()
 
@@ -228,10 +241,14 @@ class Config:
                 self._plain_password.encode("utf-8")
             ).decode("ascii")
         try:
-            with open(self.path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
+            with self._lock:
+                # 临时文件 + 原子替换，避免并发写产生截断 JSON
+                tmp = f"{self.path}.tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(payload, fh, ensure_ascii=False, indent=2)
+                os.replace(tmp, self.path)
+        except OSError as exc:
+            print(f"[ZJUAutoLogin] warning: failed to save config: {exc}", file=sys.stderr)
 
     # --------------------------------------------------------------- 字段
 

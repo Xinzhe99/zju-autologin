@@ -274,7 +274,8 @@ def test_neg_cache_skips_bound_strategies(tmp_path):
         pass
     assert "net.zju.edu.cn" in S._NEG_CACHE  # 已记录失败
     strategies = client._strategies()
-    assert all(k == "direct" for k, _, _ in strategies)  # 只剩直连
+    binds = {k for k, _, _ in strategies if k.startswith("bind:")}
+    assert len(binds) <= 1  # 负缓存期最多留一条 bind 兜底
     # 成功后负缓存清除
     client._request_once = lambda url, opener=None: "ok"
     client._get("/cgi-bin/rad_user_info", {})

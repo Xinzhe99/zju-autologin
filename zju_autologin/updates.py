@@ -13,8 +13,11 @@ RELEASE_PAGE = "https://github.com/Xinzhe99/zju-autologin/releases/latest"
 
 
 def _version_tuple(v: str) -> tuple:
-    nums = re.findall(r"\d+", v or "")
-    return tuple(int(x) for x in nums[:3]) or (0,)
+    nums = [int(x) for x in re.findall(r"\d+", v or "")]
+    if not nums:
+        return (0,)
+    # 补齐到 4 段: 否则 (1,15) < (1,15,0) 成立, 且四段版本号第 4 位被截断漏报
+    return tuple((nums + [0, 0, 0, 0])[:4])
 
 
 def check_newer(timeout: float = 5.0, opener: urllib.request.OpenerDirector | None = None) -> tuple[bool, str, str]:

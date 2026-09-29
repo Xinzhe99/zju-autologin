@@ -6,7 +6,7 @@
 实现方式：
 - 全局配置写入 C:\\ProgramData\\ZJUAutoLogin\\config.json（SYSTEM 账户可读）
 - 计划任务 ZJUAutoLogin，触发器 onstart，账户 SYSTEM，
-  优先 PowerShell Register-ScheduledTask 注册，失败自动回退 schtasks.exe
+  通过 PowerShell Register-ScheduledTask 注册
 - 创建/删除任务需要管理员权限：生成临时 .ps1 脚本经 UAC 提权执行，
   执行结果（含错误）写入标记文件与 ProgramData\\ZJUAutoLogin\\elevate.log
 """
@@ -44,7 +44,6 @@ def write_service_config(cfg) -> Path:
     from .config import _DEFAULTS
 
     sdir = service_config_dir()
-    sdir.mkdir(parents=True, exist_ok=True)
     payload = {"password_backend": "file"}
     for key in _DEFAULTS:
         if key.startswith(("notify_", "smtp_", "traffic_limit")):
@@ -52,8 +51,17 @@ def write_service_config(cfg) -> Path:
         payload[key] = cfg.data.get(key, _DEFAULTS[key])
     payload["password_b64"] = base64.b64encode(cfg.get_password().encode("utf-8")).decode("ascii")
     payload["autostart"] = True
-    path = sdir / "config.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        sdir.mkdir(parents=True, exist_ok=True)
+        path = sdir / "config.json"
+        path.write_text(text, encoding="utf-8")
+    except PermissionError:
+        if sys.platform != "darwin":
+            raise  # Windows 计划任务必须指向全局配置, 落到临时文件会让服务读不到凭据
+        # macOS /Library 需 root：先写临时文件，由提权命令 cp 到目标目录
+        path = Path(tempfile.gettempdir()) / f"zju_svc_config_{os.getpid()}.json"
+        path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -133,8 +141,12 @@ def _darwin_plist_path() -> Path:
 def _darwin_plist_content(exe: str, args: str, config_path: str) -> str:
     """macOS LaunchDaemon plist：root 常驻, 开机即运行 + 崩溃自动重启(KeepAlive)。"""
     import html
+    import shlex
 
-    program_args = "".join(f"<string>{html.escape(a)}</string>" for a in ([exe] + args.split()))
+    # shlex.split 保留带引号参数的空格（配置路径必含 "Application Support" 空格）
+    program_args = "".join(
+        f"<string>{html.escape(a)}</string>" for a in ([exe] + shlex.split(args))
+    )
     nl = chr(10)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>' + nl
@@ -186,13 +198,15 @@ def install(cfg) -> tuple[bool, str]:
         return _install_darwin(cfg)
     cfg_path = write_service_config(cfg)
     exe, args = _exe_and_args(str(cfg_path))
+    # PowerShell 单引号字符串内 ' 需写成 ''
+    exe_ps, args_ps = exe.replace("'", "''"), args.replace("'", "''")
     script = (
-        f"  $action = New-ScheduledTaskAction -Execute '{exe}' -Argument '{args}'" + chr(10)
+        f"  $action = New-ScheduledTaskAction -Execute '{exe_ps}' -Argument '{args_ps}'" + chr(10)
         + "  $trigger = New-ScheduledTaskTrigger -AtStartup" + chr(10)
         + "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)" + chr(10)
         + f"  Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force -ErrorAction Stop | Out-Null" + chr(10)
         + f"  Start-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue" + chr(10)
-        + f"  Start-Process -FilePath '{exe}' -ArgumentList '{args}' -WindowStyle Hidden -ErrorAction SilentlyContinue" + chr(10)
+        + f"  Start-Process -FilePath '{exe_ps}' -ArgumentList '{args_ps}' -WindowStyle Hidden -ErrorAction SilentlyContinue" + chr(10)
     )
     ok, detail = _run_elevated_ps(script)
     if not ok:
@@ -222,11 +236,11 @@ def uninstall() -> tuple[bool, str]:
 
 def _mac_elevated(sh_command: str) -> tuple[bool, str]:
     """通过 osascript 以管理员权限执行 shell 命令（弹出系统管理员密码框）。"""
-    import shlex
-
+    # AppleScript 字符串只认双引号，需转义 \ 与 "
+    as_string = sh_command.replace("\\", "\\\\").replace('"', '\\"')
     proc = subprocess.run(
         ["osascript", "-e",
-         f'do shell script {shlex.quote(sh_command)} with administrator privileges'],
+         f'do shell script "{as_string}" with administrator privileges'],
         capture_output=True, timeout=300,
     )
     out = (proc.stdout + proc.stderr).decode("utf-8", errors="replace").strip()
@@ -235,23 +249,29 @@ def _mac_elevated(sh_command: str) -> tuple[bool, str]:
 
 def _install_darwin(cfg) -> tuple[bool, str]:
     """注册 root LaunchDaemon（开机即认证 + KeepAlive 崩溃自动重启）。"""
-    cfg_path = write_service_config(cfg)
-    exe, args = _exe_and_args(str(cfg_path))
+    svc_dir = service_config_dir()
+    final_cfg = svc_dir / "config.json"
+    cfg_path = write_service_config(cfg)  # 普通用户无权限时落在临时目录
+    exe, args = _exe_and_args(str(final_cfg))
     plist = _darwin_plist_path()
     tmp_plist = Path(tempfile.gettempdir()) / f"{PLIST_ID}.plist"
-    tmp_plist.write_text(_darwin_plist_content(exe, args, str(cfg_path)), encoding="utf-8")
-    svc_dir = service_config_dir()
+    tmp_plist.write_text(_darwin_plist_content(exe, args, str(final_cfg)), encoding="utf-8")
+    copy_cfg = f"cp '{cfg_path}' '{final_cfg}' && " if cfg_path != final_cfg else ""
     sh = (
         f"mkdir -p '{svc_dir}' && "
-        f"cp '{tmp_plist}' '{plist}' && "
+        + copy_cfg
+        + f"cp '{tmp_plist}' '{plist}' && "
         f"chown root:wheel '{plist}' && chmod 644 '{plist}' && "
         f"launchctl bootstrap system '{plist}' 2>/dev/null || launchctl load -w '{plist}'"
     )
     ok, out = _mac_elevated(sh)
-    try:
-        tmp_plist.unlink(missing_ok=True)
-    except OSError:
-        pass
+    for p in (tmp_plist, cfg_path if cfg_path != final_cfg else None):
+        if p is None:
+            continue
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
     if not ok:
         return False, out or "elevation failed"
     installed = is_installed(max_age=0)

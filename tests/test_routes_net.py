@@ -32,10 +32,18 @@ def test_route_script_remove():
 
 
 def test_candidate_source_ips_filters_fakeip(monkeypatch):
-    from zju_autologin.net import candidate_source_ips
+    from zju_autologin import net
     fake = [(socket.AF_INET, None, None, None, ("10.92.107.70", 0)),
             (socket.AF_INET, None, None, None, ("198.18.0.1", 0)),
             (socket.AF_INET, None, None, None, ("127.0.0.1", 0)),
             (socket.AF_INET, None, None, None, ("169.254.9.9", 0))]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: fake)
-    assert candidate_source_ips() == ["10.92.107.70"]
+    monkeypatch.setattr(net, "_default_route_source_ip", lambda *a, **k: "")
+    assert net.candidate_source_ips() == ["10.92.107.70"]
+
+
+def test_candidate_source_ips_includes_udp_probe(monkeypatch):
+    from zju_autologin import net
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [])
+    monkeypatch.setattr(net, "_default_route_source_ip", lambda *a, **k: "10.92.1.5")
+    assert net.candidate_source_ips() == ["10.92.1.5"]

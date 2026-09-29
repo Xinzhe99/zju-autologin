@@ -6,9 +6,12 @@ from zju_autologin.updates import _version_tuple
 
 
 def test_version_tuple():
-    assert _version_tuple("v1.2.3") == (1, 2, 3)
+    assert _version_tuple("v1.2.3") == (1, 2, 3, 0)
     assert _version_tuple("1.10.0") > _version_tuple("1.9.9")
     assert _version_tuple("") == (0,)
+    # 段数不齐不能被误判为更新, 四段版本号末段不可丢弃
+    assert _version_tuple("1.15") == _version_tuple("1.15.0")
+    assert _version_tuple("1.15.0.1") > _version_tuple("1.15.0")
 
 
 def test_friendly_error_known_code():

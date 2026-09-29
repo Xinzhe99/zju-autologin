@@ -192,9 +192,12 @@ def _hmac_md5_hex(key: str, msg: str) -> str:
 def _parse_jsonp(text: str) -> dict:
     """解析 JSONP 响应（cb({...}) 或纯 JSON）。"""
     text = text.strip()
-    start, end = text.find("("), text.rfind(")")
-    if start != -1 and end > start:
-        text = text[start + 1 : end]
+    if not text.startswith("{"):
+        # 仅当确为 callback( 前缀时剥壳, 避免截断 error_msg 里出现的括号
+        m = re.match(r"^[\w$.]+\(", text)
+        end = text.rfind(")")
+        if m and end > m.end():
+            text = text[m.end():end]
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -254,11 +257,14 @@ class SrunClient:
             ("direct", _DIRECT_OPENER, "http"),
         ]
         recently_failed = time.time() - _NEG_CACHE.get(host, 0.0) < _NEG_TTL
-        if not recently_failed:
-            for ip in candidate_source_ips():
-                opener = bound_opener(ip)
-                pairs.append((f"bind:{ip}", opener, "https"))
-                pairs.append((f"bind:{ip}", opener, "http"))
+        ips = candidate_source_ips()
+        if recently_failed:
+            # 负缓存期仍留一条 bind 兜底: Wi-Fi 重连后 bind 可能已恢复, 全走 direct 会必败
+            ips = ips[:1]
+        for ip in ips:
+            opener = bound_opener(ip)
+            pairs.append((f"bind:{ip}", opener, "https"))
+            pairs.append((f"bind:{ip}", opener, "http"))
         cached = _STRATEGY_CACHE.get(host)
         if cached:
             key, scheme = cached.rsplit("|", 1)
@@ -448,13 +454,10 @@ class SrunClient:
             return ""
         if not location:
             return ""
-        if "http" not in location and location.startswith("/"):
-            location = self.base_url + location
-        host = urllib.parse.urlsplit(location)
-        if host.scheme and "zju.edu.cn" not in host.netloc:
-            # 其他学校：仍可复用其门户地址
-            pass
-        query = urllib.parse.parse_qs(host.query)
+        if not urllib.parse.urlsplit(location).scheme:
+            # 相对 Location（含无前导 / 的形式）按门户地址补全
+            location = urllib.parse.urljoin(self.base_url + "/", location)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(location).query)
         ac_ids = query.get("ac_id") or query.get("ac-id") or []
         return str(ac_ids[0]) if ac_ids else ""
 
