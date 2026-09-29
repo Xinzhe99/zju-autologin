@@ -702,6 +702,7 @@ class SettingsWindow(QDialog):
         actions.addStretch(1)
         actions.addWidget(self._btn_notify_test)
         notify_grid.addLayout(actions, 1, 0, 1, 4)
+        glay.addLayout(notify_grid)
 
         # SMTP 表单（仅邮件渠道显示）
         self._smtp_frame = QFrame()
