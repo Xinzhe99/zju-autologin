@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zju-autologin"
+version = "1.18.0"
+description = "ZJU campus network (Srun portal) auto-login & keep-alive: CLI + systemd service + PyQt6 GUI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Xinzhe Xie" }]
+keywords = ["zju", "srun", "campus-network", "auto-login", "systemd"]
+classifiers = [
+    "Environment :: Console",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Education",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Networking",
+]
+# 核心协议/CLI/systemd 全部纯标准库; keyring 仅 GUI 存凭据用(缺省自动回退混淆文件)
+dependencies = []
+
+[project.optional-dependencies]
+gui = ["PyQt6>=6.6", "keyring>=24.0"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+zju-autologin = "zju_autologin.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Xinzhe99/zju-autologin"
+Issues = "https://github.com/Xinzhe99/zju-autologin/issues"
+
+[tool.setuptools]
+packages = ["zju_autologin"]
+
+[tool.setuptools.package-data]
+zju_autologin = ["i18n/*.json"]

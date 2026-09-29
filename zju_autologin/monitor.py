@@ -20,7 +20,7 @@ from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, 
 
 from . import updates
 from .config import Config, append_event, append_usage_snapshot
-from .net import build_opener
+from .net import build_opener, probe_internet
 from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
@@ -37,32 +37,8 @@ from .srun import SrunClient, SrunError
 
 _AUTH_ERRORS = {"password_error", "username_error", "E1002", "access_denied",
                 "user_must_modify_password"}
-_PROBE_URLS = (
-    ("http://www.msftconnecttest.com/connecttest.txt", "Microsoft Connect Test"),
-    ("http://connect.rom.miui.com/generate_204", None),
-)
 _UPDATE_INTERVAL = 24 * 3600
 _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
-
-
-def probe_internet(timeout: float = 4.0, opener: urllib.request.OpenerDirector | None = None) -> bool:
-    """探测外网连通性；captive portal 劫持会被内容校验识破。
-
-    opener 缺省时跟随系统代理（反映用户真实上网路径）。
-    """
-    if opener is None:
-        opener = urllib.request.build_opener()
-    for url, expect_body in _PROBE_URLS:
-        try:
-            req = urllib.request.Request(url, method="GET")
-            with opener.open(req, timeout=timeout) as resp:
-                if resp.status == 204:
-                    return True
-                if expect_body and expect_body in resp.read(256).decode("utf-8", "replace"):
-                    return True
-        except Exception:  # noqa: BLE001
-            continue
-    return False
 
 
 class MonitorWorker(QObject):

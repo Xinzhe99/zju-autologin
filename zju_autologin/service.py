@@ -188,6 +188,10 @@ def is_installed(max_age: float = 60.0) -> bool:
     now = time.time()
     if _installed_cache is not None and now - _installed_cache[0] < max_age:
         return _installed_cache[1]
+    if sys.platform.startswith("linux"):
+        result = _linux_unit_path().exists()
+        _installed_cache = (now, result)
+        return result
     if sys.platform == "darwin":
         result = _darwin_plist_path().exists()
         _installed_cache = (now, result)
@@ -213,7 +217,9 @@ def is_installed(max_age: float = 60.0) -> bool:
 
 
 def install(cfg) -> tuple[bool, str]:
-    """创建系统级保活并立即启动（Windows 弹 UAC / macOS 输管理员密码）。"""
+    """创建系统级保活并立即启动（Linux systemd / Windows UAC / macOS 管理员密码）。"""
+    if sys.platform.startswith("linux"):
+        return _install_linux(cfg)
     if sys.platform == "darwin":
         return _install_darwin(cfg)
     cfg_path = write_service_config(cfg)
@@ -234,7 +240,9 @@ def install(cfg) -> tuple[bool, str]:
 
 
 def uninstall() -> tuple[bool, str]:
-    """停止并删除系统级保活（Windows 弹 UAC / macOS 输管理员密码）。"""
+    """停止并删除系统级保活（Linux systemd / Windows UAC / macOS 管理员密码）。"""
+    if sys.platform.startswith("linux"):
+        return _uninstall_linux()
     if sys.platform == "darwin":
         return _uninstall_darwin()
     script = (
@@ -249,6 +257,70 @@ def uninstall() -> tuple[bool, str]:
     except OSError:
         pass
     return (True, "removed") if not is_installed(max_age=0) else (False, "task still present")
+
+
+# ------------------------------------------------------------------ Linux
+
+UNIT_NAME = "zju-autologin"
+
+
+def _linux_unit_path() -> Path:
+    return Path("/etc/systemd/system") / f"{UNIT_NAME}.service"
+
+
+def _systemd_unit(cfg_path: str) -> str:
+    """systemd 服务单元: 开机自启 + 崩溃自动重启（对应 Windows SYSTEM 计划任务）。"""
+    return f"""[Unit]
+Description=ZJU Campus Network AutoLogin (srun keepalive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={sys.executable} -m zju_autologin.cli watch --config {cfg_path}
+Restart=always
+RestartSec=15
+# 加固: 服务不需要新权限与真实 /tmp /home
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/zju-autologin
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def _install_linux(cfg) -> tuple[bool, str]:
+    """写入凭据与 systemd 单元并 enable --now（需 root, 由 CLI 层校验）。"""
+    cfg_path = write_service_config(cfg)  # /etc/zju-autologin/config.json (600)
+    import subprocess
+
+    unit = _systemd_unit(str(cfg_path))
+    _linux_unit_path().write_text(unit, encoding="utf-8")
+    for cmd in (["systemctl", "daemon-reload"],
+                ["systemctl", "enable", "--now", UNIT_NAME]):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return False, (r.stdout + r.stderr).strip()[:200] or " ".join(cmd)
+    return (True, "installed") if is_installed(max_age=0) else (False, "unit not found")
+
+
+def _uninstall_linux() -> tuple[bool, str]:
+    import subprocess
+
+    for cmd in (["systemctl", "disable", "--now", UNIT_NAME],
+                ["systemctl", "stop", UNIT_NAME]):
+        subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    try:
+        _linux_unit_path().unlink(missing_ok=True)
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=30)
+        (service_config_dir() / "config.json").unlink(missing_ok=True)
+    except OSError as exc:
+        return False, str(exc)
+    return (True, "removed") if not _linux_unit_path().exists() else (False, "unit still present")
+
 
 # ------------------------------------------------------------------ macOS
 

@@ -138,3 +138,32 @@ def bound_opener(source_ip: str) -> urllib.request.OpenerDirector:
             return self.do_open(cls, req)
 
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), _H(), _HS())
+
+
+# ---------------------------------------------------------------- 外网探测
+
+_PROBE_URLS = (
+    ("http://www.msftconnecttest.com/connecttest.txt", "Microsoft Connect Test"),
+    ("http://connect.rom.miui.com/generate_204", None),
+)
+
+
+def probe_internet(timeout: float = 4.0, opener: "urllib.request.OpenerDirector | None" = None) -> bool:
+    """探测外网连通性；captive portal 劫持会被内容校验识破。
+
+    opener 缺省时跟随系统代理（反映用户真实上网路径）。
+    纯标准库实现, CLI/服务模式可用（不依赖 Qt）。
+    """
+    if opener is None:
+        opener = urllib.request.build_opener()
+    for url, expect_body in _PROBE_URLS:
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with opener.open(req, timeout=timeout) as resp:
+                if resp.status == 204:
+                    return True
+                if expect_body and expect_body in resp.read(256).decode("utf-8", "replace"):
+                    return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False

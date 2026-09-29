@@ -8,7 +8,7 @@
 [![Last Commit](https://img.shields.io/github/last-commit/Xinzhe99/zju-autologin/main)](https://github.com/Xinzhe99/zju-autologin/commits)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-PyQt6-41CD52?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey?logo=windows&logoColor=white)](https://github.com/Xinzhe99/zju-autologin/releases)
+[![Platform](https://img.shields.io/badge/Platform-Win%20%7C%20macOS%20%7C%20Linux-lightgrey?logo=linux&logoColor=white)](https://github.com/Xinzhe99/zju-autologin/releases)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
@@ -95,6 +95,37 @@
 - ✅ **多语言**：简体中文 / English，跟随系统语言，可随时切换；深色模式跟随系统
 - ✅ **CLI 模式**：无界面运行，可配合任务计划或 SSH 使用
 - 其他：流量/套餐展示与月度超额提醒、定时主动重登、网络事件统计、一键复制诊断、配置导出/导入、笔记本电池降频、崩溃自报告、多校门户接入向导、托盘快速开关、打开登录页
+
+
+## Linux / 嵌入式设备（一行命令启用）
+
+适用于树莓派、实验室服务器、任何有 Python ≥3.10 的 Linux 设备（协议层零第三方依赖）：
+
+```bash
+# 安装（二选一）
+pip install git+https://github.com/Xinzhe99/zju-autologin     # 从 GitHub 直装
+# pip install zju-autologin                                   # PyPI（发布后）
+
+# 一行启用：装 systemd 服务 + 写凭据(root:600) + 立即启动
+sudo zju-autologin enable -u 学号 -p 密码
+
+# 完成。开机自启 + 崩溃自动重启，无需登录桌面
+zju-autologin status                # 查看服务与网络状态
+journalctl -u zju-autologin -f      # 跟踪日志
+sudo zju-autologin disable          # 停止并卸载（凭据一并删除）
+```
+
+**密码安全**：`-p` 参数会短暂出现在 `ps` 输出里，更安全的写法：
+
+```bash
+echo '密码' | sudo zju-autologin enable -u 学号 --pass-stdin   # stdin
+ZJU_PASS='密码' sudo -E zju-autologin enable -u 学号            # 环境变量
+sudo zju-autologin enable -u 学号                               # 交互式输入(推荐)
+```
+
+**无 Python 的设备**：从 [Releases](releases) 下载静态二进制 `zju-autologin-linux-x86_64` / `-aarch64`（glibc 环境；Alpine/OpenWrt 等 musl 系统请用 pip 路线），`sudo ./zju-autologin-linux-* enable -u 学号` 同样一行启用。
+
+**服务机制**：systemd 单元（`/etc/systemd/system/zju-autologin.service`），`Restart=always` 崩溃自动拉起、`After=network-online.target` 等网络就绪、凭据存 `/etc/zju-autologin/config.json`（root:600、base64 混淆，与 Windows SYSTEM 任务/macOS LaunchDaemon 同级）。
 
 ## 校园网认证机制解析
 
