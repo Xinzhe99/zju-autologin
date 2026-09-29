@@ -181,4 +181,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "ZJU AutoLogin $GITHUB_REF_NAME" \
             --generate-notes \
-            artifacts/*
+            artifacts/* \n            || gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
