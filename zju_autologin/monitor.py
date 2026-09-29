@@ -299,7 +299,7 @@ class MonitorWorker(QObject):
                     ip=status["ip"],
                     login_time=status.get("login_time", ""),
                     detail=tr("detail.online_ok"),
-                    billing=status.get("billing", ""),
+                    billing=self._clean_billing(status.get("billing", "")),
                     all_bytes=status.get("all_bytes", 0),
                 )
             else:
@@ -348,7 +348,7 @@ class MonitorWorker(QObject):
                 ip=status.get("ip") or result.get("ip") or "",
                 login_time=status.get("login_time", ""),
                 detail=tr("detail.just_logged"),
-                billing=status.get("billing", ""),
+                billing=self._clean_billing(status.get("billing", "")),
                 all_bytes=status.get("all_bytes", 0),
             )
             return
@@ -377,6 +377,12 @@ class MonitorWorker(QObject):
         if self._fail_streak >= self._config.notify_threshold:
             self._maybe_push("notify.fail_title", tr("notify.fail_body", msg=msg))
         self._emit("login_fail", username=result["username"], detail=msg)
+
+    @staticmethod
+    def _clean_billing(billing: str) -> str:
+        """门户的计费策略名常为「0费用」这类无意义占位，不为用户显示。"""
+        billing = (billing or "").strip()
+        return "" if billing in ("", "0费用", "0") else billing
 
     def _check_traffic_limit(self, all_bytes: int) -> None:
         """月度流量上限提醒：超过用户设定值时每月推送一次。"""
