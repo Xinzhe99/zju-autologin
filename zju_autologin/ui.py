@@ -149,7 +149,8 @@ class UpdateDownloadThread(QThread):
                 updates.REPO_API,
                 headers={"Accept": "application/vnd.github+json", "User-Agent": "ZJU-AutoLogin"},
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            api_opener = build_opener(self._proxy_mode, self._proxy_url)
+            with api_opener.open(req, timeout=10) as resp:
                 data = _json.load(resp)
             target = None
             for asset in data.get("assets") or []:
@@ -497,6 +498,7 @@ class PortalWizardDialog(QDialog):
 
         self._thread = _FnThread(work, self)
         self._thread.done.connect(self._apply)
+        self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
 
     def _apply(self, result) -> None:
@@ -654,7 +656,8 @@ class SettingsWindow(QDialog):
         self._hb_timer = QTimer(self)
         self._hb_timer.setInterval(60_000)
         self._hb_timer.timeout.connect(self._refresh_service_heartbeat)
-        self._hb_timer.start()
+        if sys.platform == "win32":
+            self._hb_timer.start()
 
         self._notify_title = QLabel()
         self._notify_title.setObjectName("cardTitle")
@@ -907,6 +910,11 @@ class SettingsWindow(QDialog):
         self._btn_portal.setText(tr("btn.portal_wizard"))
         self._btn_route.setText(tr("route.remove" if self._config.portal_route_added else "route.add"))
         self._btn_route.setToolTip(tr("route.hint"))
+        if sys.platform != "win32":
+            # 系统级保活/直连路由为 Windows 专属
+            for w in (self._chk_service, self._service_hint, self._service_heartbeat,
+                      self._btn_route):
+                w.setVisible(False)
         self._lbl_guide.setText(
             f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
         for label, key in zip(self._smtp_labels, ("smtp.host", "smtp.port", "smtp.user", "smtp.pass", "smtp.to")):
@@ -1116,8 +1124,9 @@ class SettingsWindow(QDialog):
             return
         payload = {"_exported_by": f"ZJU-AutoLogin v{__version__}"}
         for key in _DEFAULTS:
-            if key != "win_geometry":
-                payload[key] = self._config.data.get(key)
+            if key in ("win_geometry", "notify_key", "smtp_pass"):
+                continue  # 位置/密钥类字段不导出
+            payload[key] = self._config.data.get(key)
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
@@ -1223,6 +1232,16 @@ class LogsWindow(QDialog):
         llay.addWidget(self._log, 1)
         root.addWidget(card, 1)
 
+        # 预加载跨重启的历史日志(最近 80 行), 再叠加本次会话缓冲
+        try:
+            from .config import config_dir
+            app_log = config_dir() / "app.log"
+            if app_log.exists():
+                history = app_log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+                for line in history:
+                    self._log.appendPlainText(line)
+        except OSError:
+            pass
         for line in main._log_buffer:
             self._log.appendPlainText(line)
         self.retranslate_ui()

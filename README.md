@@ -149,6 +149,7 @@ python cli.py watch 30  # 常驻守护（每 30 秒检测）
 - 配置文件：`%APPDATA%\ZJUAutoLogin\config.json`（账号、间隔、开关等）
 - 密码：优先写入 **Windows 凭据管理器**（凭据名 `ZJUAutoLogin`；macOS 为 Keychain）；若不可用则退化为 base64 混淆存储（界面上会显示实际存储方式）
 - 所有凭据仅存本机，不上传不同步
+- 配置导出不包含任何密钥（通知 Key / 邮件授权码需导入后重新填写）
 
 ## 常见问题
 
