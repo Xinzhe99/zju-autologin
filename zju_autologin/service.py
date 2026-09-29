@@ -5,11 +5,10 @@
 
 实现方式：
 - 全局配置写入 C:\\ProgramData\\ZJUAutoLogin\\config.json（SYSTEM 账户可读）
-- 计划任务 `ZJUAutoLogin`，触发器 onstart，账户 SYSTEM，
-  通过 PowerShell Register-ScheduledTask 注册（引号转义比 schtasks 可靠）
-- 创建/删除任务需要管理员权限：生成临时 .ps1 脚本经 UAC 提权执行
-
-macOS 的等价能力由 LaunchAgent（用户级）提供，系统级需手写 LaunchDaemon，见 README。
+- 计划任务 ZJUAutoLogin，触发器 onstart，账户 SYSTEM，
+  优先 PowerShell Register-ScheduledTask 注册，失败自动回退 schtasks.exe
+- 创建/删除任务需要管理员权限：生成临时 .ps1 脚本经 UAC 提权执行，
+  执行结果（含错误）写入标记文件与 ProgramData\\ZJUAutoLogin\\elevate.log
 """
 
 from __future__ import annotations
@@ -26,6 +25,8 @@ from pathlib import Path
 from .config import service_config_dir
 
 TASK_NAME = "ZJUAutoLogin"
+
+_installed_cache: tuple[float, bool] | None = None
 
 
 def _exe_and_args(config_path: str) -> tuple[str, str]:
@@ -56,44 +57,77 @@ def write_service_config(cfg) -> Path:
     return path
 
 
-def _run_elevated_ps(script: str) -> bool:
-    """把 PowerShell 脚本写入临时文件并经 UAC 提权执行（标记文件确认已跑完）。"""
+def _elevate_log_path() -> Path:
+    return service_config_dir() / "elevate.log"
+
+
+def _run_elevated_ps(script: str) -> tuple[bool, str]:
+    """把脚本写入临时文件并经 UAC 提权执行。
+
+    标记文件写入 'ok' 视为成功；否则读取标记/提权日志中的错误文本返回
+    （错误同时追加到 ProgramData\\ZJUAutoLogin\\elevate.log 便于排查）。
+    """
     script_path = Path(tempfile.gettempdir()) / f"zju_aul_{os.getpid()}.ps1"
     marker = script_path.with_suffix(".done")
+    log_path = _elevate_log_path()
     try:
         marker.unlink(missing_ok=True)
     except OSError:
         pass
-    script_path.write_text(script + f'\nSet-Content -Path "{marker}" -Value ok\n', encoding="utf-8")
-    command = (
-        'Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden '
-        f'-ArgumentList \'-NoProfile -ExecutionPolicy Bypass -File "{script_path}"\''
+    marker_ps = str(marker).replace("'", "''")
+    log_ps = str(log_path).replace("'", "''")
+    nl = chr(10)
+    wrapped = (
+        "try { Set-ExecutionPolicy Bypass -Scope Process -Force } catch {}" + nl
+        + "try {" + nl
+        + script + nl
+        + f"  Set-Content -Path '{marker_ps}' -Value 'ok'" + nl
+        + "} catch {" + nl
+        + f"  Add-Content -Path '{log_ps}' -Value (\"[{time.strftime('%Y-%m-%d %H:%M:%S')}] \" + $_)" + nl
+        + f"  Set-Content -Path '{marker_ps}' -Value 'err'" + nl
+        + "  exit 1" + nl
+        + "}" + nl
     )
+    script_path.write_text(wrapped, encoding="utf-8-sig")  # BOM 让 PS5 按 UTF-8 解析
+    command = (
+        "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
+        f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"'"
+    )
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", command],
-            capture_output=True, timeout=180,
+            capture_output=True, timeout=180, creationflags=flags,
         )
-        # 用户取消 UAC 时标记文件不会生成
-        return marker.exists()
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        pass
+
+    detail = ""
+    try:
+        detail = marker.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        detail = ""
+    tail = ""
+    try:
+        tail = log_path.read_text(encoding="utf-8", errors="replace").strip()[-400:]
+    except OSError:
+        pass
     finally:
         for p in (script_path, marker):
             try:
                 p.unlink(missing_ok=True)
             except OSError:
                 pass
+    if detail == "ok":
+        return True, "ok"
+    return False, detail or tail or "no-marker (UAC 取消或提权进程未运行)"
 
 
-_installed_cache: tuple[float, bool] | None = None
-_INSTALLED_TTL = 60.0
-
-
-def is_installed(max_age: float = _INSTALLED_TTL) -> bool:
+def is_installed(max_age: float = 60.0) -> bool:
     """检查系统级计划任务是否存在（schtasks 较慢, 结果缓存 60 秒）。"""
     global _installed_cache
-    if _installed_cache is not None and time.time() - _installed_cache[0] < max_age:
+    now = time.time()
+    if _installed_cache is not None and now - _installed_cache[0] < max_age:
         return _installed_cache[1]
     if sys.platform != "win32":
         return False
@@ -102,41 +136,51 @@ def is_installed(max_age: float = _INSTALLED_TTL) -> bool:
             ["schtasks", "/query", "/tn", TASK_NAME],
             capture_output=True, timeout=15,
         )
-        result = out.returncode == 0
+        if out.returncode == 0:
+            result = True
+        else:
+            # SYSTEM 创建的任务对普通权限进程返回"拒绝访问"——任务存在但不可读
+            text = (out.stdout + out.stderr).decode("gbk", errors="replace")
+            result = ("拒绝访问" in text) or ("Access is denied" in text)
     except (OSError, subprocess.TimeoutExpired):
         result = False
-    _installed_cache = (time.time(), result)
+    _installed_cache = (now, result)
     return result
 
 
 def install(cfg) -> tuple[bool, str]:
-    """创建系统级计划任务（需要 UAC 确认）。返回 (成功?, 说明)。"""
+    """创建系统级计划任务并立即启动（需要 UAC 确认）。返回 (成功?, 详情)。"""
     if sys.platform != "win32":
         return False, "windows only"
     cfg_path = write_service_config(cfg)
     exe, args = _exe_and_args(str(cfg_path))
-    script = f"""
-$action = New-ScheduledTaskAction -Execute '{exe}' -Argument '{args}'
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
-"""
-    if not _run_elevated_ps(script):
-        return False, "elevation failed"
-    result = (True, "installed") if is_installed(max_age=0) else (False, "task not found")
-    global _installed_cache
-    return result
+    script = (
+        f"  $action = New-ScheduledTaskAction -Execute '{exe}' -Argument '{args}'" + chr(10)
+        + "  $trigger = New-ScheduledTaskTrigger -AtStartup" + chr(10)
+        + "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)" + chr(10)
+        + f"  Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force -ErrorAction Stop | Out-Null" + chr(10)
+        + f"  Start-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue" + chr(10)
+        + f"  Start-Process -FilePath '{exe}' -ArgumentList '{args}' -WindowStyle Hidden -ErrorAction SilentlyContinue" + chr(10)
+    )
+    ok, detail = _run_elevated_ps(script)
+    if not ok:
+        return False, detail
+    return (True, "installed") if is_installed(max_age=0) else (False, "task not found")
 
 
 def uninstall() -> tuple[bool, str]:
-    """删除系统级计划任务（需要 UAC 确认）。"""
+    """停止并删除系统级计划任务（需要 UAC 确认）。"""
     if sys.platform != "win32":
         return False, "windows only"
-    script = f"Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false -ErrorAction SilentlyContinue\n"
-    if not _run_elevated_ps(script):
-        return False, "elevation failed"
+    script = (
+        f"  Stop-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue" + chr(10)
+        + f"  Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false -ErrorAction SilentlyContinue" + chr(10)
+    )
+    ok, detail = _run_elevated_ps(script)
+    if not ok:
+        return False, detail
     try:
         (service_config_dir() / "config.json").unlink(missing_ok=True)
     except OSError:
         pass
-    return (True, "removed") if not is_installed() else (False, "task still present")
+    return (True, "removed") if not is_installed(max_age=0) else (False, "task still present")
