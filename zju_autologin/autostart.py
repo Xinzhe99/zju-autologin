@@ -13,7 +13,10 @@ PLIST_ID = "com.zju.autologin"
 
 def _command() -> list[str] | str:
     if getattr(sys, "frozen", False):  # PyInstaller 打包
-        return sys.executable if sys.platform != "win32" else f'"{sys.executable}"'
+        # 自启收进托盘而非每次开机弹主窗
+        if sys.platform == "win32":
+            return f'"{sys.executable}" --minimized'
+        return [sys.executable, "--minimized"]
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     interpreter = pythonw if sys.platform == "win32" and os.path.isfile(pythonw) else sys.executable
     main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")

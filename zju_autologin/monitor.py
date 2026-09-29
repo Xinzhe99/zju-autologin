@@ -101,7 +101,8 @@ class MonitorWorker(QObject):
         self.log(tr("log.monitor_started", n=self._config.interval))
         self.check_once()  # 首次状态检测优先, 不被更新检查的网络等待拖慢
         if self._config.check_updates:
-            self.check_updates()
+            # 排队执行而非同步调用: 保证 stop() 事件能尽快插入事件循环
+            QTimer.singleShot(3000, self.check_updates)
         self._update_timer = QTimer()
         self._update_timer.setInterval(_UPDATE_INTERVAL * 1000)
         self._update_timer.timeout.connect(self.check_updates)
@@ -466,9 +467,9 @@ class Monitor(QObject):
         # 进程级退出兜底, 所有数据均已即时落盘。
         QMetaObject.invokeMethod(self._worker, "stop", Qt.ConnectionType.QueuedConnection)
         self._thread.quit()
-        if not self._thread.wait(300):
-            self._thread.terminate()
-            self._thread.wait(300)
+        # 不 terminate: TerminateThread 可能在持 GIL/写盘中途打断, 造成进程
+        # 假死或文件损坏; 残留线程由 main.py 的 os._exit 进程级兜底
+        self._thread.wait(300)
 
     # UI 调用的公开方法（发信号 → 排队到工作线程执行）
 

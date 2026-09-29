@@ -66,6 +66,29 @@ _IDX_LOGIN_TIME = 1
 _IDX_IP = 8
 
 
+def _safe_int(value) -> int:
+    """字段类型突变(字符串科学计数/None)时兜底为 0, 不让 ValueError 逸出。"""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+
+def _safe_localtime(ts: int) -> str:
+    """纪元秒→可读时间; 13 位毫秒/越界值兜底为空串而非抛 OSError。"""
+    if not ts:
+        return ""
+    if ts > 10**12:  # 毫秒纪元
+        ts //= 1000
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """阻止自动跟随 302，用于捕获 captive portal 重定向地址。"""
 
@@ -237,8 +260,12 @@ class SrunClient:
             with opener.open(req, timeout=self.timeout) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
-            # srun 的部分错误以 HTTP 400 + JSONP 错误体返回，需读出内容
-            body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            # srun 的部分错误以 HTTP 400 + JSONP 错误体返回，需读出内容;
+            # read 本身也可能因 socket 超时抛 OSError, 统一转 SrunError
+            try:
+                body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            except OSError as rd_exc:
+                raise SrunError(tr("srun.request_failed", err=rd_exc)) from rd_exc
             if body:
                 return body
             raise SrunError(tr("srun.request_failed", err=exc)) from exc
@@ -274,11 +301,25 @@ class SrunClient:
             return [(key, opener, scheme)] + rest
         return pairs
 
-    def _get(self, path: str, params: dict) -> str:
+    def _get(self, path: str, params: dict,
+             https_only: bool = False, deadline: float | None = None) -> str:
+        """按策略链请求门户。
+
+        https_only: 带凭据的端点(登录/设备管理)限制 https 策略, 防止口令摘要
+            经降级 http 明文传输。
+        deadline: 策略链总时间预算(monotonic 秒), 超限停止尝试剩余策略,
+            防止多网卡机器单轮检测阻塞数分钟。
+        validate: 由调用方负责 -- _jsonp 在解析失败时会清除本 host 的策略
+            缓存并重试(见 _jsonp), 避免错误页毒化缓存。
+        """
         query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         host = urllib.parse.urlsplit(self.base_url).netloc
         first_exc: SrunError | None = None
         for key, opener, scheme in self._strategies():
+            if https_only and scheme != "https":
+                continue
+            if deadline is not None and time.monotonic() > deadline:
+                break
             base = f"{scheme}://{host}"
             try:
                 body = self._request_once(f"{base}{path}?{query}", opener)
@@ -292,10 +333,21 @@ class SrunClient:
         _NEG_CACHE[host] = time.time()
         raise first_exc or SrunError(tr("srun.request_failed", err="all strategies failed"))
 
-    def _jsonp(self, path: str, params: dict) -> dict:
+    def _jsonp(self, path: str, params: dict | None = None,
+               https_only: bool = False) -> dict:
         self._callback_seq += 1
-        params = dict(params, callback=f"zjulogin{int(time.time() * 1000)}{self._callback_seq}")
-        return _parse_jsonp(self._get(path, params))
+        params = dict(params or {}, callback=f"zjulogin{int(time.time() * 1000)}{self._callback_seq}")
+        host = urllib.parse.urlsplit(self.base_url).netloc
+        body = self._get(path, params, https_only=https_only,
+                         deadline=time.monotonic() + 25.0)
+        try:
+            return _parse_jsonp(body)
+        except SrunError:
+            # 响应体不是合法 JSONP: 当前策略拿到的是错误页(代理劫持/网关 502 等),
+            # 清除刚写入的策略缓存, 让下一轮重试其余策略而非永久毒化
+            if _STRATEGY_CACHE.get(host) == "" or True:
+                _STRATEGY_CACHE.pop(host, None)
+            raise
 
     # ------------------------------------------------------------------ 状态
 
@@ -321,15 +373,18 @@ class SrunClient:
                 data = None
             if isinstance(data, dict):
                 if data.get("error") == "ok" and data.get("user_name"):
-                    login_ts = int(data.get("add_time") or 0)
+                    try:
+                        login_ts = int(float(data.get("add_time") or 0))
+                    except (TypeError, ValueError):
+                        login_ts = 0
                     return {
                         "portal_ok": True,
                         "online": True,
                         "username": str(data.get("user_name") or ""),
                         "ip": str(data.get("user_ip") or data.get("online_ip") or ""),
-                        "login_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(login_ts)) if login_ts else "",
+                        "login_time": _safe_localtime(login_ts),
                         "billing": str(data.get("billing_name") or ""),
-                        "all_bytes": int(data.get("all_bytes") or 0),
+                        "all_bytes": _safe_int(data.get("all_bytes")),
                         "latency_ms": latency,
                         "raw": body,
                     }
@@ -343,13 +398,17 @@ class SrunClient:
         fields = body.split(",")
         if len(fields) < 10:
             return self._offline_status(body)
-        login_ts = int(fields[_IDX_LOGIN_TIME]) if fields[_IDX_LOGIN_TIME].isdigit() else 0
+        # 字段形状校验: 用户名非空且 IP 列为合法 IPv4, 否则按垃圾页(未在线)处理
+        if not fields[_IDX_USERNAME].strip() or not re.fullmatch(
+                r"\d{1,3}(?:\.\d{1,3}){3}", fields[_IDX_IP].strip()):
+            return self._offline_status(body)
+        login_ts = _safe_int(fields[_IDX_LOGIN_TIME])
         return {
             "portal_ok": True,
             "online": True,
             "username": fields[_IDX_USERNAME],
             "ip": fields[_IDX_IP],
-            "login_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(login_ts)) if login_ts else "",
+            "login_time": _safe_localtime(login_ts),
             "billing": "",
             "all_bytes": 0,
             "raw": body,
@@ -475,6 +534,7 @@ class SrunClient:
             body = self._get(
                 "/v1/srun_portal_online",
                 {"user_name": user, "password": pwd_md5},
+                https_only=True, deadline=time.monotonic() + 25.0,
             )
             data = _parse_jsonp(body)
         except SrunError:
@@ -501,7 +561,8 @@ class SrunClient:
         try:
             resp = self._jsonp(
                 "/cgi-bin/rad_user_dm",
-                {"ip": target_ip, "username": username, "time": ts, "unbind": unbind, "sign": sign},
+                https_only=True,
+                params={"ip": target_ip, "username": username, "time": ts, "unbind": unbind, "sign": sign},
             )
         except SrunError as exc:
             return False, str(exc)
@@ -524,7 +585,7 @@ class SrunClient:
 
         try:
             challenge = self._jsonp(
-                "/cgi-bin/get_challenge", {"username": username, "ip": ip}
+                "/cgi-bin/get_challenge", {"username": username, "ip": ip}, https_only=True
             )
             if challenge.get("error") != "ok" or not challenge.get("challenge"):
                 return {
@@ -563,7 +624,8 @@ class SrunClient:
 
             resp = self._jsonp(
                 "/cgi-bin/srun_portal",
-                {
+                https_only=True,
+                params={
                     "action": "login",
                     "username": username,
                     "password": "{MD5}" + hmd5,

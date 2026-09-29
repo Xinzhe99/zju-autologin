@@ -31,7 +31,10 @@ def check_newer(timeout: float = 5.0, opener: urllib.request.OpenerDirector | No
             opener = urllib.request.build_opener()
         with opener.open(req, timeout=timeout) as resp:
             data = json.load(resp)
-        tag = str(data.get("tag_name") or "").lstrip("vV")
+        tag_raw = str(data.get("tag_name") or "")
+        if "-" in tag_raw:  # 预发布(v1.2.4-beta.1)不作为更新目标
+            return False, "", RELEASE_PAGE
+        tag = tag_raw.lstrip("vV")
         url = str(data.get("html_url") or RELEASE_PAGE)
         if tag and _version_tuple(tag) > _version_tuple(__version__):
             return True, tag, url

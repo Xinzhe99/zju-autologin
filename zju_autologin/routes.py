@@ -74,6 +74,20 @@ def route_script(ips: list[str], remove: bool = False) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _valid_ips(raw) -> list[str]:
+    """过滤出合法 IPv4; 防止配置文件被篡改后把任意字符串拼入提权脚本。"""
+    import ipaddress
+
+    out = []
+    for ip in raw or []:
+        try:
+            ipaddress.ip_address(str(ip).strip())
+            out.append(str(ip).strip())
+        except ValueError:
+            continue
+    return out
+
+
 def add_direct_routes(cfg) -> tuple[bool, str]:
     """为门户 IP 添加持久化直连路由（弹 UAC）。返回 (成功?, 说明)。"""
     import sys
@@ -85,8 +99,9 @@ def add_direct_routes(cfg) -> tuple[bool, str]:
         return False, "no-portal-ip"
     from .service import _run_elevated_ps
 
-    if not _run_elevated_ps(route_script(ips)):
-        return False, "elevation failed"
+    ok, detail = _run_elevated_ps(route_script(ips))
+    if not ok:
+        return False, detail or "elevation failed"
     cfg.portal_route_ips = ips
     cfg.portal_route_added = True
     cfg.save()
@@ -99,13 +114,14 @@ def remove_direct_routes(cfg) -> tuple[bool, str]:
 
     if sys.platform != "win32":
         return False, "windows only"
-    ips = list(cfg.portal_route_ips or []) or portal_ips(cfg.base_url)
+    ips = _valid_ips(cfg.portal_route_ips) or portal_ips(cfg.base_url)
     if not ips:
         return False, "no-ips-recorded"
     from .service import _run_elevated_ps
 
-    if not _run_elevated_ps(route_script(ips, remove=True)):
-        return False, "elevation failed"
+    ok, detail = _run_elevated_ps(route_script(ips, remove=True))
+    if not ok:
+        return False, detail or "elevation failed"
     cfg.portal_route_added = False
     cfg.portal_route_ips = []
     cfg.save()

@@ -56,12 +56,29 @@ def write_service_config(cfg) -> Path:
         sdir.mkdir(parents=True, exist_ok=True)
         path = sdir / "config.json"
         path.write_text(text, encoding="utf-8")
+        if sys.platform == "win32":
+            # 密码混淆存放, 至少不能让同机其他普通用户可读: 仅 SYSTEM/管理员
+            subprocess.run(["icacls", str(path), "/inheritance:r",
+                            "/grant", "SYSTEM:F", "/grant", "Administrators:F"],
+                           capture_output=True, timeout=15,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass
     except PermissionError:
         if sys.platform != "darwin":
             raise  # Windows 计划任务必须指向全局配置, 落到临时文件会让服务读不到凭据
         # macOS /Library 需 root：先写临时文件，由提权命令 cp 到目标目录
-        path = Path(tempfile.gettempdir()) / f"zju_svc_config_{os.getpid()}.json"
+        fd, tmp_name = tempfile.mkstemp(prefix="zju_svc_cfg_", suffix=".json")
+        os.close(fd)
+        path = Path(tmp_name)
         path.write_text(text, encoding="utf-8")
+        try:
+            path.chmod(0o600)  # /tmp 1777, 含 password_b64 不能全局可读
+        except OSError:
+            pass
     return path
 
 
@@ -75,7 +92,9 @@ def _run_elevated_ps(script: str) -> tuple[bool, str]:
     标记文件写入 'ok' 视为成功；否则读取标记/提权日志中的错误文本返回
     （错误同时追加到 ProgramData\\ZJUAutoLogin\\elevate.log 便于排查）。
     """
-    script_path = Path(tempfile.gettempdir()) / f"zju_aul_{os.getpid()}.ps1"
+    import uuid
+
+    script_path = Path(tempfile.gettempdir()) / f"zju_aul_{os.getpid()}_{uuid.uuid4().hex[:8]}.ps1"
     marker = script_path.with_suffix(".done")
     log_path = _elevate_log_path()
     try:
@@ -158,7 +177,7 @@ def _darwin_plist_content(exe: str, args: str, config_path: str) -> str:
         + program_args + nl + "  </array>" + nl
         + "  <key>RunAtLoad</key><true/>" + nl
         + "  <key>KeepAlive</key><true/>" + nl
-        + "  <key>StandardOutPath</key><string>/tmp/zju-autologin.log</string>" + nl
+        + "  <key>StandardOutPath</key><string>/Library/Logs/ZJUAutoLogin/watch.log</string>" + nl
         + "</dict>" + nl + "</plist>" + nl
     )
 
@@ -179,6 +198,7 @@ def is_installed(max_age: float = 60.0) -> bool:
         out = subprocess.run(
             ["schtasks", "/query", "/tn", TASK_NAME],
             capture_output=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if out.returncode == 0:
             result = True
@@ -206,7 +226,6 @@ def install(cfg) -> tuple[bool, str]:
         + "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)" + chr(10)
         + f"  Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force -ErrorAction Stop | Out-Null" + chr(10)
         + f"  Start-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue" + chr(10)
-        + f"  Start-Process -FilePath '{exe_ps}' -ArgumentList '{args_ps}' -WindowStyle Hidden -ErrorAction SilentlyContinue" + chr(10)
     )
     ok, detail = _run_elevated_ps(script)
     if not ok:
@@ -256,7 +275,8 @@ def _install_darwin(cfg) -> tuple[bool, str]:
     plist = _darwin_plist_path()
     tmp_plist = Path(tempfile.gettempdir()) / f"{PLIST_ID}.plist"
     tmp_plist.write_text(_darwin_plist_content(exe, args, str(final_cfg)), encoding="utf-8")
-    copy_cfg = f"cp '{cfg_path}' '{final_cfg}' && " if cfg_path != final_cfg else ""
+    copy_cfg = (f"cp '{cfg_path}' '{final_cfg}' && chmod 600 '{final_cfg}' && "
+                if cfg_path != final_cfg else "")
     sh = (
         f"mkdir -p '{svc_dir}' && "
         + copy_cfg

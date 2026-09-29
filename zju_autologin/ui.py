@@ -70,7 +70,7 @@ DOT_COLORS = {
     "checking": "#3b82f6",
 }
 # 出现这些状态 → 状态恢复 online 时弹"已自动重登"通知
-_NOTIFY_RELOGIN_FROM = {"offline", "auth_error", "login_fail", "authed_no_internet"}
+_NOTIFY_RELOGIN_FROM = {"offline", "auth_error", "login_fail"}
 
 REPO_URL = "https://github.com/Xinzhe99/zju-autologin"
 
@@ -186,9 +186,15 @@ class UpdateDownloadThread(QThread):
             name = str(target.get("name") or "update.bin")
             total = int(target.get("size") or 0)
             digest = str(target.get("digest") or "")  # GitHub API: "sha256:..."
+            if not digest.startswith("sha256:"):
+                # 校验信息缺失即拒绝安装(fail-closed), 不静默跳过校验
+                self.finished_err.emit("missing sha256 digest")
+                return
             self.progress.emit(0)
             req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
-            path = os.path.join(tempfile.gettempdir(), name)
+            # 随机临时名: 降低包在 %TEMP% 停留期间被替换的 TOCTOU 面
+            fd, path = tempfile.mkstemp(prefix="zju_aul_pkg_", suffix=os.path.splitext(name)[1])
+            os.close(fd)
             got = 0
             opener = build_opener(self._proxy_mode, self._proxy_url)
             with opener.open(req, timeout=30) as resp, open(path, "wb") as fh:
@@ -202,13 +208,12 @@ class UpdateDownloadThread(QThread):
                     got += len(chunk)
                     if total:
                         self.progress.emit(int(got * 100 / total))
-            if digest.startswith("sha256:"):
-                import hashlib
+            import hashlib
 
-                sha = hashlib.sha256()
-                with open(path, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                        sha.update(chunk)
+            sha = hashlib.sha256()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    sha.update(chunk)
                 if sha.hexdigest() != digest.split(":", 1)[1]:
                     try:
                         os.remove(path)
@@ -258,6 +263,7 @@ class DevicesDialog(QDialog):
 
         self._status = QLabel("")
         self._status.setObjectName("statusDetail")
+        self._status.setWordWrap(True)
         lay.addWidget(self._status)
 
         btns = QHBoxLayout()
@@ -679,7 +685,7 @@ class SettingsWindow(QDialog):
         self._hb_timer = QTimer(self)
         self._hb_timer.setInterval(60_000)
         self._hb_timer.timeout.connect(self._refresh_service_heartbeat)
-        if sys.platform == "win32":
+        if sys.platform in ("win32", "darwin"):
             self._hb_timer.start()
 
         self._notify_title = QLabel()
@@ -897,7 +903,7 @@ class SettingsWindow(QDialog):
         self._edit_base.setPlaceholderText("https://net.zju.edu.cn")
         self._edit_acid.setPlaceholderText("80 / auto")
         self._edit_heartbeat.setToolTip(tr("hb.hint"))
-        self._spin_interval.setSuffix(f" {tr('unit.seconds', n='')}".rstrip())
+        self._spin_interval.setSuffix(" " + tr("unit.seconds", n="").strip())
         self._chk_auto.setText(tr("chk.auto_login"))
         self._chk_tray.setText(tr("chk.minimize_tray"))
         self._chk_updates.setText(tr("chk.check_updates"))
@@ -1142,7 +1148,8 @@ class SettingsWindow(QDialog):
         self._route_thread.start()
 
     def _show_portal_wizard(self) -> None:
-        PortalWizardDialog(self._config, self).exec()
+        self._portal_dlg = PortalWizardDialog(self._config, self)
+        self._portal_dlg.exec()
 
     def _export_config(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
@@ -1155,7 +1162,7 @@ class SettingsWindow(QDialog):
             return
         payload = {"_exported_by": f"ZJU-AutoLogin v{__version__}"}
         for key in _DEFAULTS:
-            if key in ("win_geometry", "notify_key", "smtp_pass"):
+            if key in ("win_geometry", "notify_key", "smtp_pass", "heartbeat_url", "proxy_url"):
                 continue  # 位置/密钥类字段不导出
             payload[key] = self._config.data.get(key)
         try:
@@ -1188,6 +1195,11 @@ class SettingsWindow(QDialog):
                 self._config.data[key] = payload[key]
         self._config.save()
         self._load_settings_into_ui()
+        self._apply_theme(self._config.theme)
+        if i18n.current_lang() != self._config.language:
+            i18n.set_lang(self._config.language)
+        self.retranslate_ui()
+        self._main.retranslate_ui()
         self._monitor.config_updated()
         self._save_hint.setText(tr("msg.cfg_imported"))
         QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
@@ -1207,7 +1219,7 @@ class SettingsWindow(QDialog):
             mins = -1
         if mins < 0:
             self._service_heartbeat.setText(tr("service.heartbeat_stale", mins="∞"))
-        elif mins <= 10:
+        elif mins <= max(10, (self._config.interval * 3) // 60):
             self._service_heartbeat.setText(tr("service.heartbeat_ok", mins=mins))
         else:
             self._service_heartbeat.setText(tr("service.heartbeat_stale", mins=mins))
@@ -1306,7 +1318,10 @@ class LogsWindow(QDialog):
             f"notify: {cfg.notify_provider}",
             "", "---- last logs ----",
         ]
-        lines += self._log.toPlainText().splitlines()[-50:]
+        tail = self._log.toPlainText().splitlines()[-50:]
+        if len(user) > 4:  # 尾段日志含完整账号, 与头部打码保持一致
+            tail = [ln.replace(user, masked) for ln in tail]
+        lines += tail
         QApplication.clipboard().setText("\n".join(lines))
         self._main._append_log(tr("diag.copied"))
 
@@ -1553,7 +1568,8 @@ class MainWindow(QMainWindow):
             tr("about.text", app=tr("app.name"), version=__version__, url=REPO_URL))
 
     def _refresh_tray_tooltip(self) -> None:
-        status = tr(f"status.{self._last_status.get('state', 'checking')}")
+        state = self._last_status.get("state", "checking")
+        status = tr(f"status.{state}") if state in STATUS_KEYS else state
         ip = self._last_status.get("ip") or ""
         traffic = self._last_status.get("all_bytes") or 0
         if traffic:
@@ -1612,7 +1628,7 @@ class MainWindow(QMainWindow):
         self._save_geometry()
         if self._downloader is not None:
             self._downloader.stop()
-            self._downloader.wait(2000)
+            self._downloader.wait(200)
         self._monitor.stop()
         self._tray.hide()
         # 重启自身：凭据已空, 启动即进入引导向导（重新配置场景不静默启动）
@@ -1624,7 +1640,9 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def _show_devices(self) -> None:
-        dlg = DevicesDialog(self._config, self._last_status.get("ip") or "", self)
+        # 持有引用: 防局部变量 GC 后其后台线程仍在飞行
+        self._devices_dlg = DevicesDialog(self._config, self._last_status.get("ip") or "", self)
+        dlg = self._devices_dlg
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg._kicked_ip:
             self._append_log(tr("devices.kicked", ip=dlg._kicked_ip))
             self._monitor.login_now()
@@ -1686,9 +1704,13 @@ class MainWindow(QMainWindow):
             self._config.proxy_mode, self._config.proxy_url,
             installed=_is_installed_win(), parent=self)
         self._downloader.finished_ok.connect(self._predownload_done)
-        self._downloader.finished_err.connect(
-            lambda err: self._append_log(tr("update.predl_fail", msg=err)))
+        self._downloader.finished_err.connect(self._predownload_fail)
         self._downloader.start()
+
+    def _predownload_fail(self, error: str) -> None:
+        # 复位引用, 否则非 None 守卫永远 return, 更新功能静默永久失效
+        self._downloader = None
+        self._append_log(tr("update.predl_fail", msg=error))
 
     def _predownload_done(self, path: str) -> None:
         self._downloader = None
@@ -1704,10 +1726,12 @@ class MainWindow(QMainWindow):
             self._update_downloaded(self._update_pkg)
             return
         if self._downloader is not None:
-            # 预下载进行中: 横幅接入进度反馈而非静默忽略
-            self._update_banner.setText(tr("update.downloading", percent=0))
-            self._downloader.progress.connect(
-                lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
+            # 预下载进行中: 横幅接入进度反馈(只接一次, 防重复点击累积连接)
+            if not getattr(self._downloader, "_ui_attached", False):
+                self._downloader._ui_attached = True
+                self._update_banner.setText(tr("update.downloading", percent=0))
+                self._downloader.progress.connect(
+                    lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
             return
         if not getattr(sys, "frozen", False):
             QDesktopServices.openUrl(QUrl(self._update_url or updates.RELEASE_PAGE))
@@ -1816,6 +1840,14 @@ class MainWindow(QMainWindow):
         staging = tempfile.mkdtemp(prefix="zju_aul_upd_")
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(staging)
+            # Python zipfile 不恢复权限位: 主二进制无 +x 则更新后无法启动
+            for info in zf.infolist():
+                if info.external_attr and (info.external_attr >> 16) & 0o111:
+                    target = os.path.join(staging, info.filename)
+                    try:
+                        os.chmod(target, 0o755)
+                    except OSError:
+                        pass
         # zip 内为 ZJUAutoLogin.app/（便携 zip 由 CI 的 zip -r 打包）
         new_app = None
         for entry in os.listdir(staging):
@@ -1824,6 +1856,14 @@ class MainWindow(QMainWindow):
                 break
         if not new_app:
             raise OSError("no .app in update archive")
+        # 主二进制强制可执行(部分打包流程不带权限位)
+        macos_bin = os.path.join(new_app, "Contents", "MacOS")
+        if os.path.isdir(macos_bin):
+            for fn in os.listdir(macos_bin):
+                try:
+                    os.chmod(os.path.join(macos_bin, fn), 0o755)
+                except OSError:
+                    pass
 
         # 定位当前 .app：运行中的二进制位于 <App>.app/Contents/MacOS/
         cur_app = Path(sys.executable)
@@ -1972,6 +2012,7 @@ class MainWindow(QMainWindow):
         self._refresh_tray_tooltip()
         if self._settings_window is not None:
             self._settings_window.retranslate_ui()
+            self._settings_window._refresh_service_heartbeat()
         if self._logs_window is not None:
             self._logs_window.retranslate_ui()
 
@@ -2001,7 +2042,7 @@ class MainWindow(QMainWindow):
     def _shutdown_background(self) -> None:
         if self._downloader is not None:
             self._downloader.stop()
-            self._downloader.wait(3000)
+            self._downloader.wait(200)
         self._monitor.stop()
 
     def _on_commit_data(self, *_args) -> None:

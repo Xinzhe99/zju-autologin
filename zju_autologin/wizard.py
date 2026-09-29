@@ -287,7 +287,7 @@ class SetupWizard(QDialog):
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
         self._edit_pwd.setPlaceholderText(tr("ph.password"))
         self._pwd_note.setText(tr("wiz.pwd_note"))
-        self._account_error.setText("")
+        self._account_error.setText(self._account_error.text() and tr("wiz.error_need") or "")
         self._chk_boot.setText(tr("chk.autostart"))
         self._boot_hint.setText(tr("wiz.autostart_hint"))
         self._done_text.setText(tr("wiz.done_text", app=tr("app.name")))

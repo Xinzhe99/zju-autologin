@@ -13,6 +13,19 @@ import urllib.request
 
 PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "smtp")
 
+import re as _re
+
+_URL_RE = _re.compile(r"https?://\S+")
+
+
+def _sanitize_error(text: str) -> str:
+    """异常文本常含完整 URL(webhook 携带 sendkey/token), 入日志前替换为域名。"""
+    def _mask(match: "_re.Match[str]") -> str:
+        url = match.group(0)
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        return f"<{host}>"
+    return _URL_RE.sub(_mask, text)
+
 
 def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0,
                opener: urllib.request.OpenerDirector | None = None) -> tuple[bool, str]:
@@ -43,7 +56,7 @@ def _http_json(url: str, payload: dict | None = None, timeout: float = 6.0,
                 return False, detail
         return resp.status < 400, detail
     except Exception as exc:  # noqa: BLE001 - 通知失败不应影响主流程
-        return False, str(exc)
+        return False, _sanitize_error(str(exc))
 
 
 def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
@@ -63,7 +76,9 @@ def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
             try:
                 server.starttls(context=ssl.create_default_context())
             except smtplib.SMTPNotSupportedError:
-                pass
+                # 明文降级会把授权码暴露给链路窃听者, 拒绝而非静默继续
+                server.quit()
+                return False, "STARTTLS not supported by server"
         with server:
             if cfg.smtp_user:
                 server.login(cfg.smtp_user, cfg.smtp_pass)

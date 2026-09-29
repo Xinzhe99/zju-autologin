@@ -38,10 +38,14 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\ZJUAutoLogin.exe"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\ZJUAutoLogin.exe"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "ZJUAutoLogin"; ValueData: """{app}\ZJUAutoLogin.exe"""; Flags: uninsdeletevalue; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "ZJUAutoLogin"; ValueData: """{app}\ZJUAutoLogin.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
 Filename: "{app}\ZJUAutoLogin.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ZJUAutoLogin /f"; Flags: runhidden; RunOnceId: "DelAutoStart"
+; 卸载时清理系统级保活(SYSTEM watch 会锁住 exe, 必须先停再删)与服务凭据目录
+Filename: "{sys}\schtasks.exe"; Parameters: "/End /TN ZJUAutoLogin"; Flags: runhidden; RunOnceId: "StopWatch"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ZJUAutoLogin"; Flags: runhidden; RunOnceId: "DelWatch"
+Filename: "{sys}\cmd.exe"; Parameters: "/C rmdir /S /Q ""C:\ProgramData\ZJUAutoLogin"""; Flags: runhidden; RunOnceId: "DelSvcData"
