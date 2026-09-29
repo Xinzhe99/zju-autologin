@@ -1725,7 +1725,9 @@ class MainWindow(QMainWindow):
 
     def _update_failed(self, error: str) -> None:
         self._downloader = None
+        self._update_pkg = ""
         self._update_banner.setText(tr("update.failed", msg=error or "?"))
+        self._tray.show()  # 下载失败也要恢复托盘, 否则用户失去唯一操作入口
 
     def _update_downloaded(self, path: str) -> None:
         self._downloader = None
