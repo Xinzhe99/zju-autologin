@@ -292,12 +292,68 @@ WantedBy=multi-user.target
 """
 
 
+def _linux_elevated_sh(script: str) -> tuple[bool, str]:
+    """非 root 时经 pkexec（桌面环境的图形/终端密码框）提权执行 shell 脚本。"""
+    import shutil
+    import subprocess
+    import tempfile
+
+    if sys.platform != "win32" and getattr(os, "geteuid", lambda: 1)() == 0:
+        r = subprocess.run(["/bin/sh", "-c", script],
+                           capture_output=True, text=True, timeout=120)
+        return r.returncode == 0, (r.stdout + r.stderr).strip()[:200]
+    pkexec = shutil.which("pkexec")
+    if not pkexec:
+        return False, "需要 root: 请用 sudo 运行（或安装 pkexec, 桌面环境通常自带）"
+    fd, path = tempfile.mkstemp(prefix="zju_aul_svc_", suffix=".sh")
+    os.close(fd)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(script)
+        os.chmod(path, 0o700)
+        r = subprocess.run([pkexec, "/bin/sh", path],
+                           capture_output=True, text=True, timeout=300)
+        return r.returncode == 0, (r.stdout + r.stderr).strip()[:200]
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _install_linux(cfg) -> tuple[bool, str]:
-    """写入凭据与 systemd 单元并 enable --now（需 root, 由 CLI 层校验）。"""
-    cfg_path = write_service_config(cfg)  # /etc/zju-autologin/config.json (600)
+    """写入凭据与 systemd 单元并 enable --now（root 直装 / 桌面经 pkexec）。"""
+    import shlex
     import subprocess
 
-    unit = _systemd_unit(str(cfg_path))
+    cfg_path = write_service_config(cfg)  # root: 直接落 /etc; 非 root: 落临时文件待搬
+    unit = _systemd_unit(str(cfg_path if str(cfg_path).startswith("/etc/") else
+                             "/etc/zju-autologin/config.json"))
+    non_root = sys.platform != "win32" and getattr(os, "geteuid", lambda: 1)() != 0
+    if non_root:
+        # 凭据/单元先写本地临时文件(600), 提权脚本仅做搬运与 systemctl
+        import tempfile
+
+        fd, unit_tmp = tempfile.mkstemp(prefix="zju_aul_unit_", suffix=".service")
+        os.close(fd)
+        with open(unit_tmp, "w", encoding="utf-8") as fh:
+            fh.write(unit)
+        os.chmod(unit_tmp, 0o644)
+        nl = chr(10)
+        script = (
+            "set -e" + nl
+            + "mkdir -p /etc/zju-autologin /etc/systemd/system" + nl
+            + f"mv {shlex.quote(str(cfg_path))} /etc/zju-autologin/config.json" + nl
+            + "chmod 600 /etc/zju-autologin/config.json" + nl
+            + f"mv {shlex.quote(unit_tmp)} {shlex.quote(str(_linux_unit_path()))}" + nl
+            + "systemctl daemon-reload" + nl
+            + f"systemctl enable --now {UNIT_NAME}" + nl
+        )
+        ok, detail = _linux_elevated_sh(script)
+        if not ok:
+            return False, detail
+        return (True, "installed") if is_installed(max_age=0) else (False, "unit not found")
+
     _linux_unit_path().write_text(unit, encoding="utf-8")
     for cmd in (["systemctl", "daemon-reload"],
                 ["systemctl", "enable", "--now", UNIT_NAME]):
@@ -308,7 +364,21 @@ def _install_linux(cfg) -> tuple[bool, str]:
 
 
 def _uninstall_linux() -> tuple[bool, str]:
+    import shlex
     import subprocess
+
+    if sys.platform != "win32" and getattr(os, "geteuid", lambda: 1)() != 0:
+        script = (
+            f"systemctl disable --now {UNIT_NAME} 2>/dev/null; "
+            f"systemctl stop {UNIT_NAME} 2>/dev/null; "
+            f"rm -f {shlex.quote(str(_linux_unit_path()))}; "
+            f"rm -f {shlex.quote(str(service_config_dir() / 'config.json'))}; "
+            "systemctl daemon-reload"
+        )
+        ok, detail = _linux_elevated_sh(script)
+        if not ok:
+            return False, detail
+        return (True, "removed") if not _linux_unit_path().exists() else (False, detail or "unit remains")
 
     for cmd in (["systemctl", "disable", "--now", UNIT_NAME],
                 ["systemctl", "stop", UNIT_NAME]):

@@ -19,10 +19,19 @@ def _command() -> list[str] | str:
         return [sys.executable, "--minimized"]
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     interpreter = pythonw if sys.platform == "win32" and os.path.isfile(pythonw) else sys.executable
-    main_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
+    # GUI 入口在包内(pip 安装后有 zju-autologin-gui; 源码用 gui 模块)
+    gui_mod = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
     if sys.platform == "win32":
-        return f'"{interpreter}" "{main_py}" --minimized'
-    return [interpreter, main_py, "--minimized"]
+        return f'"{interpreter}" "{gui_mod}" --minimized'
+    if sys.platform.startswith("linux"):
+        # pip 安装优先用 console script(无需 python 路径)
+        import shutil as _sh
+        exe = _sh.which("zju-autologin-gui")
+        if exe:
+            return [exe, "--minimized"]
+        pkg_gui = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui.py")
+        return [interpreter, pkg_gui, "--minimized"]
+    return [interpreter, gui_mod, "--minimized"]
 
 
 # ---------------------------------------------------------------- Windows
@@ -100,6 +109,49 @@ def _mac_set(enable: bool) -> bool:
         return _mac_is_enabled()
 
 
+# ------------------------------------------------------------------ Linux
+
+XDG_DESKTOP_ID = "zju-autologin"
+
+
+def _xdg_autostart_path() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "autostart", f"{XDG_DESKTOP_ID}.desktop")
+
+
+def _xdg_desktop_entry() -> str:
+    program = _command()
+    args = program if isinstance(program, list) else [program]
+    argv = " ".join(args) + " --minimized"
+    return ("[Desktop Entry]" + chr(10)
+            + "Type=Application" + chr(10)
+            + "Name=ZJU AutoLogin" + chr(10)
+            + "Name[zh_CN]=ZJU 校园网自动登录" + chr(10)
+            + "Comment=Campus network keep-alive" + chr(10)
+            + "Exec=" + argv + chr(10)
+            + "Terminal=false" + chr(10)
+            + "Categories=Network;" + chr(10)
+            + "StartupNotify=false" + chr(10))
+
+
+def _linux_is_enabled() -> bool:
+    return os.path.isfile(_xdg_autostart_path())
+
+
+def _linux_set(enable: bool) -> bool:
+    try:
+        path = _xdg_autostart_path()
+        if enable:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_xdg_desktop_entry())
+        elif os.path.exists(path):
+            os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
 # ------------------------------------------------------------------ 对外
 
 def is_enabled() -> bool:
@@ -107,6 +159,8 @@ def is_enabled() -> bool:
         return _win_is_enabled()
     if sys.platform == "darwin":
         return _mac_is_enabled()
+    if sys.platform.startswith("linux"):
+        return _linux_is_enabled()
     return False
 
 
@@ -120,4 +174,8 @@ def set_enabled(enable: bool) -> bool:
         if _mac_set(enable):
             return enable
         return _mac_is_enabled()
+    if sys.platform.startswith("linux"):
+        if _linux_set(enable):
+            return enable
+        return _linux_is_enabled()
     return False

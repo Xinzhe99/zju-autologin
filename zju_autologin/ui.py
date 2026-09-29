@@ -693,7 +693,7 @@ class SettingsWindow(QDialog):
         self._hb_timer = QTimer(self)
         self._hb_timer.setInterval(60_000)
         self._hb_timer.timeout.connect(self._refresh_service_heartbeat)
-        if sys.platform in ("win32", "darwin"):
+        if sys.platform in ("win32", "darwin") or sys.platform.startswith("linux"):
             self._hb_timer.start()
 
         self._notify_title = QLabel()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zju-autologin"
-version = "1.18.1"
+version = "1.19.0"
 description = "ZJU campus network (Srun portal) auto-login & keep-alive: CLI + systemd service + PyQt6 GUI"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,11 +25,12 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-gui = ["PyQt6>=6.6", "keyring>=24.0"]
+gui = ["PyQt6>=6.6", "keyring>=24.0"]  # pip install "zju-autologin[gui]" 启用桌面版
 dev = ["pytest", "ruff"]
 
 [project.scripts]
 zju-autologin = "zju_autologin.cli:main"
+zju-autologin-gui = "zju_autologin.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/Xinzhe99/zju-autologin"

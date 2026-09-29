@@ -59,6 +59,7 @@ def test_systemd_unit_content(monkeypatch):
 
 def test_install_linux_writes_config_and_unit(monkeypatch, tmp_path):
     _force_linux(monkeypatch)
+    monkeypatch.setattr(service.os, "geteuid", lambda: 0, raising=False)
     unit_path = tmp_path / "zju-autologin.service"
     cfg_dir = tmp_path / "etc"
 

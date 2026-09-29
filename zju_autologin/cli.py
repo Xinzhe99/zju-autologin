@@ -169,10 +169,14 @@ def _require_root() -> bool:
     if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
         print("enable 仅支持 Linux/macOS（Windows 请用 GUI 的系统级保活）")
         return False
-    if getattr(os, "geteuid", lambda: -1)() != 0:
-        print("需要 root: 请用 sudo 运行（系统服务要写入 /etc 与 systemd）")
-        return False
-    return True
+    import shutil
+
+    if getattr(os, "geteuid", lambda: -1)() == 0:
+        return True
+    if shutil.which("pkexec"):
+        return True  # 非 root 但有 pkexec: service 层会弹密码框提权
+    print("需要 root: 请用 sudo 运行（系统服务要写入 /etc 与 systemd）")
+    return False
 
 
 def cmd_enable(argv: list[str]) -> int:

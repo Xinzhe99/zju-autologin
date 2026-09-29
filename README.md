@@ -123,6 +123,16 @@ ZJU_PASS='密码' sudo -E zju-autologin enable -u 学号            # 环境变�
 sudo zju-autologin enable -u 学号                               # 交互式输入(推荐)
 ```
 
+**Linux 桌面版（GUI）**：
+
+```bash
+pip install "zju-autologin[gui]"     # 多装 PyQt6 桌面依赖
+zju-autologin-gui                     # 启动图形界面（托盘/设置/向导, 同 Windows/macOS）
+```
+
+- 「开机自启」勾选即写 XDG autostart（`~/.config/autostart/`，免 root）
+- GUI 内勾选「系统级保活」会通过 **pkexec** 弹系统密码框授权安装 systemd 服务（GNOME/KDE 标准授权方式，无需终端）
+
 **无 Python 的设备**：从 [Releases](releases) 下载静态二进制 `zju-autologin-linux-x86_64` / `-aarch64`（glibc 环境；Alpine/OpenWrt 等 musl 系统请用 pip 路线），`sudo ./zju-autologin-linux-* enable -u 学号` 同样一行启用。
 
 **服务机制**：systemd 单元（`/etc/systemd/system/zju-autologin.service`），`Restart=always` 崩溃自动拉起、`After=network-online.target` 等网络就绪、凭据存 `/etc/zju-autologin/config.json`（root:600、base64 混淆，与 Windows SYSTEM 任务/macOS LaunchDaemon 同级）。
