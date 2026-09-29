@@ -1,13 +1,29 @@
 # ZJU-AutoLogin · Zhejiang University Campus Network Auto-Login
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://www.riverbankcomputing.com/software/pyqt/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)](releases)
-[![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](releases)
+[![Tests](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml/badge.svg)](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/releases)
+[![Downloads](https://img.shields.io/github/downloads/Xinzhe99/zju-autologin/total)](https://github.com/Xinzhe99/zju-autologin/releases)
 [![Stars](https://img.shields.io/github/stars/Xinzhe99/zju-autologin?style=social)](https://github.com/Xinzhe99/zju-autologin/stargazers)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Issues](https://img.shields.io/github/issues/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/Xinzhe99/zju-autologin/main)](https://github.com/Xinzhe99/zju-autologin/commits)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![GUI](https://img.shields.io/badge/GUI-PyQt6-41CD52?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey?logo=apple&logoColor=white)](https://github.com/Xinzhe99/zju-autologin/releases)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**[English](README.en.md) | [简体中文](README.md)**
+[简体中文](README.md) | **English** | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
+
+## Table of Contents
+
+- [Why](#why)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Protocol](#protocol-how-it-works)
+- [Advanced usage](#advanced-usage)
+- [Support & Contributing](#support--contributing)
+
+## Why
 
 A tray application that runs in the background: it **watches the Zhejiang University campus network (Srun portal) authentication state and re-authenticates automatically with your saved credentials** whenever it drops or expires — so Remote Desktop / SSH sessions never die because of an expired captive-portal login.
 

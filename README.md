@@ -1,18 +1,37 @@
 # ZJU-AutoLogin · 浙江大学校园网自动登录
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://www.riverbankcomputing.com/software/pyqt/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)](releases)
-[![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](releases)
+[![Tests](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml/badge.svg)](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/releases)
+[![Downloads](https://img.shields.io/github/downloads/Xinzhe99/zju-autologin/total)](https://github.com/Xinzhe99/zju-autologin/releases)
 [![Stars](https://img.shields.io/github/stars/Xinzhe99/zju-autologin?style=social)](https://github.com/Xinzhe99/zju-autologin/stargazers)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Issues](https://img.shields.io/github/issues/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/Xinzhe99/zju-autologin/main)](https://github.com/Xinzhe99/zju-autologin/commits)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![GUI](https://img.shields.io/badge/GUI-PyQt6-41CD52?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey?logo=windows&logoColor=white)](https://github.com/Xinzhe99/zju-autologin/releases)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
 
 一个挂在桌面托盘的后台小程序：**自动检测浙江大学校园网认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因为认证过期而失联。
 
 | 主界面 | 首次引导 |
 | --- | --- |
 | ![主界面](docs/screenshot_online.png) | ![首次引导](docs/wizard_welcome.png) |
+
+## 目录
+
+- [为什么需要它](#为什么需要它)
+- [下载安装](#下载安装)
+- [快速上手](#快速上手)
+- [功能一览](#功能)
+- [校园网认证机制解析](#校园网认证机制解析)
+- [进阶用法](#进阶用法)
+- [配置与密码存储](#配置与密码存储)
+- [常见问题](#常见问题)
+- [项目结构](#项目结构)
+- [开发说明](#开发说明)
+- [支持与贡献](#支持与贡献)
 
 ## 为什么需要它
 
