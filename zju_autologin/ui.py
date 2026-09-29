@@ -1230,16 +1230,14 @@ class MainWindow(QMainWindow):
         return frame
 
     def _restore_geometry(self) -> None:
+        """只恢复窗口位置; 主窗尺寸恒定紧凑, 不沿用历史大窗宽高。"""
         geo = str(self._config.win_geometry or "")
         if not geo:
             return
         try:
-            x, y, w, h = (int(v) for v in geo.split(","))
+            x, y, _w, _h = (int(v) for v in geo.split(","))
             screen = QApplication.primaryScreen().availableGeometry()
-            if w >= self.minimumWidth() and screen.contains(x + w // 2, y + 20):
-                # 只恢复位置与宽度; 高度始终紧凑(旧版大窗高度不再沿用)
-                self.setGeometry(x, y, max(w, self.minimumWidth()), min(h, 460))
-            else:
+            if screen.contains(x + 100, y + 20):
                 self.move(max(0, x), max(0, y))
         except (ValueError, TypeError):
             pass
