@@ -160,3 +160,17 @@ def test_watch_command_writes_heartbeat(tmp_path, monkeypatch):
         cli.cmd_watch(cfg, 1)
     hb = tmp_path / "service.heartbeat"
     assert hb.exists()  # 心跳已写入
+
+
+def test_write_service_config_refuses_empty_credentials(tmp_path, monkeypatch):
+    """空账号/密码的服务配置会让保活无声失效 — 必须拒绝写入。"""
+    import zju_autologin.service as svc
+    monkeypatch.setattr(svc, "service_config_dir", lambda: tmp_path)
+    from zju_autologin.config import _DEFAULTS
+    holder = type("C", (), {"data": dict(_DEFAULTS), "get_password": lambda s: ""})()
+    with pytest.raises(ValueError):
+        svc.write_service_config(holder)
+    holder2 = type("C", (), {"data": dict(_DEFAULTS), "get_password": lambda s: "x"})()
+    holder2.data["username"] = ""  # 有密码无账号同样拒绝
+    with pytest.raises(ValueError):
+        svc.write_service_config(holder2)

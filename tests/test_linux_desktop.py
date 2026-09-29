@@ -44,9 +44,9 @@ def test_pkexec_script_content(monkeypatch, tmp_path):
     monkeypatch.setattr(service.os, "geteuid", lambda: 1000, raising=False)
     # 让 write_service_config 落到临时目录
     monkeypatch.setattr(service, "service_config_dir", lambda: tmp_path)
-    holder = type("C", (), {"data": {}, "get_password": lambda s: "x"})()
     from zju_autologin.config import _DEFAULTS
-    holder.data = dict(_DEFAULTS)
+    holder = type("C", (), {"data": dict(_DEFAULTS), "get_password": lambda s: "x"})()
+    holder.data["username"] = "3230104321"  # 守卫要求非空凭据
     runs = {}
 
     def fake_elev(script):

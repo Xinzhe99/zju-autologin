@@ -43,6 +43,10 @@ def write_service_config(cfg) -> Path:
     """把凭据/参数写入全局配置（SYSTEM 账户可读；密码混淆存储）。"""
     from .config import _DEFAULTS
 
+    # 防呆: 空账号/空密码的服务配置会让保活无声失效(实例: 曾被写入空 username
+    # 导致 14 天到期时 watch 无法登录), 凭据不完整直接拒绝
+    if not str(cfg.data.get("username") or "").strip() or not cfg.get_password():
+        raise ValueError("refusing to write service config without username/password")
     sdir = service_config_dir()
     payload = {"password_backend": "file"}
     for key in _DEFAULTS:
