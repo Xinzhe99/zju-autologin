@@ -1660,7 +1660,7 @@ class MainWindow(QMainWindow):
         shutil.move(new_path, str(cur))
         # 释放单实例锁后重启新版本
         if runtime.app_lock is not None:
-            runtime.app_lock.release()
+            runtime.app_lock.unlock()
         self._append_log(tr("update.swapped"))
         subprocess.Popen([str(cur), "--minimized"],
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
