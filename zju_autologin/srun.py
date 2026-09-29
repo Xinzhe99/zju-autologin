@@ -454,31 +454,6 @@ class SrunClient:
         ac_ids = query.get("ac_id") or query.get("ac-id") or []
         return str(ac_ids[0]) if ac_ids else ""
 
-    def get_status_detail(self) -> dict:
-        """带用量/套餐的富在线状态（门户 JSONP 形态），失败时退回 get_status。"""
-        try:
-            body = self._get("/cgi-bin/rad_user_info", {"callback": "zjulogin_detail"})
-            text = body.strip()
-            if text.startswith("{") or "(" in text:
-                raw = text[text.find("(") + 1 : text.rfind(")")] if "(" in text else text
-                data = json.loads(raw)
-            else:
-                data = {}
-        except (SrunError, json.JSONDecodeError):
-            data = {}
-        base = self.get_status()
-        if data.get("error") == "ok" and data.get("user_name"):
-            base.update({
-                "online": True,
-                "username": str(data.get("user_name") or base.get("username", "")),
-                "ip": str(data.get("user_ip") or data.get("online_ip") or base.get("ip", "")),
-                "billing": str(data.get("billing_name") or ""),
-                "all_bytes": int(data.get("all_bytes") or 0),
-                "bytes_in": int(data.get("bytes_in") or 0),
-                "bytes_out": int(data.get("bytes_out") or 0),
-                "balance": data.get("user_balance"),
-            })
-        return base
 
     # ------------------------------------------------------- 在线设备管理
 
