@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 import tempfile
 import time
 from collections import deque
@@ -40,7 +42,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, autostart, crash, i18n, service, theme, updates
+from . import __version__, autostart, crash, i18n, runtime, service, theme, updates
 from .config import (
     Config,
     append_file_log,
@@ -1598,11 +1600,33 @@ class MainWindow(QMainWindow):
         self._downloader = None
         self._append_log(tr("update.downloaded"))
         self._tray.hide()
+        # Windows 单文件版: 原地自更新（重命名运行中的 exe → 新版归位 → 重启）,
+        # 与 Codex 等应用相同的体验, 无需再走安装程序
+        if sys.platform == "win32" and getattr(sys, "frozen", False):
+            try:
+                self._inplace_swap(path)
+                return
+            except OSError:
+                pass  # 目录不可写等场景回退到安装器
         if sys.platform == "win32":
-            # 静默安装: 自动关闭运行中的实例, 安装完成后自动重启应用
             subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        QApplication.quit()
+
+    def _inplace_swap(self, new_path: str) -> None:
+        cur = Path(sys.executable)
+        old = cur.with_suffix(".old.exe")
+        if old.exists():
+            old.unlink()
+        os.rename(cur, old)  # Windows 允许重命名正在运行的 exe
+        shutil.move(new_path, str(cur))
+        # 释放单实例锁后重启新版本
+        if runtime.app_lock is not None:
+            runtime.app_lock.release()
+        self._append_log(tr("update.swapped"))
+        subprocess.Popen([str(cur), "--minimized"],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         QApplication.quit()
 
     # ---------------------------------------------------------------- 状态

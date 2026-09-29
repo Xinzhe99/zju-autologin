@@ -15,7 +15,7 @@ from pathlib import Path
 from PyQt6.QtCore import QLockFile
 from PyQt6.QtWidgets import QApplication
 
-from zju_autologin import crash, i18n
+from zju_autologin import crash, i18n, runtime
 from zju_autologin.config import Config, config_dir
 from zju_autologin.monitor import Monitor
 from zju_autologin.ui import MainWindow
@@ -33,11 +33,26 @@ def main() -> int:
     app.setApplicationDisplayName("ZJU 校园网自动登录")
     app.setQuitOnLastWindowClosed(False)
 
-    # 单实例保护（固定锁路径，跨进程互斥）
+    # 单实例保护（固定锁路径, 跨进程互斥）; 原地自更新重启时旧实例
+    # 短暂仍持有锁, 这里最多等 5 秒
     lock = QLockFile(str(Path(config_dir()) / "app.lock"))
-    if not lock.tryLock(100):
+    locked = False
+    for _ in range(50):
+        if lock.tryLock(100):
+            locked = True
+            break
+    if not locked:
         print("已有实例在运行（托盘图标处查看）。")
         return 0
+    runtime.app_lock = lock
+
+    # 原地自更新的残留: 清理上一版本的 .old.exe（正在运行时无法删除, 此时必已退出）
+    if getattr(sys, "frozen", False):
+        old_exe = Path(sys.executable).with_suffix(".old.exe")
+        try:
+            old_exe.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     config = Config()
     i18n.set_lang(config.language)

@@ -251,5 +251,6 @@
   "smtp.to": "To address",
   "smtp.pass_ph": "app password (not your login password)",
   "notify.guide": "How to get each key →",
-  "err.user_must_modify_password": "The portal requires a password change: update it on the portal first, then update it here"
+  "err.user_must_modify_password": "The portal requires a password change: update it on the portal first, then update it here",
+  "update.swapped": "Updated in place; restarting…"
 }
