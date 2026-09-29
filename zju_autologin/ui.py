@@ -1442,11 +1442,15 @@ class MainWindow(QMainWindow):
         self._btn_logs = QPushButton()
         self._btn_logs.setObjectName("secondary")
         self._btn_logs.clicked.connect(self._open_logs)
+        self._btn_reconfig = QPushButton()
+        self._btn_reconfig.setObjectName("secondary")
+        self._btn_reconfig.clicked.connect(self._start_reconfig)
         self._btn_openportal = QPushButton()
         self._btn_openportal.setObjectName("secondary")
         self._btn_openportal.clicked.connect(self._open_portal_page)
         btn_row.addWidget(self._btn_settings)
         btn_row.addWidget(self._btn_logs)
+        btn_row.addWidget(self._btn_reconfig)
         btn_row.addStretch(1)
         btn_row.addWidget(self._btn_openportal)
         slay.addLayout(btn_row)
@@ -1470,6 +1474,8 @@ class MainWindow(QMainWindow):
         self._act_settings.triggered.connect(self._open_settings)
         self._act_logs = QAction(menu)
         self._act_logs.triggered.connect(self._open_logs)
+        self._act_reconfig = QAction(menu)
+        self._act_reconfig.triggered.connect(self._start_reconfig)
         self._act_auto = QAction(menu)
         self._act_auto.setCheckable(True)
         self._act_auto.toggled.connect(self._toggle_auto_login)
@@ -1484,7 +1490,7 @@ class MainWindow(QMainWindow):
         self._act_about.triggered.connect(self._show_about)
         self._act_quit.triggered.connect(self.quit_app)
         for act in (self._act_show, self._act_check, self._act_login, self._act_openportal,
-                    self._act_settings, self._act_logs):
+                    self._act_settings, self._act_logs, self._act_reconfig):
             menu.addAction(act)
         menu.addAction(self._act_auto)
         menu.addSeparator()
@@ -1541,6 +1547,37 @@ class MainWindow(QMainWindow):
     def _open_portal_page(self) -> None:
         """在浏览器打开校园网认证登录页。"""
         QDesktopServices.openUrl(QUrl(self._config.base_url))
+
+    def _start_reconfig(self) -> None:
+        """一键重新配置：清除已存凭据并重启进入引导向导。"""
+        answer = QMessageBox.question(
+            self, tr("reconfig.title"), tr("reconfig.confirm"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            import keyring
+            keyring.set_password("ZJUAutoLogin", "account", "")
+        except Exception:  # noqa: BLE001
+            pass
+        self._config.password_backend = "none"
+        self._config.data.pop("password_b64", None)
+        self._config.save()
+        self._append_log(tr("reconfig.cleared"))
+        self._force_quit = True
+        self._save_geometry()
+        if self._downloader is not None:
+            self._downloader.stop()
+            self._downloader.wait(2000)
+        self._monitor.stop()
+        self._tray.hide()
+        # 重启自身：凭据已空, 启动即进入引导向导（重新配置场景不静默启动）
+        if getattr(sys, "frozen", False):
+            subprocess.Popen([sys.executable])
+        else:
+            main_py = Path(__file__).parent.parent / "main.py"
+            subprocess.Popen([sys.executable, str(main_py)])
+        QApplication.quit()
 
     def _show_devices(self) -> None:
         dlg = DevicesDialog(self._config, self._last_status.get("ip") or "", self)
@@ -1705,6 +1742,7 @@ class MainWindow(QMainWindow):
         self._btn_check.setText(tr("btn.check_now"))
         self._btn_login.setText(tr("btn.login_now"))
         self._btn_openportal.setText(tr("btn.open_portal"))
+        self._btn_reconfig.setText(tr("btn.reconfig"))
         self._btn_settings.setText(tr("btn.settings"))
         self._btn_logs.setText(tr("btn.logs"))
         self._btn_devices.setText(tr("btn.devices"))
@@ -1716,6 +1754,7 @@ class MainWindow(QMainWindow):
         for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
                          (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
                          (self._act_settings, "btn.settings"), (self._act_logs, "btn.logs"),
+                         (self._act_reconfig, "btn.reconfig"),
                          (self._act_about, "tray.about"), (self._act_quit, "tray.quit")):
             act.setText(tr(key))
         self._act_auto.setText(tr("chk.auto_login"))

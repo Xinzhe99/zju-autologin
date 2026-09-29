@@ -252,5 +252,9 @@
   "smtp.pass_ph": "邮箱授权码（非登录密码）",
   "notify.guide": "各渠道 Key 获取教程 →",
   "err.user_must_modify_password": "门户要求修改密码：请先到信息门户修改密码，再回到本工具更新保存",
-  "update.swapped": "已原地更新，正在重启新版本…"
+  "update.swapped": "已原地更新，正在重启新版本…",
+  "btn.reconfig": "重新配置",
+  "reconfig.title": "重新配置",
+  "reconfig.confirm": "将清除已保存的账号密码并重新进入引导向导（其他设置保留）。\n确定继续吗？",
+  "reconfig.cleared": "凭据已清除，即将重启进入引导向导…"
 }

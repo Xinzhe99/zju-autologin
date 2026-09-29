@@ -252,5 +252,9 @@
   "smtp.pass_ph": "app password (not your login password)",
   "notify.guide": "How to get each key →",
   "err.user_must_modify_password": "The portal requires a password change: update it on the portal first, then update it here",
-  "update.swapped": "Updated in place; restarting…"
+  "update.swapped": "Updated in place; restarting…",
+  "btn.reconfig": "Reconfigure",
+  "reconfig.title": "Reconfigure",
+  "reconfig.confirm": "This clears the saved credentials and restarts the setup wizard (other settings are kept).\nContinue?",
+  "reconfig.cleared": "Credentials cleared; restarting into the setup wizard…"
 }
