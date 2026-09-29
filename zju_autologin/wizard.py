@@ -84,6 +84,11 @@ class SetupWizard(QDialog):
         root.addWidget(self._stack, 1)
         root.addLayout(nav)
 
+        # 已保存过账号(如重装/密码丢失恢复)时直接预填
+        if config.username:
+            self._edit_user.setText(config.username)
+            self._edit_domain.setText(config.domain)
+
         self.retranslate_ui()
         self._stack.setCurrentIndex(0)
         self._start_detect()
@@ -247,7 +252,8 @@ class SetupWizard(QDialog):
 
     def _on_detected(self, status: dict) -> None:
         if status.get("online") and status.get("username"):
-            self._edit_user.setText(status["username"])
+            if not self._edit_user.text().strip():
+                self._edit_user.setText(status["username"])
             self._detect_label.setText(tr("wiz.detected_online", username=status["username"]))
         elif status.get("portal_ok"):
             self._detect_label.setText(tr("wiz.detected_offline"))

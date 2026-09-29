@@ -41,8 +41,9 @@ def main() -> int:
     config = Config()
     i18n.set_lang(config.language)
 
-    # 首次使用 → 引导向导（含在线账号自动检测）
-    if not config.username:
+    # 首次使用或凭据不全 → 引导向导（含在线账号自动检测）
+    # 密码缺失(重装/清理)时同样进入向导, 向导会带出账号并要求补一次密码
+    if not config.username or not config.get_password():
         wizard = SetupWizard(config)
         wizard.exec()
         i18n.set_lang(config.language)
