@@ -1,4 +1,4 @@
-"""PyQt6 界面：主窗口（状态 + 设置 + 日志）与系统托盘。"""
+"""PyQt6 界面：紧凑主窗（状态）+ 独立的设置窗口与日志窗口 + 系统托盘。"""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ import os
 import sys
 import tempfile
 import time
+from collections import deque
 
-from PyQt6.QtCore import QSize, Qt, QThread, QTime, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTime, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap, QBrush, QColor, QPen
 from PyQt6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -28,11 +30,9 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStackedWidget,
     QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
-    QButtonGroup,
     QTimeEdit,
     QToolButton,
     QVBoxLayout,
@@ -376,8 +376,9 @@ class UsageChart(QWidget):
 class StatsDialog(QDialog):
     """网络事件时间线、近 7 天掉线统计与每日流量曲线。"""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, main: "MainWindow", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._main = main
         self.setWindowTitle(tr("stats.title"))
         self.setModal(True)
         self.resize(560, 500)
@@ -400,8 +401,7 @@ class StatsDialog(QDialog):
             lay.addWidget(UsageChart(deltas[-30:]), 1)
 
         # 会话在线天数
-        main = parent if isinstance(parent, MainWindow) else None
-        login_time = (main._last_status.get("login_time") or "") if main else ""
+        login_time = main._last_status.get("login_time") or ""
         days = 0
         if login_time:
             try:
@@ -419,7 +419,6 @@ class StatsDialog(QDialog):
         drops_title.setObjectName("cardTitle")
         lay.addWidget(drops_title)
         table = QTableWidget(0, 3)
-
         table.setHorizontalHeaderLabels(["#", tr("field.last_check"), tr("status.offline")])
         table.horizontalHeader().setStretchLastSection(True)
         table.setColumnWidth(0, 40)
@@ -522,217 +521,22 @@ class PortalWizardDialog(QDialog):
         self.accept()
 
 
-class MainWindow(QMainWindow):
-    def __init__(self, config: Config, monitor: Monitor) -> None:
-        super().__init__()
+class SettingsWindow(QDialog):
+    """独立设置窗口：账号 / 选项 / 掉线通知 / 高级选项。"""
+
+    def __init__(self, config: Config, monitor: Monitor, main: "MainWindow") -> None:
+        super().__init__(main)
         self._config = config
         self._monitor = monitor
-        self._force_quit = False
-        self._warned_auth_error = False
-        self._tray_state = ""
-        self._last_status: dict = {"state": "checking", "detail": ""}
-        self._update_version = ""
-        self._update_url = ""
-        self._downloader: UpdateDownloadThread | None = None
+        self._main = main
+        self._route_thread: _FnThread | None = None
+        self._service_thread: _FnThread | None = None
+        self.setWindowTitle(tr("card.settings"))
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.resize(760, 780)
+        self.setMinimumSize(700, 560)
 
-        self.setWindowTitle(tr("app.name"))
-        icon_path = resource_path("zju.ico")
-        self.setWindowIcon(QIcon(icon_path if os.path.isfile(icon_path)
-                                 else resource_path("zju_seal_blue.png")))
-        self.resize(940, 430)
-        self.setMinimumSize(860, 380)
-        geo = str(config.win_geometry or "")
-        if geo:
-            try:
-                x, y, w, h = (int(v) for v in geo.split(","))
-                screen = QApplication.primaryScreen().availableGeometry()
-                if w >= self.minimumWidth() and h >= self.minimumHeight()                         and screen.contains(x + w // 2, y + 20):
-                    self.setGeometry(x, y, w, h)
-                else:
-                    self.resize(w, h)
-            except (ValueError, TypeError):
-                pass
-        self.resize(self.width(), self._PAGE_HEIGHTS[0])
-        self.setStyleSheet(theme.get_qss(config.theme))
-
-        self._build_ui()
-        self._build_tray()
-        self.retranslate_ui()
-        self._load_settings_into_ui()
-
-        monitor.statusChanged.connect(self._on_status)
-        monitor.logLine.connect(self._append_log)
-        monitor.updateAvailable.connect(self._on_update_available)
-        crash.UiHolder.window = self
-
-    # ------------------------------------------------------------------ UI
-
-    def _card(self) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("card")
-        return frame
-
-    def _build_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
-        lay = QHBoxLayout(central)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(self._build_sidebar())
-        self._stack = QStackedWidget()
-        lay.addWidget(self._stack, 1)
-        self._stack.addWidget(self._page_status())    # 0
-        self._stack.addWidget(self._page_settings())  # 1
-        self._stack.addWidget(self._page_logs())      # 2
-
-    def _build_sidebar(self) -> QFrame:
-        """Codex 风格左侧导航栏。"""
-        sb = QFrame()
-        sb.setObjectName("sidebar")
-        sb.setFixedWidth(204)
-        lay = QVBoxLayout(sb)
-        lay.setContentsMargins(12, 16, 12, 14)
-        lay.setSpacing(4)
-
-        logo_row = QHBoxLayout()
-        logo_row.setSpacing(10)
-        seal = _load_pixmap("zju_seal_blue.png")
-        seal_label = QLabel()
-        if not seal.isNull():
-            seal_label.setPixmap(seal.scaled(30, 30, Qt.AspectRatioMode.KeepAspectRatio,
-                                             Qt.TransformationMode.SmoothTransformation))
-        logo_row.addWidget(seal_label)
-        title_col = QVBoxLayout()
-        title_col.setSpacing(0)
-        self._topbar_title = QLabel()
-        self._topbar_title.setObjectName("sidebarTitle")
-        self._topbar_sub = QLabel()
-        self._topbar_sub.setObjectName("sidebarSub")
-        title_col.addWidget(self._topbar_title)
-        title_col.addWidget(self._topbar_sub)
-        logo_row.addLayout(title_col)
-        lay.addLayout(logo_row)
-        lay.addSpacing(18)
-
-        self._nav_group = QButtonGroup(self)
-        self._nav_group.setExclusive(True)
-        self._nav_buttons = []
-        for idx, (icon_name, key) in enumerate((
-            ("icon_nav_status.png", "nav.status"),
-            ("icon_nav_settings.png", "nav.settings"),
-            ("icon_nav_logs.png", "nav.logs"),
-        )):
-            btn = QPushButton()
-            btn.setObjectName("nav")
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            icon_path = resource_path(icon_name)
-            if os.path.isfile(icon_path):
-                btn.setIcon(QIcon(icon_path))
-                btn.setIconSize(QSize(18, 18))
-            btn.clicked.connect(lambda _=False, i=idx: self._switch_page(i))
-            self._nav_group.addButton(btn, idx)
-            self._nav_buttons.append((btn, key))
-            lay.addWidget(btn)
-        self._nav_buttons[0][0].setChecked(True)
-
-        lay.addStretch(1)
-        self._version_label = QLabel()
-        self._version_label.setObjectName("sidebarHint")
-        lay.addWidget(self._version_label)
-        return sb
-
-    _PAGE_HEIGHTS = {0: 430, 1: 800, 2: 600}  # 状态紧凑 / 设置全量 / 日志适中
-
-    def _switch_page(self, idx: int) -> None:
-        self._stack.setCurrentIndex(idx)
-        # 状态页内容少, 窗口随之收窄高度; 设置/日志页再展开
-        target = self._PAGE_HEIGHTS.get(idx)
-        if target and not (self.windowState() & Qt.WindowState.WindowMaximized):
-            self.resize(self.width(), target)
-
-    def _page_status(self) -> QWidget:
-        page = QWidget()
-        root = QVBoxLayout(page)
-        root.setContentsMargins(24, 20, 24, 16)
-        root.setSpacing(12)
-
-        # 更新横幅（有新版本时显示）
-        self._update_banner = QPushButton()
-        self._update_banner.setObjectName("primary")
-        self._update_banner.clicked.connect(self._do_update)
-        self._update_banner.hide()
-        root.addWidget(self._update_banner)
-
-        # 状态卡片
-        status_card = self._card()
-        slay = QVBoxLayout(status_card)
-        slay.setContentsMargins(20, 16, 20, 16)
-        slay.setSpacing(8)
-
-        status_row = QHBoxLayout()
-        self._dot = QLabel()
-        self._dot.setFixedSize(14, 14)
-        self._status_text = QLabel()
-        self._status_text.setObjectName("statusText")
-        status_row.addWidget(self._dot)
-        status_row.addSpacing(10)
-        status_row.addWidget(self._status_text)
-        status_row.addStretch(1)
-        self._btn_devices = QPushButton()
-        self._btn_devices.setObjectName("secondary")
-        self._btn_devices.clicked.connect(self._show_devices)
-        self._btn_devices.hide()
-        status_row.addWidget(self._btn_devices)
-        self._btn_openportal = QPushButton()
-        self._btn_openportal.setObjectName("secondary")
-        self._btn_openportal.clicked.connect(self._open_portal_page)
-        self._btn_check = QPushButton()
-        self._btn_check.setObjectName("secondary")
-        self._btn_check.clicked.connect(self._monitor.check_once)
-        self._btn_login = QPushButton()
-        self._btn_login.setObjectName("primary")
-        self._btn_login.clicked.connect(self._on_login_clicked)
-        status_row.addWidget(self._btn_check)
-        status_row.addSpacing(8)
-        status_row.addWidget(self._btn_login)
-        slay.addLayout(status_row)
-
-        self._status_detail = QLabel()
-        self._status_detail.setObjectName("statusDetail")
-        self._status_detail.setWordWrap(True)
-        slay.addWidget(self._status_detail)
-
-        grid_host = QFrame()
-        grid_lay = QGridLayout(grid_host)
-        grid_lay.setContentsMargins(0, 6, 0, 0)
-        grid_lay.setHorizontalSpacing(28)
-        grid_lay.setVerticalSpacing(4)
-        self._fields: dict[str, QLabel] = {}
-        self._field_labels: dict[str, QLabel] = {}
-        keys = ("account", "ip", "login_time", "last_check", "billing", "traffic")
-        for idx, key in enumerate(keys):
-            klabel = QLabel()
-            klabel.setObjectName("fieldKey")
-            vlabel = QLabel(tr("statuscard.never"))
-            vlabel.setObjectName("fieldValue")
-            vlabel.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            grid_lay.addWidget(klabel, (idx // 4) * 2, idx % 4)
-            grid_lay.addWidget(vlabel, (idx // 4) * 2 + 1, idx % 4)
-            self._fields[key] = vlabel
-            self._field_labels[key] = klabel
-        slay.addWidget(grid_host)
-        root.addWidget(status_card)
-
-        self._tip = QLabel()
-        self._tip.setObjectName("statusDetail")
-        root.addWidget(self._tip)
-        root.addStretch(1)
-        return page
-
-    def _page_settings(self) -> QWidget:
-        page = QWidget()
-        outer = QVBoxLayout(page)
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -741,12 +545,13 @@ class MainWindow(QMainWindow):
         content = QWidget()
         scroll.setWidget(content)
         root = QVBoxLayout(content)
-        root.setContentsMargins(24, 20, 24, 16)
+        root.setContentsMargins(20, 16, 20, 16)
         root.setSpacing(12)
+        self.setStyleSheet(theme.get_qss(config.theme))
 
-        # ---- 设置卡片 ----
-        settings_card = self._card()
-        glay = QVBoxLayout(settings_card)
+        card = QFrame()
+        card.setObjectName("card")
+        glay = QVBoxLayout(card)
         glay.setContentsMargins(20, 16, 20, 16)
         glay.setSpacing(10)
         self._settings_title = QLabel()
@@ -756,7 +561,6 @@ class MainWindow(QMainWindow):
         form = QGridLayout()
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
-
         self._form_labels: dict[str, QLabel] = {}
 
         def add_row(row: int, key: str, widget: QWidget) -> None:
@@ -797,7 +601,7 @@ class MainWindow(QMainWindow):
         for lang in ("auto", "zh-CN", "en-US"):
             self._combo_lang.addItem(self._lang_label(lang), lang)
 
-        # 主题：Codex 风格分段胶囊
+        # 主题：分段胶囊（点击即时生效）
         seg_host = QFrame()
         seg_host.setObjectName("segHost")
         seg_host.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
@@ -812,7 +616,7 @@ class MainWindow(QMainWindow):
             btn.setObjectName("seg")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _=False, m=mode: self.setStyleSheet(theme.get_qss(m)))
+            btn.clicked.connect(lambda _=False, m=mode: self._apply_theme(m))
             self._seg_group.addButton(btn)
             self._seg_buttons[mode] = btn
             seg_lay.addWidget(btn)
@@ -826,7 +630,6 @@ class MainWindow(QMainWindow):
         add_row(5, "theme", seg_host)
         glay.addLayout(form)
 
-        # 选项行
         self._chk_auto = QCheckBox()
         self._chk_tray = QCheckBox()
         self._chk_updates = QCheckBox()
@@ -851,7 +654,6 @@ class MainWindow(QMainWindow):
         self._hb_timer.timeout.connect(self._refresh_service_heartbeat)
         self._hb_timer.start()
 
-        # 通知区
         self._notify_title = QLabel()
         self._notify_title.setObjectName("cardTitle")
         glay.addWidget(self._notify_title)
@@ -901,7 +703,6 @@ class MainWindow(QMainWindow):
         notify_grid.addLayout(actions, 1, 0, 1, 4)
         glay.addLayout(notify_grid)
 
-        # 高级选项
         self._btn_advanced = QToolButton()
         self._btn_advanced.setObjectName("eye")
         self._btn_advanced.setCheckable(True)
@@ -956,19 +757,18 @@ class MainWindow(QMainWindow):
         self._btn_portal = QPushButton()
         self._btn_portal.setObjectName("secondary")
         self._btn_portal.clicked.connect(self._show_portal_wizard)
-        prow.addWidget(self._btn_export)
-        prow.addWidget(self._btn_import)
-        prow.addWidget(self._btn_portal)
         self._btn_route = QPushButton()
         self._btn_route.setObjectName("secondary")
         self._btn_route.clicked.connect(self._toggle_portal_route)
+        prow.addWidget(self._btn_export)
+        prow.addWidget(self._btn_import)
+        prow.addWidget(self._btn_portal)
         prow.addWidget(self._btn_route)
         adv_grid.addLayout(prow, 5, 0, 1, 2)
         self._advanced_host.setVisible(False)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
         glay.addWidget(self._advanced_host)
 
-        # 保存行
         save_row = QHBoxLayout()
         self._save_hint = QLabel("")
         self._save_hint.setObjectName("statusDetail")
@@ -980,87 +780,13 @@ class MainWindow(QMainWindow):
         save_row.addSpacing(10)
         save_row.addWidget(self._btn_save)
         glay.addLayout(save_row)
-        root.addWidget(settings_card)
+        root.addWidget(card)
         root.addStretch(1)
-        return page
 
-    def _page_logs(self) -> QWidget:
-        page = QWidget()
-        root = QVBoxLayout(page)
-        root.setContentsMargins(24, 20, 24, 16)
-        root.setSpacing(10)
+        self._load_settings_into_ui()
+        self.retranslate_ui()
 
-        log_card = self._card()
-        llay = QVBoxLayout(log_card)
-        llay.setContentsMargins(20, 14, 20, 14)
-        llay.setSpacing(6)
-        log_head = QHBoxLayout()
-        self._log_title = QLabel()
-        self._log_title.setObjectName("cardTitle")
-        log_head.addWidget(self._log_title)
-        log_head.addStretch(1)
-        self._btn_diag = QPushButton()
-        self._btn_diag.setObjectName("secondary")
-        self._btn_diag.clicked.connect(self._copy_diagnostics)
-        self._btn_stats = QPushButton()
-        self._btn_stats.setObjectName("secondary")
-        self._btn_stats.clicked.connect(lambda: StatsDialog(self).exec())
-        self._btn_openlog = QPushButton()
-        self._btn_openlog.setObjectName("secondary")
-        self._btn_openlog.clicked.connect(self._open_log_folder)
-        log_head.addWidget(self._btn_diag)
-        log_head.addWidget(self._btn_stats)
-        log_head.addWidget(self._btn_openlog)
-        llay.addLayout(log_head)
-        self._log = QPlainTextEdit()
-        self._log.setObjectName("log")
-        self._log.setReadOnly(True)
-        self._log.setMaximumBlockCount(400)
-        self._log.setMinimumHeight(320)
-        llay.addWidget(self._log, 1)
-        root.addWidget(log_card, 1)
-        return page
-
-    def _seg_theme_data(self) -> str:
-        for data, btn in self._seg_buttons.items():
-            if btn.isChecked():
-                return data
-        return "auto"
-
-    def _set_seg_theme(self, data: str) -> None:
-        btn = self._seg_buttons.get(data if data in ("auto", "light", "dark") else "auto")
-        if btn is not None:
-            btn.setChecked(True)
-
-    def _toggle_portal_route(self) -> None:
-        """添加/移除门户直连路由（UAC 提权, 后台线程执行）。"""
-        cfg = self._config
-        want_add = not cfg.portal_route_added
-        self._btn_route.setEnabled(False)
-
-        def work():
-            import zju_autologin.routes as routes
-            return routes.add_direct_routes(cfg) if want_add else routes.remove_direct_routes(cfg)
-
-        def done(result):
-            ok = bool(result and result[0])
-            self._btn_route.setEnabled(True)
-            if ok:
-                self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
-                self._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
-            else:
-                self._append_log(tr("route.add_fail") if want_add else tr("route.remove_fail"))
-
-        self._route_thread = _FnThread(work, self)
-        self._route_thread.done.connect(done)
-        self._route_thread.finished.connect(self._route_thread.deleteLater)
-        self._route_thread.start()
-
-    def _on_proxy_mode_changed(self) -> None:
-        custom = self._combo_proxy.currentData() == "custom"
-        self._edit_proxy_url.setEnabled(custom)
-
-    # ------------------------------------------------------ 标签/文案辅助
+    # ---------------- 静态文案 ----------------
 
     @staticmethod
     def _lang_label(lang: str) -> str:
@@ -1084,40 +810,13 @@ class MainWindow(QMainWindow):
         return zh if i18n.current_lang().startswith("zh") else en
 
     def retranslate_ui(self) -> None:
-        """运行时切换语言后刷新全部文本。"""
-        self.setWindowTitle(tr("app.name"))
-        self._topbar_title.setText(tr("app.name"))
-        self._topbar_sub.setText(tr("app.tagline"))
-        for btn, key in self._nav_buttons:
-            btn.setText(tr(key))
-        self._version_label.setText(tr("app.header_badge", version=__version__))
-        self._btn_check.setText(tr("btn.check_now"))
-        self._btn_openportal.setText(tr("btn.open_portal"))
-        self._btn_login.setText(tr("btn.login_now"))
-        self._btn_save.setText(tr("btn.save"))
-        self._btn_devices.setText(tr("btn.devices"))
+        self.setWindowTitle(tr("card.settings"))
         self._settings_title.setText(tr("card.settings"))
-        self._log_title.setText(tr("card.log"))
-        self._tip.setText(tr("tip.footer"))
+        self._btn_save.setText(tr("btn.save"))
         self._save_hint.setText("")
-        self._btn_diag.setText(tr("btn.copy_diag"))
-        self._btn_stats.setText(tr("btn.stats"))
-        self._btn_openlog.setText(tr("btn.open_log"))
-
-        for key, label in self._field_labels.items():
-            if key == "billing":
-                label.setText(tr("field.billing"))
-            elif key == "traffic":
-                label.setText(tr("field.traffic"))
-            else:
-                label.setText(tr(f"field.{key}"))
-        self._form_labels["username"].setText(tr("field.username"))
-        self._form_labels["domain"].setText(tr("field.domain"))
-        self._form_labels["password"].setText(tr("field.password"))
-        self._form_labels["interval"].setText(tr("field.interval"))
-        self._form_labels["language"].setText(tr("field.language"))
+        for key, label in self._form_labels.items():
+            label.setText(tr(f"field.{key}"))
         self._form_labels["theme"].setText(tr("settings.theme"))
-
         self._edit_user.setPlaceholderText(tr("ph.username"))
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
         self._edit_pwd.setPlaceholderText(tr("ph.password"))
@@ -1126,7 +825,6 @@ class MainWindow(QMainWindow):
         self._edit_acid.setPlaceholderText("80 / auto")
         self._edit_heartbeat.setToolTip(tr("hb.hint"))
         self._spin_interval.setSuffix(f" {tr('unit.seconds', n='')}".rstrip())
-
         self._chk_auto.setText(tr("chk.auto_login"))
         self._chk_tray.setText(tr("chk.minimize_tray"))
         self._chk_updates.setText(tr("chk.check_updates"))
@@ -1163,73 +861,16 @@ class MainWindow(QMainWindow):
         self._btn_route.setText(tr("route.remove" if self._config.portal_route_added else "route.add"))
         self._btn_route.setToolTip(tr("route.hint"))
 
-        for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
-                         (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
-                         (self._act_about, "tray.about"), (self._act_quit, "tray.quit")):
-            act.setText(tr(key))
-        self._act_auto.setText(tr("chk.auto_login"))
-        self._tray_boot.setText(tr("tray.autostart"))
+    def _apply_theme(self, mode: str) -> None:
+        qss = theme.get_qss(mode)
+        self.setStyleSheet(qss)
+        self._main.setStyleSheet(qss)
+        if self._main._logs_window is not None:
+            self._main._logs_window.setStyleSheet(qss)
 
-        if self._update_banner.isVisible():
-            self._update_banner.setText(tr("btn.update_now", version=self._update_version))
-
-        self._set_status_ui(self._last_status.get("state", "checking"),
-                            self._last_status.get("detail", ""))
-        self._refresh_tray_tooltip()
-
-    # ---------------------------------------------------------- 托盘
-
-    def _build_tray(self) -> None:
-        self._tray = QSystemTrayIcon(make_tray_icon("checking"), self)
-        self._refresh_tray_tooltip()
-
-        menu = QMenu(self)
-        self._act_show = QAction(menu)
-        self._act_check = QAction(menu)
-        self._act_login = QAction(menu)
-        self._act_auto = QAction(menu)
-        self._act_auto.setCheckable(True)
-        self._act_auto.toggled.connect(self._toggle_auto_login)
-        self._tray_boot = QAction(menu)
-        self._tray_boot.setCheckable(True)
-        self._act_about = QAction(menu)
-        self._act_quit = QAction(menu)
-        self._act_openportal = QAction(menu)
-        self._act_openportal.triggered.connect(self._open_portal_page)
-        self._act_show.triggered.connect(self.show_normal)
-        self._act_check.triggered.connect(self._monitor.check_once)
-        self._act_login.triggered.connect(self._on_login_clicked)
-        self._tray_boot.toggled.connect(self._toggle_autostart_from_tray)
-        self._act_about.triggered.connect(self._show_about)
-        self._act_quit.triggered.connect(self.quit_app)
-        for act in (self._act_show, self._act_check, self._act_login, self._act_openportal):
-            menu.addAction(act)
-        menu.addAction(self._act_auto)
-        menu.addSeparator()
-        menu.addAction(self._tray_boot)
-        menu.addSeparator()
-        menu.addAction(self._act_about)
-        menu.addAction(self._act_quit)
-
-        self._tray.setContextMenu(menu)
-        self._tray.activated.connect(self._on_tray_activated)
-        self._tray.messageClicked.connect(self._on_message_clicked)
-        self._tray.show()
-
-    def _show_about(self) -> None:
-        QMessageBox.about(
-            self, tr("about.title"),
-            tr("about.text", app=tr("app.name"), version=__version__, url=REPO_URL))
-
-    def _refresh_tray_tooltip(self) -> None:
-        status = tr(f"status.{self._last_status.get('state', 'checking')}")
-        ip = self._last_status.get("ip") or ""
-        traffic = self._last_status.get("all_bytes") or 0
-        if traffic:
-            status += f" · {_fmt_bytes(traffic)}"
-        self._tray.setToolTip(
-            tr("tray.tooltip_ip", app=tr("app.name"), status=status, ip=ip)
-            if ip else tr("tray.tooltip", app=tr("app.name"), status=status))
+    def _on_proxy_mode_changed(self) -> None:
+        custom = self._combo_proxy.currentData() == "custom"
+        self._edit_proxy_url.setEnabled(custom)
 
     def _load_settings_into_ui(self) -> None:
         cfg = self._config
@@ -1263,26 +904,22 @@ class MainWindow(QMainWindow):
             self._time_proactive.setTime(QTime(int(hh) % 24, int(mm) % 60))
         except (ValueError, AttributeError):
             pass
-        # setChecked 会触发 toggled 槽(误写配置/注册表), 先屏蔽信号
-        for act, checked in ((self._tray_boot, autostart.is_enabled()),
-                             (self._act_auto, bool(cfg.auto_login))):
-            act.blockSignals(True)
-            act.setChecked(checked)
-            act.blockSignals(False)
         if cfg.get_password():
             self._edit_pwd.setPlaceholderText(
                 tr("ph.password_saved", backend=tr(f"password.storage.{cfg.password_backend_key()}")))
 
-    # ---------------------------------------------------------------- 动作
+    def _set_seg_theme(self, data: str) -> None:
+        btn = self._seg_buttons.get(data if data in ("auto", "light", "dark") else "auto")
+        if btn is not None:
+            btn.setChecked(True)
 
-    def _on_login_clicked(self) -> None:
-        if not self._config.username or not self._config.get_password():
-            self._save_settings()
-        if not self._config.username or not self._config.get_password():
-            self._status_detail.setText(tr("detail.fill_creds"))
-            return
-        self._set_status_ui("checking", tr("detail.logging_in"))
-        self._monitor.login_now()
+    def _seg_theme_data(self) -> str:
+        for data, btn in self._seg_buttons.items():
+            if btn.isChecked():
+                return data
+        return "auto"
+
+    # ---------------- 动作 ----------------
 
     def _save_settings(self) -> None:
         cfg = self._config
@@ -1319,37 +956,30 @@ class MainWindow(QMainWindow):
 
         boot_ok = autostart.set_enabled(self._chk_boot.isChecked())
         self._chk_boot.setChecked(boot_ok)
-        self._tray_boot.setChecked(boot_ok)
         cfg.autostart = boot_ok
         cfg.save()
 
-        # 系统级保活
+        # 系统级保活（后台线程执行, 等待 UAC 期间不冻结界面）
         if self._chk_service.isChecked() != service.is_installed():
-            if self._chk_service.isChecked():
-                ok, _ = service.install(cfg)
-                self._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
-                self._chk_service.setChecked(ok)
-            else:
-                ok, _ = service.uninstall()
-                self._append_log(tr("service.off_ok") if ok else tr("service.on_fail"))
-                self._chk_service.setChecked(not ok)
+            self._apply_service_toggle(self._chk_service.isChecked())
 
-        # 语言实时切换
+        # 语言/主题实时切换（含主窗与日志窗）
         if i18n.current_lang() != cfg.language:
             i18n.set_lang(cfg.language)
+        self._apply_theme(cfg.theme)
         self.retranslate_ui()
-        # 主题实时切换
-        self.setStyleSheet(theme.get_qss(cfg.theme))
+        self._main.retranslate_ui()
+        if self._main._logs_window is not None:
+            self._main._logs_window.retranslate_ui()
 
         self._monitor.config_updated()
         self._save_hint.setText(tr("hint.save_ok"))
         QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
-        self._append_log(tr("log.settings_saved",
-                            backend=tr(f"password.storage.{cfg.password_backend_key()}")))
+        self._main._append_log(tr("log.settings_saved",
+                                  backend=tr(f"password.storage.{cfg.password_backend_key()}")))
         self._monitor.check_once()
 
     def _apply_service_toggle(self, enable: bool) -> None:
-        """后台线程安装/卸载系统级计划任务，完成后回填状态。"""
         cfg = self._config
         self._chk_service.setEnabled(False)
 
@@ -1361,46 +991,40 @@ class MainWindow(QMainWindow):
             self._chk_service.setEnabled(True)
             self._chk_service.setChecked(ok if enable else not ok)
             if enable:
-                self._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
+                self._main._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
             else:
-                self._append_log(tr("service.off_ok") if ok else tr("service.on_fail"))
+                self._main._append_log(tr("service.off_ok") if ok else tr("service.on_fail"))
 
         self._service_thread = _FnThread(work, self)
         self._service_thread.done.connect(done)
         self._service_thread.finished.connect(self._service_thread.deleteLater)
         self._service_thread.start()
 
-    def _toggle_auto_login(self, on: bool) -> None:
-        self._config.auto_login = on
-        self._config.save()
-        self._chk_auto.setChecked(on)
-        self._append_log(tr("log.auto_login_on") if on else tr("log.auto_login_off"))
-
-    def _toggle_autostart_from_tray(self, on: bool) -> None:
-        if self._chk_boot.isChecked() == on:
-            return  # 保存设置后的程序性回显, 不重复写注册表/记日志
-        result = autostart.set_enabled(on)
-        self._chk_boot.setChecked(result)
-        self._tray_boot.setChecked(result)
-        self._config.autostart = result
-        self._config.save()
-        self._append_log(tr("log.autostart_on") if result else tr("log.autostart_off"))
-
-    def _copy_diagnostics(self) -> None:
+    def _toggle_portal_route(self) -> None:
         cfg = self._config
-        lines = [
-            f"ZJU-AutoLogin v{__version__}",
-            f"Python {sys.version.split()[0]} @ {sys.platform}",
-            f"portal: {cfg.base_url} ac_id={cfg.ac_id}",
-            f"account: {cfg.username}{cfg.domain}",
-            f"state: {self._last_status.get('state')} ip={self._last_status.get('ip')}",
-            f"notify: {cfg.notify_provider}",
-            "", "---- last logs ----",
-        ]
-        lines += self._log.toPlainText().splitlines()[-50:]
-        QApplication.clipboard().setText("\n".join(lines))
-        self._save_hint.setText(tr("diag.copied"))
-        QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
+        want_add = not cfg.portal_route_added
+        self._btn_route.setEnabled(False)
+
+        def work():
+            import zju_autologin.routes as routes
+            return routes.add_direct_routes(cfg) if want_add else routes.remove_direct_routes(cfg)
+
+        def done(result):
+            ok = bool(result and result[0])
+            self._btn_route.setEnabled(True)
+            if ok:
+                self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
+                self._main._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
+            else:
+                self._main._append_log(tr("route.add_fail") if want_add else tr("route.remove_fail"))
+
+        self._route_thread = _FnThread(work, self)
+        self._route_thread.done.connect(done)
+        self._route_thread.finished.connect(self._route_thread.deleteLater)
+        self._route_thread.start()
+
+    def _show_portal_wizard(self) -> None:
+        PortalWizardDialog(self._config, self).exec()
 
     def _export_config(self) -> None:
         from PyQt6.QtWidgets import QFileDialog
@@ -1469,50 +1093,376 @@ class MainWindow(QMainWindow):
         else:
             self._service_heartbeat.setText(tr("service.heartbeat_stale", mins=mins))
 
+    def closeEvent(self, event) -> None:  # noqa: N802
+        # 只隐藏, 保留实例与累积状态; 退出程序由主窗 quit_app 统一收尾
+        event.ignore()
+        self.hide()
+
+
+class LogsWindow(QDialog):
+    """独立日志窗口：运行日志 + 统计 + 诊断。"""
+
+    def __init__(self, main: "MainWindow") -> None:
+        super().__init__(main)
+        self._main = main
+        self.setWindowTitle(tr("card.log"))
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.resize(760, 520)
+        self.setMinimumSize(600, 400)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(10)
+
+        card = QFrame()
+        card.setObjectName("card")
+        llay = QVBoxLayout(card)
+        llay.setContentsMargins(20, 14, 20, 14)
+        llay.setSpacing(6)
+        log_head = QHBoxLayout()
+        self._log_title = QLabel()
+        self._log_title.setObjectName("cardTitle")
+        log_head.addWidget(self._log_title)
+        log_head.addStretch(1)
+        self._btn_diag = QPushButton()
+        self._btn_diag.setObjectName("secondary")
+        self._btn_diag.clicked.connect(self._copy_diagnostics)
+        self._btn_stats = QPushButton()
+        self._btn_stats.setObjectName("secondary")
+        self._btn_stats.clicked.connect(lambda: StatsDialog(self._main, self).exec())
+        self._btn_openlog = QPushButton()
+        self._btn_openlog.setObjectName("secondary")
+        self._btn_openlog.clicked.connect(self._open_log_folder)
+        log_head.addWidget(self._btn_diag)
+        log_head.addWidget(self._btn_stats)
+        log_head.addWidget(self._btn_openlog)
+        llay.addLayout(log_head)
+        self._log = QPlainTextEdit()
+        self._log.setObjectName("log")
+        self._log.setReadOnly(True)
+        self._log.setMaximumBlockCount(400)
+        llay.addWidget(self._log, 1)
+        root.addWidget(card, 1)
+
+        for line in main._log_buffer:
+            self._log.appendPlainText(line)
+        self.retranslate_ui()
+
+    def append(self, line: str) -> None:
+        self._log.appendPlainText(line)
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("card.log"))
+        self._log_title.setText(tr("card.log"))
+        self._btn_diag.setText(tr("btn.copy_diag"))
+        self._btn_stats.setText(tr("btn.stats"))
+        self._btn_openlog.setText(tr("btn.open_log"))
+
     def _open_log_folder(self) -> None:
         from .config import config_dir
+
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_dir())))
 
-    def _toggle_portal_route(self) -> None:
-        """添加/移除门户直连路由（UAC 提权, 后台线程执行）。"""
-        cfg = self._config
-        want_add = not cfg.portal_route_added
-        self._btn_route.setEnabled(False)
+    def _copy_diagnostics(self) -> None:
+        cfg = self._main._config
+        lines = [
+            f"ZJU-AutoLogin v{__version__}",
+            f"Python {sys.version.split()[0]} @ {sys.platform}",
+            f"portal: {cfg.base_url} ac_id={cfg.ac_id}",
+            f"account: {cfg.username}{cfg.domain}",
+            f"state: {self._main._last_status.get('state')} ip={self._main._last_status.get('ip')}",
+            f"notify: {cfg.notify_provider}",
+            "", "---- last logs ----",
+        ]
+        lines += self._log.toPlainText().splitlines()[-50:]
+        QApplication.clipboard().setText("\n".join(lines))
+        self._main._append_log(tr("diag.copied"))
 
-        def work():
-            import zju_autologin.routes as routes
-            return routes.add_direct_routes(cfg) if want_add else routes.remove_direct_routes(cfg)
+    def closeEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+        self.hide()
 
-        def done(result):
-            ok = bool(result and result[0])
-            self._btn_route.setEnabled(True)
-            if ok:
-                self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
-                self._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
+
+class MainWindow(QMainWindow):
+    """紧凑主窗：只放状态卡与常用操作; 设置/日志各自独立窗口。"""
+
+    _LOG_BUFFER = 200
+
+    def __init__(self, config: Config, monitor: Monitor) -> None:
+        super().__init__()
+        self._config = config
+        self._monitor = monitor
+        self._force_quit = False
+        self._warned_auth_error = False
+        self._tray_state = ""
+        self._last_status: dict = {"state": "checking", "detail": ""}
+        self._update_version = ""
+        self._update_url = ""
+        self._downloader: UpdateDownloadThread | None = None
+        self._settings_window: SettingsWindow | None = None
+        self._logs_window: LogsWindow | None = None
+        self._log_buffer: deque[str] = deque(maxlen=self._LOG_BUFFER)
+
+        self.setWindowTitle(tr("app.name"))
+        icon_path = resource_path("zju.ico")
+        self.setWindowIcon(QIcon(icon_path if os.path.isfile(icon_path)
+                                 else resource_path("zju_seal_blue.png")))
+        self.resize(640, 372)
+        self.setMinimumSize(600, 340)
+        self.setStyleSheet(theme.get_qss(config.theme))
+        self._restore_geometry()
+
+        self._build_ui()
+        self._build_tray()
+        self.retranslate_ui()
+        self._load_settings_into_ui()
+
+        monitor.statusChanged.connect(self._on_status)
+        monitor.logLine.connect(self._append_log)
+        monitor.updateAvailable.connect(self._on_update_available)
+        crash.UiHolder.window = self
+
+    # ------------------------------------------------------------------ UI
+
+    def _card(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("card")
+        return frame
+
+    def _restore_geometry(self) -> None:
+        geo = str(self._config.win_geometry or "")
+        if not geo:
+            return
+        try:
+            x, y, w, h = (int(v) for v in geo.split(","))
+            screen = QApplication.primaryScreen().availableGeometry()
+            if w >= self.minimumWidth() and screen.contains(x + w // 2, y + 20):
+                # 只恢复位置与宽度; 高度始终紧凑(旧版大窗高度不再沿用)
+                self.setGeometry(x, y, max(w, self.minimumWidth()), min(h, 460))
             else:
-                self._append_log(tr("route.add_fail") if want_add else tr("route.remove_fail"))
+                self.move(max(0, x), max(0, y))
+        except (ValueError, TypeError):
+            pass
 
-        self._route_thread = _FnThread(work, self)
-        self._route_thread.done.connect(done)
-        self._route_thread.finished.connect(self._route_thread.deleteLater)
-        self._route_thread.start()
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(10)
 
-    def _on_proxy_mode_changed(self) -> None:
-        custom = self._combo_proxy.currentData() == "custom"
-        self._edit_proxy_url.setEnabled(custom)
+        # ---- 顶栏（小校徽 + 应用名 + 版本）----
+        topbar = QHBoxLayout()
+        seal = _load_pixmap("zju_seal_blue.png")
+        seal_label = QLabel()
+        if not seal.isNull():
+            seal_label.setPixmap(seal.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio,
+                                             Qt.TransformationMode.SmoothTransformation))
+        topbar.addWidget(seal_label)
+        self._topbar_title = QLabel()
+        self._topbar_title.setObjectName("sidebarTitle")
+        topbar.addWidget(self._topbar_title)
+        self._topbar_sub = QLabel()
+        self._topbar_sub.setObjectName("sidebarSub")
+        topbar.addWidget(self._topbar_sub)
+        topbar.addStretch(1)
+        self._version_label = QLabel()
+        self._version_label.setObjectName("sidebarHint")
+        topbar.addWidget(self._version_label)
+        root.addLayout(topbar)
+
+        # ---- 更新横幅 ----
+        self._update_banner = QPushButton()
+        self._update_banner.setObjectName("primary")
+        self._update_banner.clicked.connect(self._do_update)
+        self._update_banner.hide()
+        root.addWidget(self._update_banner)
+
+        # ---- 状态卡片 ----
+        card = self._card()
+        slay = QVBoxLayout(card)
+        slay.setContentsMargins(20, 16, 20, 16)
+        slay.setSpacing(8)
+
+        status_row = QHBoxLayout()
+        self._dot = QLabel()
+        self._dot.setFixedSize(14, 14)
+        self._status_text = QLabel()
+        self._status_text.setObjectName("statusText")
+        status_row.addWidget(self._dot)
+        status_row.addSpacing(10)
+        status_row.addWidget(self._status_text)
+        status_row.addStretch(1)
+        self._btn_devices = QPushButton()
+        self._btn_devices.setObjectName("secondary")
+        self._btn_devices.clicked.connect(self._show_devices)
+        self._btn_devices.hide()
+        status_row.addWidget(self._btn_devices)
+        self._btn_check = QPushButton()
+        self._btn_check.setObjectName("secondary")
+        self._btn_check.clicked.connect(self._monitor.check_once)
+        self._btn_login = QPushButton()
+        self._btn_login.setObjectName("primary")
+        self._btn_login.clicked.connect(self._on_login_clicked)
+        status_row.addWidget(self._btn_check)
+        status_row.addSpacing(8)
+        status_row.addWidget(self._btn_login)
+        slay.addLayout(status_row)
+
+        self._status_detail = QLabel()
+        self._status_detail.setObjectName("statusDetail")
+        self._status_detail.setWordWrap(True)
+        slay.addWidget(self._status_detail)
+
+        grid_host = QFrame()
+        grid_lay = QGridLayout(grid_host)
+        grid_lay.setContentsMargins(0, 6, 0, 0)
+        grid_lay.setHorizontalSpacing(24)
+        grid_lay.setVerticalSpacing(4)
+        self._fields: dict[str, QLabel] = {}
+        self._field_labels: dict[str, QLabel] = {}
+        keys = ("account", "ip", "login_time", "last_check", "billing", "traffic")
+        for idx, key in enumerate(keys):
+            klabel = QLabel()
+            klabel.setObjectName("fieldKey")
+            vlabel = QLabel(tr("statuscard.never"))
+            vlabel.setObjectName("fieldValue")
+            vlabel.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid_lay.addWidget(klabel, (idx // 4) * 2, idx % 4)
+            grid_lay.addWidget(vlabel, (idx // 4) * 2 + 1, idx % 4)
+            self._fields[key] = vlabel
+            self._field_labels[key] = klabel
+        slay.addWidget(grid_host)
+
+        btn_row = QHBoxLayout()
+        self._btn_settings = QPushButton()
+        self._btn_settings.setObjectName("secondary")
+        self._btn_settings.clicked.connect(self._open_settings)
+        self._btn_logs = QPushButton()
+        self._btn_logs.setObjectName("secondary")
+        self._btn_logs.clicked.connect(self._open_logs)
+        self._btn_openportal = QPushButton()
+        self._btn_openportal.setObjectName("secondary")
+        self._btn_openportal.clicked.connect(self._open_portal_page)
+        btn_row.addWidget(self._btn_settings)
+        btn_row.addWidget(self._btn_logs)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._btn_openportal)
+        slay.addLayout(btn_row)
+        root.addWidget(card)
+
+        self._tip = QLabel()
+        self._tip.setObjectName("statusDetail")
+        root.addWidget(self._tip)
+
+    def _build_tray(self) -> None:
+        self._tray = QSystemTrayIcon(make_tray_icon("checking"), self)
+        self._refresh_tray_tooltip()
+
+        menu = QMenu(self)
+        self._act_show = QAction(menu)
+        self._act_check = QAction(menu)
+        self._act_login = QAction(menu)
+        self._act_openportal = QAction(menu)
+        self._act_openportal.triggered.connect(self._open_portal_page)
+        self._act_settings = QAction(menu)
+        self._act_settings.triggered.connect(self._open_settings)
+        self._act_logs = QAction(menu)
+        self._act_logs.triggered.connect(self._open_logs)
+        self._act_auto = QAction(menu)
+        self._act_auto.setCheckable(True)
+        self._act_auto.toggled.connect(self._toggle_auto_login)
+        self._tray_boot = QAction(menu)
+        self._tray_boot.setCheckable(True)
+        self._act_about = QAction(menu)
+        self._act_quit = QAction(menu)
+        self._act_show.triggered.connect(self.show_normal)
+        self._act_check.triggered.connect(self._monitor.check_once)
+        self._act_login.triggered.connect(self._on_login_clicked)
+        self._tray_boot.toggled.connect(self._toggle_autostart_from_tray)
+        self._act_about.triggered.connect(self._show_about)
+        self._act_quit.triggered.connect(self.quit_app)
+        for act in (self._act_show, self._act_check, self._act_login, self._act_openportal,
+                    self._act_settings, self._act_logs):
+            menu.addAction(act)
+        menu.addAction(self._act_auto)
+        menu.addSeparator()
+        menu.addAction(self._tray_boot)
+        menu.addSeparator()
+        menu.addAction(self._act_about)
+        menu.addAction(self._act_quit)
+
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.messageClicked.connect(self._on_message_clicked)
+        self._tray.show()
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self, tr("about.title"),
+            tr("about.text", app=tr("app.name"), version=__version__, url=REPO_URL))
+
+    def _refresh_tray_tooltip(self) -> None:
+        status = tr(f"status.{self._last_status.get('state', 'checking')}")
+        ip = self._last_status.get("ip") or ""
+        traffic = self._last_status.get("all_bytes") or 0
+        if traffic:
+            status += f" · {_fmt_bytes(traffic)}"
+        self._tray.setToolTip(
+            tr("tray.tooltip_ip", app=tr("app.name"), status=status, ip=ip)
+            if ip else tr("tray.tooltip", app=tr("app.name"), status=status))
+
+    def _load_settings_into_ui(self) -> None:
+        cfg = self._config
+        # setChecked 会触发 toggled 槽(误写配置/注册表), 先屏蔽信号
+        for act, checked in ((self._tray_boot, autostart.is_enabled()),
+                             (self._act_auto, bool(cfg.auto_login))):
+            act.blockSignals(True)
+            act.setChecked(checked)
+            act.blockSignals(False)
+
+    # ---------------------------------------------------------------- 动作
+
+    def _open_settings(self) -> None:
+        if self._settings_window is None:
+            self._settings_window = SettingsWindow(self._config, self._monitor, self)
+        self._settings_window.show()
+        self._settings_window.raise_()
+        self._settings_window.activateWindow()
+
+    def _open_logs(self) -> None:
+        if self._logs_window is None:
+            self._logs_window = LogsWindow(self)
+        self._logs_window.show()
+        self._logs_window.raise_()
+        self._logs_window.activateWindow()
 
     def _open_portal_page(self) -> None:
-        """在浏览器打开校园网认证登录页（门户会自动重定向到认证界面）。"""
+        """在浏览器打开校园网认证登录页。"""
         QDesktopServices.openUrl(QUrl(self._config.base_url))
-
-    def _show_portal_wizard(self) -> None:
-        PortalWizardDialog(self._config, self).exec()
 
     def _show_devices(self) -> None:
         dlg = DevicesDialog(self._config, self._last_status.get("ip") or "", self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg._kicked_ip:
             self._append_log(tr("devices.kicked", ip=dlg._kicked_ip))
             self._monitor.login_now()
+
+    def _on_login_clicked(self) -> None:
+        if not self._config.username or not self._config.get_password():
+            self._open_settings()
+            self._status_detail.setText(tr("detail.fill_creds"))
+            return
+        self._set_status_ui("checking", tr("detail.logging_in"))
+        self._monitor.login_now()
+
+    def _toggle_auto_login(self, on: bool) -> None:
+        self._config.auto_login = on
+        self._config.save()
+        self._append_log(tr("log.auto_login_on") if on else tr("log.auto_login_off"))
+
+    def _toggle_autostart_from_tray(self, on: bool) -> None:
+        result = autostart.set_enabled(on)
+        self._append_log(tr("log.autostart_on") if result else tr("log.autostart_off"))
 
     # ---------------------------------------------------------------- 更新
 
@@ -1571,8 +1521,7 @@ class MainWindow(QMainWindow):
         self._fields["ip"].setText(info.get("ip") or "—")
         self._fields["login_time"].setText(info.get("login_time") or "—")
         self._fields["last_check"].setText(time.strftime("%H:%M:%S"))
-        billing = info.get("billing") or ""
-        self._fields["billing"].setText(billing or "—")
+        self._fields["billing"].setText(info.get("billing") or "—")
         self._fields["traffic"].setText(
             _fmt_bytes(info.get("all_bytes") or 0) if info.get("all_bytes") else "—")
         self._btn_devices.setVisible(state == "auth_error" and info.get("ecode") == "E2620")
@@ -1602,8 +1551,10 @@ class MainWindow(QMainWindow):
             self._do_update()
 
     def _append_log(self, line: str) -> None:
-        self._log.appendPlainText(line)
+        self._log_buffer.append(line)
         append_file_log(line)
+        if self._logs_window is not None:
+            self._logs_window.append(line)
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -1625,6 +1576,46 @@ class MainWindow(QMainWindow):
         self._tray.hide()
         QApplication.quit()
 
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("app.name"))
+        self._topbar_title.setText(tr("app.name"))
+        self._topbar_sub.setText(tr("app.tagline"))
+        self._version_label.setText(tr("app.header_badge", version=__version__))
+        self._btn_check.setText(tr("btn.check_now"))
+        self._btn_login.setText(tr("btn.login_now"))
+        self._btn_openportal.setText(tr("btn.open_portal"))
+        self._btn_settings.setText(tr("btn.settings"))
+        self._btn_logs.setText(tr("btn.logs"))
+        self._btn_devices.setText(tr("btn.devices"))
+        self._tip.setText(tr("tip.footer"))
+
+        for key, label in self._field_labels.items():
+            if key == "billing":
+                label.setText(tr("field.billing"))
+            elif key == "traffic":
+                label.setText(tr("field.traffic"))
+            else:
+                label.setText(tr(f"field.{key}"))
+
+        for act, key in ((self._act_show, "tray.show"), (self._act_check, "tray.check"),
+                         (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
+                         (self._act_settings, "btn.settings"), (self._act_logs, "btn.logs"),
+                         (self._act_about, "tray.about"), (self._act_quit, "tray.quit")):
+            act.setText(tr(key))
+        self._act_auto.setText(tr("chk.auto_login"))
+        self._tray_boot.setText(tr("tray.autostart"))
+
+        if self._update_banner.isVisible():
+            self._update_banner.setText(tr("btn.update_now", version=self._update_version))
+
+        self._set_status_ui(self._last_status.get("state", "checking"),
+                            self._last_status.get("detail", ""))
+        self._refresh_tray_tooltip()
+        if self._settings_window is not None:
+            self._settings_window.retranslate_ui()
+        if self._logs_window is not None:
+            self._logs_window.retranslate_ui()
+
     # ---------------------------------------------------------------- 关闭
 
     def _save_geometry(self) -> None:
@@ -1635,6 +1626,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._save_geometry()
         if self._force_quit or not self._config.minimize_to_tray:
+            if self._downloader is not None:
+                self._downloader.stop()
+                self._downloader.wait(3000)
             self._monitor.stop()
             event.accept()
             return

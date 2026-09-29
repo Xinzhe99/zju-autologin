@@ -39,7 +39,6 @@ def main() -> int:
     config = Config()
     monitor = Monitor(config)
     win = MainWindow(config, monitor)
-    win._edit_user.setText("3230104321")  # 防止真实配置渲染进截图
     win.show()
     app.processEvents()
     win._on_status(SCENARIOS[scenario])
