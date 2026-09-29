@@ -54,6 +54,7 @@ from .config import (
 from .i18n import tr
 from .monitor import Monitor
 from .net import build_opener
+from .portals import load_portals
 from .srun import SrunClient
 
 STATUS_KEYS = (
@@ -494,6 +495,13 @@ class PortalWizardDialog(QDialog):
         self._lbl_url = QLabel()
         self._lbl_url.setObjectName("fieldKey")
         lay.addWidget(self._lbl_url)
+        # 已知高校预设(社区共建 portals.json)
+        self._combo_preset = QComboBox()
+        self._combo_preset.addItem(tr("portal.custom"), "")
+        for p in load_portals():
+            self._combo_preset.addItem(p.get("name", "?"), p.get("base_url", ""))
+        self._combo_preset.currentIndexChanged.connect(self._on_preset)
+        lay.addWidget(self._combo_preset)
         self._edit_url = QLineEdit()
         self._edit_url.setPlaceholderText("https://xxx.edu.cn")
         lay.addWidget(self._edit_url)
@@ -520,6 +528,11 @@ class PortalWizardDialog(QDialog):
         btns.addSpacing(8)
         btns.addWidget(btn_close)
         lay.addLayout(btns)
+
+    def _on_preset(self) -> None:
+        url = self._combo_preset.currentData()
+        if url:
+            self._edit_url.setText(url)
 
     def _detect(self) -> None:
         base = self._edit_url.text().strip().rstrip("/")
@@ -812,6 +825,7 @@ class SettingsWindow(QDialog):
         self._chk_proactive = QCheckBox()
         self._time_proactive = QTimeEdit(QTime(3, 0))
         self._time_proactive.setDisplayFormat("HH:mm")
+        self._chk_auto_kick = QCheckBox()
         self._adv_labels: list[QLabel] = []
         for row, (label_key, widget) in enumerate((
             ("field.base_url", self._edit_base),
@@ -834,6 +848,8 @@ class SettingsWindow(QDialog):
         prow = QHBoxLayout()
         prow.addWidget(self._chk_proactive)
         prow.addWidget(self._time_proactive)
+        prow.addSpacing(14)
+        prow.addWidget(self._chk_auto_kick)
         prow.addStretch(1)
         self._btn_export = QPushButton()
         self._btn_export.setObjectName("secondary")
@@ -928,6 +944,7 @@ class SettingsWindow(QDialog):
         self._btn_notify_test.setText(tr("btn.notify_test"))
         self._btn_advanced.setText(tr("settings.advanced"))
         self._chk_proactive.setText(tr("chk.proactive"))
+        self._chk_auto_kick.setText(tr("chk.auto_kick"))
         for i in range(self._combo_lang.count()):
             self._combo_lang.setItemText(i, self._lang_label(self._combo_lang.itemData(i)))
         for data, btn in self._seg_buttons.items():
@@ -1011,6 +1028,7 @@ class SettingsWindow(QDialog):
         self._edit_proxy_url.setText(cfg.proxy_url or "")
         self._edit_proxy_url.setEnabled(pm == "custom")
         self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
+        self._chk_auto_kick.setChecked(bool(cfg.auto_kick))
         try:
             hh, mm = str(cfg.proactive_time or "03:00").split(":")
             self._time_proactive.setTime(QTime(int(hh) % 24, int(mm) % 60))
@@ -1064,6 +1082,7 @@ class SettingsWindow(QDialog):
         cfg.proxy_mode = self._combo_proxy.currentData() or "system"
         cfg.proxy_url = self._edit_proxy_url.text().strip()
         cfg.proactive_relogin = self._chk_proactive.isChecked()
+        cfg.auto_kick = self._chk_auto_kick.isChecked()
         cfg.proactive_time = self._time_proactive.time().toString("HH:mm")
 
         pwd = self._edit_pwd.text()
@@ -1530,10 +1549,14 @@ class MainWindow(QMainWindow):
         self._btn_openportal = QPushButton()
         self._btn_openportal.setObjectName("secondary")
         self._btn_openportal.clicked.connect(self._open_portal_page)
+        self._btn_diag = QPushButton()
+        self._btn_diag.setObjectName("secondary")
+        self._btn_diag.clicked.connect(self._run_diagnosis)
         btn_row.addWidget(self._btn_settings)
         btn_row.addWidget(self._btn_logs)
         btn_row.addWidget(self._btn_reconfig)
         btn_row.addStretch(1)
+        btn_row.addWidget(self._btn_diag)
         btn_row.addWidget(self._btn_openportal)
         slay.addLayout(btn_row)
         root.addWidget(card)
@@ -1631,6 +1654,34 @@ class MainWindow(QMainWindow):
     def _open_portal_page(self) -> None:
         """在浏览器打开校园网认证登录页。"""
         QDesktopServices.openUrl(QUrl(self._config.base_url))
+
+    def _run_diagnosis(self) -> None:
+        """一键网络自诊断: 后台执行, 结果弹窗并可复制。"""
+        cfg = self._config
+        self._btn_diag.setEnabled(False)
+
+        def work():
+            from .diag import format_report
+            return format_report(cfg)
+
+        def done(report):
+            self._btn_diag.setEnabled(True)
+            if isinstance(report, Exception):
+                QMessageBox.warning(self, tr("diag.title"), str(report))
+                return
+            box = QMessageBox(self)
+            box.setWindowTitle(tr("diag.title"))
+            box.setText(report)
+            box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            box.addButton(tr("btn.copy_diag"), QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(tr("btn.close"), QMessageBox.ButtonRole.RejectRole)
+            if box.exec() == 0:
+                QApplication.clipboard().setText(report)
+
+        self._diag_thread = _FnThread(work, self)
+        self._diag_thread.done.connect(done)
+        self._diag_thread.finished.connect(self._diag_thread.deleteLater)
+        self._diag_thread.start()
 
     def _start_reconfig(self) -> None:
         """一键重新配置：清除已存凭据并重启进入引导向导。"""
@@ -2011,6 +2062,7 @@ class MainWindow(QMainWindow):
         self._btn_check.setText(tr("btn.check_now"))
         self._btn_login.setText(tr("btn.login_now"))
         self._btn_openportal.setText(tr("btn.open_portal"))
+        self._btn_diag.setText(tr("btn.diagnose"))
         self._btn_reconfig.setText(tr("btn.reconfig"))
         self._btn_settings.setText(tr("btn.settings"))
         self._btn_logs.setText(tr("btn.logs"))

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "note": "社区共建的深澜(Srun)门户预设库。欢迎为你的学校提 PR 增加一行——字段说明见 docs/srun-protocol.md。",
+  "portals": [
+    {
+      "name": "浙江大学 / Zhejiang University",
+      "base_url": "https://net.zju.edu.cn",
+      "ac_id": "80",
+      "verified": "2026-09",
+      "notes": "有线+ZJUWLAN 同门户; 本项目首发验证校"
+    }
+  ],
+  "contribute": {
+    "how": "复制最后一行模板, 填你学校的 name/base_url/ac_id(登录页 URL 里的 ac_id 参数), 提 PR",
+    "template": {"name": "你的学校 / Your University", "base_url": "https://<portal-host>", "ac_id": "<数字>", "verified": "<年-月>", "notes": ""}
+  }
+}

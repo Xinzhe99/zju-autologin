@@ -3,6 +3,7 @@
 核心用法（Linux 一行启用系统级保活）：
     sudo zju-autologin enable -u 学号 -p 密码        # 装服务+写凭据+启动
     zju-autologin status                             # 查看服务与网络状态
+    zju-autologin diagnose                           # 一键网络自诊断
     sudo zju-autologin disable                       # 停止并卸载服务
 
 其他：
@@ -279,6 +280,12 @@ def main() -> int:
         return cmd_disable()
     if action == "status":
         return cmd_status()
+    if action == "diagnose":
+        from zju_autologin.diag import format_report
+        cfg = Config()
+        i18n.set_lang(cfg.language)
+        print(format_report(cfg))
+        return 0
     if action in ("version", "--version", "-V"):
         from zju_autologin import __version__
         print(f"zju-autologin {__version__}")

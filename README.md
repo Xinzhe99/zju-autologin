@@ -89,6 +89,9 @@
 - ✅ **自动保活**：按可配置间隔（默认 60 秒）检测在线状态，掉线自动重登，失败指数退避（60s → 10min）
 - ✅ **系统级保活**：可选"无需登录桌面即可认证"——Windows 计划任务 / macOS LaunchDaemon，停电重启后远程照样可达
 - ✅ **掉线推送**：连续登录失败时推送 Bark / Server酱 / 企业微信 / 钉钉 / 飞书 / 邮件通知，恢复后也提醒
+- ✅ **事件驱动网络响应**：Wi-Fi 切换/插拔网线/VPN 起落 2 秒内立即重检（网卡监视器，本地调用零流量）
+- ✅ **一键网络诊断**：`zju-autologin diagnose` 或界面按钮，自动区分 不在校园网/密码被改/设备超限/已认证无外网/代理干扰 并给出建议
+- ✅ **设备超限自动踢号**（可选）：E2620 时自动踢掉最旧的其他设备并重登，本机永不误踢
 - ✅ **心跳死信开关**：本机在线时每 5 分钟上报 healthchecks.io 等 URL；机器彻底失联时由外部服务通知你
 - ✅ **设备管理**：遇到"在线数已达上限"时，应用内列出其他在线设备、一键踢下线并重登（本机受保护）
 - ✅ **更新检查**：发现新版本托盘提醒，Windows 版一键下载（校验 SHA256）并安装
@@ -133,11 +136,15 @@ zju-autologin-gui                     # 启动图形界面（托盘/设置/向�
 - 「开机自启」勾选即写 XDG autostart（`~/.config/autostart/`，免 root）
 - GUI 内勾选「系统级保活」会通过 **pkexec** 弹系统密码框授权安装 systemd 服务（GNOME/KDE 标准授权方式，无需终端）
 
+**OpenWrt / Alpine 路由器（一机保全网）**：从 Releases 下载 `zju-autologin-linux-musl`（musl 静态二进制），用 [tools/install-openwrt.sh](tools/install-openwrt.sh) 一键安装 procd/systemd 服务——路由器级保活，全宿舍/实验室共享不掉线。
+
 **无 Python 的设备**：从 [Releases](releases) 下载静态二进制 `zju-autologin-linux-x86_64` / `-aarch64`（glibc 环境；Alpine/OpenWrt 等 musl 系统请用 pip 路线），`sudo ./zju-autologin-linux-* enable -u 学号` 同样一行启用。
 
 **服务机制**：systemd 单元（`/etc/systemd/system/zju-autologin.service`），`Restart=always` 崩溃自动拉起、`After=network-online.target` 等网络就绪、凭据存 `/etc/zju-autologin/config.json`（root:600、base64 混淆，与 Windows SYSTEM 任务/macOS LaunchDaemon 同级）。
 
 ## 校园网认证机制解析
+
+> 📖 完整协议规范（供所有深澜高校开发者复用）：[docs/srun-protocol.md](docs/srun-protocol.md)
 
 `net.zju.edu.cn` 是深澜 Srun 门户（`SRunCGIAuthIntfSvr V1.18`），登录页为
 `https://net.zju.edu.cn/srun_portal_pc?ac_id=80&theme=zju`。本项目的协议实现（[zju_autologin/srun.py](zju_autologin/srun.py)）直接逆向自门户登录页 JS，全流程如下：
@@ -203,7 +210,7 @@ python cli.py watch 30  # 常驻守护（每 30 秒检测）
 
 每个渠道如何获取 Key/Webhook、每项该填什么，见 **[通知渠道配置指南](docs/notifications.md)**。
 
-**其他学校使用**：设置 → 高级选项 → 接入其他高校门户，填入深澜门户地址自动探测；或手动修改门户地址与 ac_id（支持 auto 自动探测）。
+**其他深澜高校（通用工具）**：本项目协议为标准深澜（Srun）实现，适用于所有 srun 高校。接入向导内置**社区共建的门户预设**（[portals.json](zju_autologin/portals.json)，欢迎为你的学校提 PR 一行接入）；也可设置 → 高级选项 → 接入其他高校门户，填地址自动探测 ac_id。完整协议规范见 **[docs/srun-protocol.md](docs/srun-protocol.md)**（任何语言可据此实现）。
 
 ## 配置与密码存储
 

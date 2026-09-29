@@ -61,6 +61,8 @@ _DEFAULTS = {
     "portal_route_ips": [],
     # 笔记本电池供电时自动放慢检测节奏
     "battery_mode": True,
+    # 设备数超限(E2620)时自动踢掉最旧的其他设备并重登
+    "auto_kick": False,
 }
 
 

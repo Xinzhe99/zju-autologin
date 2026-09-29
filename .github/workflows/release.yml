@@ -46,7 +46,7 @@ jobs:
           --name ZJUAutoLogin
           --icon resources/zju.ico
           --add-data "resources;resources"
-          --add-data "zju_autologin/i18n;zju_autologin/i18n"
+          --add-data "zju_autologin/i18n;zju_autologin/i18n" --add-data "zju_autologin/portals.json;zju_autologin"
           main.py
 
       - name: Build installer (Inno Setup)
@@ -91,7 +91,7 @@ jobs:
           --name ZJUAutoLogin
           --icon resources/zju.icns
           --add-data "resources:resources"
-          --add-data "zju_autologin/i18n:zju_autologin/i18n"
+          --add-data "zju_autologin/i18n:zju_autologin/i18n" --add-data "zju_autologin/portals.json:zju_autologin"
           main.py
 
       - name: Package dmg and zip
@@ -134,6 +134,27 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: dist/zju-autologin-linux-${{ matrix.arch }}
 
+  build-linux-musl:
+    # 静态 musl 二进制: OpenWrt/Alpine 等嵌入式路由器可直接运行
+    runs-on: ubuntu-latest
+    container: alpine:latest
+    steps:
+      - name: Install deps
+        run: apk add --no-cache python3 py3-pip git
+
+      - uses: actions/checkout@v4
+
+      - name: Build static CLI binary
+        run: |
+          pip install --break-system-packages pyinstaller
+          pyinstaller --noconfirm --clean --onefile --strip             --name zju-autologin-linux-musl cli.py
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-musl
+          path: dist/zju-autologin-linux-musl
+
   build-pypi:
     runs-on: ubuntu-latest
     steps:
@@ -164,7 +185,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows, build-macos, build-linux, build-pypi]
+    needs: [build-windows, build-macos, build-linux, build-linux-musl, build-pypi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

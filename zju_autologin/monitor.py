@@ -41,6 +41,20 @@ _UPDATE_INTERVAL = 24 * 3600
 _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
 
 
+def _interface_signature() -> str:
+    """网卡集合指纹(名称+状态+地址), 变化即网络拓扑变化。纯本地调用。"""
+    try:
+        from PyQt6.QtNetwork import QNetworkInterface
+
+        parts = []
+        for iface in QNetworkInterface.allInterfaces():
+            addrs = ",".join(e.ip().toString() for e in iface.addressEntries())
+            parts.append(f"{iface.name()}:{int(iface.flags())}:{addrs}")
+        return "|".join(sorted(parts))
+    except Exception:  # noqa: BLE001 - QtNetwork 缺失时退化为纯轮询
+        return ""
+
+
 class MonitorWorker(QObject):
     statusChanged = pyqtSignal(dict)
     logLine = pyqtSignal(str)
@@ -61,6 +75,7 @@ class MonitorWorker(QObject):
         self._opener = None
         self._last_login_attempt = 0.0
         self._last_proactive_date = ""
+        self._if_sig = ""
         self._last_heartbeat = 0.0
         self._usage_date = ""
         self._battery_mode_on = False
@@ -74,6 +89,13 @@ class MonitorWorker(QObject):
         self._timer.setInterval(self._config.interval * 1000)
         self._timer.timeout.connect(self.check_once)
         self._timer.start()
+        # 事件驱动网络响应: 2s 轻量监听网卡集合变化(本地系统调用, 零网络流量),
+        # Wi-Fi 切换/插拔网线/VPN 起落 → 立即检测, 重登从分钟级降到秒级
+        self._if_sig = _interface_signature()
+        self._if_timer = QTimer()
+        self._if_timer.setInterval(2000)
+        self._if_timer.timeout.connect(self._on_interface_change)
+        self._if_timer.start()
         self.log(tr("log.monitor_started", n=self._config.interval))
         self.check_once()  # 首次状态检测优先, 不被更新检查的网络等待拖慢
         if self._config.check_updates:
@@ -87,7 +109,7 @@ class MonitorWorker(QObject):
     @pyqtSlot()
     def stop(self) -> None:
         self._running = False
-        for timer in (self._timer, self._update_timer):
+        for timer in (self._timer, self._update_timer, getattr(self, "_if_timer", None)):
             if timer is not None:
                 timer.stop()
 
@@ -100,6 +122,16 @@ class MonitorWorker(QObject):
     @pyqtSlot()
     def check_manual(self) -> None:
         self._do_check(manual=True)
+
+    def _on_interface_change(self) -> None:
+        """网卡集合变化(切 Wi-Fi/插拔网线/VPN 起落) → 立即检测。"""
+        if self._busy or not self._running:
+            return
+        sig = _interface_signature()
+        if sig and sig != self._if_sig:
+            self._if_sig = sig
+            self.log(tr("log.net_changed"))
+            self._do_check(manual=False)
 
     @pyqtSlot()
     def login_now(self) -> None:
@@ -302,6 +334,39 @@ class MonitorWorker(QObject):
         )
         self.log(tr("notify.recovery_sent"))
 
+    def _auto_kick_and_retry(self, client: SrunClient, current_ip: str) -> bool:
+        """设备超限时自动踢掉最旧的其他在线设备并重登一次。
+
+        本机设备永不踢; 每轮最多踢一台, 避免连环误伤。
+        """
+        try:
+            devices = client.list_online_devices(
+                self._config.username, self._config.get_password(), self._config.domain)
+        except Exception:  # noqa: BLE001
+            return False
+        others = [d for d in devices
+                  if d.get("ip") and d.get("ip") != current_ip]
+        if not others:
+            return False
+        oldest = min(others, key=lambda d: d.get("add_time") or 0)
+        ip = oldest.get("ip", "")
+        ok, _detail = client.kick_device(self._config.username + self._config.domain, ip)
+        if not ok:
+            return False
+        since = time.strftime("%m-%d %H:%M", time.localtime(oldest.get("add_time") or 0))
+        self.log(tr("log.autokick", ip=ip, since=since))
+        result = client.login(self._config.username, self._config.get_password(),
+                              domain=self._config.domain)
+        if result.get("ok"):
+            self._fail_count = 0
+            self._auth_error = ""
+            self.log(tr("log.login_ok"))
+            self._emit("online", username=result.get("username") or self._config.username,
+                       ip=result.get("ip") or current_ip,
+                       detail=tr("detail.just_logged"))
+            return True
+        return False
+
     def _do_login(self, client: SrunClient | None = None) -> bool:
         client = client or self._client()
         self.log(tr("log.logging_in", username=self._config.username + self._config.domain))
@@ -343,7 +408,10 @@ class MonitorWorker(QObject):
         self._fail_streak += 1
 
         if err_code == "E2620":
-            # 设备数超限：需要人工踢设备，锁存并提示
+            # 设备数超限: 自动踢号(可选)踢掉最旧的其他设备后重试一次
+            if self._config.auto_kick and client is not None:
+                if self._auto_kick_and_retry(client, result.get("ip", "")):
+                    return True
             self._auth_error = msg
             self._fail_count = 0
             self._emit("auth_error", username=result["username"], detail=msg, ecode="E2620")
