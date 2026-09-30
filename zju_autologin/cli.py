@@ -4,6 +4,7 @@
     sudo zju-autologin enable -u 学号 -p 密码        # 装服务+写凭据+启动
     zju-autologin status                             # 查看服务与网络状态
     zju-autologin diagnose                           # 一键网络自诊断
+    zju-autologin serve [--port 8734]                # 无头设备 Web 配置页(仅本机)
     sudo zju-autologin disable                       # 停止并卸载服务
 
 其他：
@@ -280,6 +281,18 @@ def main() -> int:
         return cmd_disable()
     if action == "status":
         return cmd_status()
+    if action == "serve":
+        port = 8734
+        for i, a in enumerate(rest):
+            if a in ("--port", "-p") and i + 1 < len(rest):
+                try:
+                    port = int(rest[i + 1])
+                except ValueError:
+                    pass
+        from zju_autologin.webui import cmd_serve
+        cfg = Config()
+        i18n.set_lang(cfg.language)
+        return cmd_serve(cfg, port)
     if action == "diagnose":
         from zju_autologin.diag import format_report
         cfg = Config()

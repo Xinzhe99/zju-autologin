@@ -72,6 +72,29 @@ jobs:
             dist/ZJUAutoLogin-*-windows-setup.exe
             dist/ZJUAutoLogin-*-windows-portable.zip
 
+  build-windows-cli:
+    # 纯 CLI 瘦身包(~8MB): 实验室服务器/旧机器只要保活不要 GUI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build CLI-only binary (no Qt)
+        run: |
+          pip install pyinstaller
+          pyinstaller --noconfirm --clean --onefile --noconsole --strip ^
+            --name zju-autologin-windows-cli ^
+            cli.py
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-cli
+          path: dist/zju-autologin-windows-cli.exe
+
   build-macos:
     needs: verify-version
     runs-on: macos-latest
@@ -185,7 +208,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows, build-macos, build-linux, build-linux-musl, build-pypi]
+    needs: [build-windows, build-windows-cli, build-macos, build-linux, build-linux-musl, build-pypi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

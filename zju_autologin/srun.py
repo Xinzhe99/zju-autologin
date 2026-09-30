@@ -100,6 +100,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # 绕过系统代理的直连 opener（门户与认证 API 只应走校园网直连）
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+# 门户 IP 直连缓存（host -> [ip...]）: 校园 DNS 故障时按缓存 IP + Host 头直连
+_PORTAL_IP_CACHE: dict[str, list[str]] = {}
+
+
+def _resolve_and_cache(host: str) -> tuple[list[str], bool]:
+    """解析门户 IP。返回 (IP 列表, DNS 是否存活)。
+
+    DNS 正常时刷新缓存; DNS 故障(gaierror)时返回缓存旧值供兜底直连。
+    """
+    try:
+        infos = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
+        ips = sorted({info[4][0] for info in infos})
+        if ips:
+            _PORTAL_IP_CACHE[host] = ips
+        return ips, True
+    except socket.gaierror:
+        return list(_PORTAL_IP_CACHE.get(host, [])), False
+
+
 # 门户连接策略缓存（host -> "策略|协议"）：命中后跳过全部失败尝试
 _STRATEGY_CACHE: dict[str, str] = {}
 # 全链失败负缓存（host -> 失败时间戳）：如门户整体不可达（掉校外），
@@ -247,15 +266,44 @@ class SrunClient:
         self.timeout = timeout
         self._callback_seq = 0
         self._resolved_ac_id: str | None = None
+        self._extra_headers: dict = {}
 
     # ------------------------------------------------------------------ HTTP
 
     def _request_once(self, url: str, opener: urllib.request.OpenerDirector | None = None) -> str:
         """单次请求。opener 缺省为直连（门户必须在校园网内直达，
         显式绕过系统代理——Clash/v2ray 等会拦截发往门户的 TLS 连接）。"""
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"}
-        )
+        headers = {"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"}
+        headers.update(getattr(self, "_extra_headers", {}) or {})
+        host = urllib.parse.urlsplit(url).netloc.split("@")[-1].split(":")[0]
+        ips, dns_alive = _resolve_and_cache(host)
+        if not ips:
+            raise SrunError(tr("srun.dns_down"))
+        if not dns_alive:
+            # DNS 故障兜底: 按缓存 IP 直连。Host 头保虚拟主机; https 证书是签给
+            # 域名的, 换 IP 后校验必失败 —— 此场景退化为"加密但不验身份"
+            # (IP 来自此前直连成功时的缓存, 可信度可接受)
+            import ssl
+
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ip_opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
+                urllib.request.HTTPSHandler(context=ctx))
+            last_exc: Exception | None = None
+            for ip in ips[:2]:
+                fallback_url = urllib.parse.urlunsplit(
+                    urllib.parse.urlsplit(url)._replace(netloc=ip))
+                headers["Host"] = host
+                try:
+                    req = urllib.request.Request(fallback_url, headers=headers)
+                    with ip_opener.open(req, timeout=self.timeout) as resp:
+                        return resp.read().decode("utf-8", errors="replace")
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+            raise SrunError(tr("srun.dns_down")) from last_exc
+        req = urllib.request.Request(url, headers=headers)
         opener = opener or _DIRECT_OPENER
         try:
             with opener.open(req, timeout=self.timeout) as resp:
@@ -336,12 +384,21 @@ class SrunClient:
         raise first_exc or SrunError(tr("srun.request_failed", err="all strategies failed"))
 
     def _jsonp(self, path: str, params: dict | None = None,
-               https_only: bool = False) -> dict:
+               https_only: bool = False,
+               extra_headers: dict | None = None,
+               captcha: str | None = None) -> dict:
         self._callback_seq += 1
         params = dict(params or {}, callback=f"zjulogin{int(time.time() * 1000)}{self._callback_seq}")
+        if captcha:
+            params["captcha"] = captcha
         host = urllib.parse.urlsplit(self.base_url).netloc
-        body = self._get(path, params, https_only=https_only,
-                         deadline=time.monotonic() + 25.0)
+        if extra_headers:
+            self._extra_headers = dict(extra_headers)
+        try:
+            body = self._get(path, params, https_only=https_only,
+                             deadline=time.monotonic() + 25.0)
+        finally:
+            self._extra_headers = {}
         try:
             return _parse_jsonp(body)
         except SrunError:
@@ -472,6 +529,39 @@ class SrunClient:
     def get_portal_ip(self) -> str:
         """从门户首页 CONFIG 里读取服务端识别到的本机 IP（最可靠）。"""
         return self.parse_portal_config().get("ip", "")
+
+    def fetch_captcha(self) -> dict:
+        """获取登录验证码图片。返回 {ok, cookie, data(bytes), token} 或 {ok:False, msg}。
+
+        深澜验证码: GET /v2/srun_portal_captcha_image?... 返回图片并 Set-Cookie 会话,
+        提交登录时须回带该 Cookie + captcha 参数。
+        """
+        import http.cookiejar
+        import urllib.parse as _up
+
+        self._callback_seq += 1
+        qs = _up.urlencode({"username": "captcha", "ip": "",
+                            "callback": f"zjucap{int(time.time() * 1000)}{self._callback_seq}"})
+        url = f"{self.base_url}/v2/srun_portal_captcha_image?{qs}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"})
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(jar))
+        try:
+            with opener.open(req, timeout=self.timeout) as resp:
+                data = resp.read()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "msg": str(exc)}
+        cookie = "; ".join(f"{c.name}={c.value}" for c in jar)
+        if not data or len(data) < 100:
+            return {"ok": False, "msg": "empty captcha image"}
+        return {"ok": True, "cookie": cookie, "data": data}
+
+    def login_with_captcha(self, username: str, password: str, captcha: str,
+                           cookie: str = "", ip: str = "", domain: str = "") -> dict:
+        """带验证码登录: 在标准 login 流程的提交参数上加 captcha + Cookie。"""
+        result = self.login(username, password, ip=ip, domain=domain, _captcha=(captcha, cookie))
+        return result
 
     def check_captcha(self) -> bool:
         """探测门户是否开启登录验证码（开启则无头登录不可用, 需明确告知用户）。"""
@@ -617,7 +707,8 @@ class SrunClient:
 
     # ------------------------------------------------------------------ 认证
 
-    def login(self, username: str, password: str, ip: str = "", domain: str = "") -> dict:
+    def login(self, username: str, password: str, ip: str = "", domain: str = "",
+              _captcha: tuple[str, str] | None = None) -> dict:
         """执行门户认证。
 
         domain: 运营商服务后缀（如 '@cmcc'），校园网默认留空。
@@ -685,6 +776,8 @@ class SrunClient:
                     "n": n,
                     "type": t,
                 },
+                extra_headers=({"Cookie": _captcha[1]} if _captcha and _captcha[1] else None),
+                captcha=_captcha[0] if _captcha else None,
             )
         except SrunError as exc:
             return {"ok": False, "msg": str(exc), "username": username, "ip": ip, "resp": {}}

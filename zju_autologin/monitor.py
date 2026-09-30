@@ -59,6 +59,7 @@ class MonitorWorker(QObject):
     statusChanged = pyqtSignal(dict)
     logLine = pyqtSignal(str)
     updateAvailable = pyqtSignal(str, str)  # 最新版本号, 下载页
+    captchaRequired = pyqtSignal()          # 需要人工输入验证码(GUI 弹窗)
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -132,6 +133,38 @@ class MonitorWorker(QObject):
             self._if_sig = sig
             self.log(tr("log.net_changed"))
             self._do_check(manual=False)
+
+    @pyqtSlot(str, str)
+    def login_captcha(self, captcha: str, cookie: str) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            client = self._client()
+            result = client.login_with_captcha(
+                self._config.username, self._config.get_password(),
+                captcha=captcha, cookie=cookie, domain=self._config.domain)
+            self._last_login_attempt = time.time()
+            if result.get("ok"):
+                self._fail_count = 0
+                self._auth_error = ""
+                self.log(tr("log.login_ok"))
+                try:
+                    status = client.get_status()
+                except SrunError:
+                    status = {}
+                self._emit("online",
+                           username=status.get("username") or result["username"],
+                           ip=status.get("ip") or result.get("ip") or "",
+                           detail=tr("detail.just_logged"))
+            else:
+                self.log(tr("log.login_failed", msg=result["msg"]))
+                # 码错可重弹
+                if str(result.get("resp", {}).get("error", "")) in ("vcode_error", "E2801", "captcha_error"):
+                    self.captchaRequired.emit()
+                self._emit("login_fail", username=result["username"], detail=result["msg"])
+        finally:
+            self._busy = False
 
     @pyqtSlot()
     def login_now(self) -> None:
@@ -430,6 +463,12 @@ class MonitorWorker(QObject):
             self._emit("auth_error", username=result["username"], detail=msg, ecode="E2620")
             self._maybe_push("notify.limit_title", tr("notify.limit_body", msg=msg))
             return False
+        if err_code in ("vcode_error", "E2801", "captcha_error"):
+            # 验证码: 需要人工输入图片码(GUI 弹窗), 不锁存——用户输入后重试
+            self.log(tr("log.captcha_needed"))
+            self.captchaRequired.emit()
+            self._emit("login_fail", username=result["username"], detail=msg)
+            return False
         if err_code in _AUTH_ERRORS or tr("err.password_error") in msg or tr("err.username_error") in msg:
             self._auth_error = msg
             self._fail_count = 0
@@ -493,6 +532,7 @@ class Monitor(QObject):
 
     checkRequested = pyqtSignal()
     loginRequested = pyqtSignal()
+    captchaLoginRequested = pyqtSignal(str, str)
     intervalChanged = pyqtSignal(int)
     credentialsChanged = pyqtSignal()
     notifyTestRequested = pyqtSignal()
@@ -510,6 +550,7 @@ class Monitor(QObject):
 
         self.checkRequested.connect(self._worker.check_manual)
         self.loginRequested.connect(self._worker.login_now)
+        self.captchaLoginRequested.connect(self._worker.login_captcha)
         self.intervalChanged.connect(self._worker.apply_interval)
         self.credentialsChanged.connect(self._worker.clear_auth_error)
         self.notifyTestRequested.connect(self._worker.notify_test)
@@ -538,6 +579,10 @@ class Monitor(QObject):
 
     def notify_test(self) -> None:
         self.notifyTestRequested.emit()
+
+    def login_with_captcha(self, captcha: str, cookie: str) -> None:
+        """GUI 验证码弹窗回调: 带码重登。"""
+        self.captchaLoginRequested.emit(captcha, cookie)
 
     def config_updated(self) -> None:
         self.intervalChanged.emit(self._config.interval)

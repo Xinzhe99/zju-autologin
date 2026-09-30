@@ -89,6 +89,12 @@
 - ✅ **自动保活**：按可配置间隔（默认 60 秒）检测在线状态，掉线自动重登，失败指数退避（60s → 10min）
 - ✅ **系统级保活**：可选"无需登录桌面即可认证"——Windows 计划任务 / macOS LaunchDaemon，停电重启后远程照样可达
 - ✅ **掉线推送**：连续登录失败时推送 Bark / Server酱 / 企业微信 / 钉钉 / 飞书 / 邮件通知，恢复后也提醒
+- ✅ **验证码支持**：贵校开启登录验证码时自动弹窗（图片+输入），输入即完成登录——验证码学校也能自动保活
+- ✅ **DNS 故障兜底**：校园 DNS 挂掉时按缓存门户 IP 直连，最后一类断网原因也兜住
+- ✅ **掉线回放**：把事件时间线讲成人话（"14:03 网络变化 → 14:04 重登成功，中断 8 秒"），日志页一键查看
+- ✅ **GUI 崩溃自愈**：随系统级保活安装看护任务，GUI 静默消失 10 分钟内自动拉回
+- ✅ **无头设备 Web 配置页**：`zju-autologin serve` 浏览器配置（仅 127.0.0.1），NAS/树莓派免 SSH 改配置
+- ✅ **Windows CLI 瘦身包**：~8MB 纯保活二进制（无 GUI 依赖），老旧机器/服务器友好
 - ✅ **事件驱动网络响应**：Wi-Fi 切换/插拔网线/VPN 起落 2 秒内立即重检（网卡监视器，本地调用零流量）
 - ✅ **一键网络诊断**：`zju-autologin diagnose` 或界面按钮，自动区分 不在校园网/密码被改/设备超限/已认证无外网/代理干扰 并给出建议
 - ✅ **设备超限自动踢号**（可选）：E2620 时自动踢掉最旧的其他设备并重登，本机永不误踢
@@ -141,6 +147,14 @@ zju-autologin-gui                     # 启动图形界面（托盘/设置/向�
 **无 Python 的设备**：从 [Releases](releases) 下载静态二进制 `zju-autologin-linux-x86_64` / `-aarch64`（glibc 环境；Alpine/OpenWrt 等 musl 系统请用 pip 路线），`sudo ./zju-autologin-linux-* enable -u 学号` 同样一行启用。
 
 **服务机制**：systemd 单元（`/etc/systemd/system/zju-autologin.service`），`Restart=always` 崩溃自动拉起、`After=network-online.target` 等网络就绪、凭据存 `/etc/zju-autologin/config.json`（root:600、base64 混淆，与 Windows SYSTEM 任务/macOS LaunchDaemon 同级）。
+
+## 学校兼容性
+
+<!-- COMPAT-MATRIX -->
+| 学校 / University | 门户 | 状态 |
+| --- | --- | --- |
+| 浙江大学 / Zhejiang University | `https://net.zju.edu.cn` | ✅ 2026-09 验证 |
+| 为你的学校添加一行 → [portals.json](zju_autologin/portals.json) | | |
 
 ## 校园网认证机制解析
 
@@ -303,6 +317,8 @@ build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 参与贡献见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 支持与贡献
+
+> 💬 建议仓库主人到 Settings → General → Features 开启 **Discussions**（使用问答与学校适配讨论），让 issue 区专注 bug 与 PR。
 
 如果这个工具帮到了你，欢迎点一个 ⭐ Star——是对作者最大的鼓励，也能让更多需要的同学看到：
 

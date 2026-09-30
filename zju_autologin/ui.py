@@ -1132,7 +1132,13 @@ class SettingsWindow(QDialog):
         self._chk_service.setEnabled(False)
 
         def work():
-            return service.install(cfg) if enable else service.uninstall()
+            from . import watchdog
+            result = service.install(cfg) if enable else service.uninstall()
+            if enable:
+                watchdog.install()   # GUI 看护任务随系统级保活一起装
+            else:
+                watchdog.uninstall()
+            return result
 
         def done(result):
             self._service_busy = False
@@ -1414,6 +1420,9 @@ class MainWindow(QMainWindow):
         monitor.statusChanged.connect(self._on_status)
         monitor.logLine.connect(self._append_log)
         monitor.updateAvailable.connect(self._on_update_available)
+        monitor.statusChanged.connect(
+            lambda info: self._tray.setToolTip(self._tray.toolTip()))  # 占位保持引用
+        monitor.captchaRequired.connect(self._on_captcha_required)
         crash.UiHolder.window = self
 
         # 关机/注销: 系统发起会话结束时必须放行关闭, 否则托盘常驻会拖住关机
@@ -1654,6 +1663,17 @@ class MainWindow(QMainWindow):
     def _open_portal_page(self) -> None:
         """在浏览器打开校园网认证登录页。"""
         QDesktopServices.openUrl(QUrl(self._config.base_url))
+
+    def _on_captcha_required(self) -> None:
+        """门户要求验证码: 弹窗输入(同时推系统通知提醒远程用户)。"""
+        from .captcha import CaptchaDialog
+        self.show_normal()
+        dlg = CaptchaDialog(self._config, self)
+        dlg.submitted.connect(self._submit_captcha)
+        dlg.exec()
+
+    def _submit_captcha(self, code: str, cookie: str) -> None:
+        self._monitor.login_with_captcha(code, cookie)
 
     def _run_diagnosis(self) -> None:
         """一键网络自诊断: 后台执行, 结果弹窗并可复制。"""
