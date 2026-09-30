@@ -18,7 +18,7 @@ from zju_autologin.wizard import SetupWizard  # noqa: E402
 def main() -> int:
     page = sys.argv[1] if len(sys.argv) > 1 else "welcome"
     app = QApplication(sys.argv)
-    config = Config()
+    config = Config(os.environ.get("ZJU_RENDER_CFG")) if os.environ.get("ZJU_RENDER_CFG") else Config()
     config.data["username"] = ""
     SetupWizard._start_detect = lambda self: None  # 防止真实检测写入真实账号
     wizard = SetupWizard(config)

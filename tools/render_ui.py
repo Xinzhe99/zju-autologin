@@ -36,7 +36,7 @@ SCENARIOS = {
 def main() -> int:
     scenario = sys.argv[1] if len(sys.argv) > 1 else "online"
     app = QApplication(sys.argv)
-    config = Config()
+    config = Config(os.environ.get("ZJU_RENDER_CFG")) if os.environ.get("ZJU_RENDER_CFG") else Config()
     monitor = Monitor(config)
     win = MainWindow(config, monitor)
     win.show()
