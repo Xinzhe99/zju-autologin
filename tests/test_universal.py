@@ -96,3 +96,5 @@ def test_wizard_school_page_exists(tmp_path):
     wz._probe_school = lambda: None
     wz._school_combo.setCurrentIndex(1)
     assert "zju.edu.cn" in wz._school_url.text()
+    if wz._detect_thread is not None and wz._detect_thread.isRunning():
+        wz._detect_thread.wait(6000)

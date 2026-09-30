@@ -429,6 +429,12 @@ class SetupWizard(QDialog):
         self._btn_back.setText(tr("wiz.prev"))
         self._update_nav()
 
+    def closeEvent(self, event) -> None:  # noqa: N802
+        # 进程退出兜底: 检测线程在飞时等待收尾(Qt 对运行中线程的销毁会 FailFast)
+        if self._detect_thread is not None and self._detect_thread.isRunning():
+            self._detect_thread.wait(6000)
+        super().closeEvent(event)
+
     def done(self, result: int) -> None:  # noqa: N802
         # 取消向导时回滚界面语言，避免与未保存的配置不一致
         if result != QDialog.DialogCode.Accepted:
