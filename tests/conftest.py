@@ -33,3 +33,15 @@ def _stub_keyring(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "keyring", fake)
     yield store
+
+
+def _gui_headless_abort() -> bool:
+    """macOS 无窗口环境下构造 QWidget 会 Abort(Fatal), 提前识别。"""
+    import sys
+    if sys.platform != "darwin":
+        return False
+    import os
+    return not os.environ.get("DISPLAY") and not os.environ.get("ALLOW_MAC_GUI_TESTS")
+
+
+GUI_CAPABLE = not _gui_headless_abort()

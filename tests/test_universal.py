@@ -1,3 +1,4 @@
+import pytest
 """v1.22.0 通用化测试: 门户发现 / 学校页 / 验证码探测 / domain 回读。"""
 
 import sys
@@ -81,6 +82,9 @@ def test_get_status_includes_domain():
 
 
 def test_wizard_school_page_exists(tmp_path):
+    import sys
+    if sys.platform == "darwin":
+        pytest.skip("macOS headless GUI")
     from PyQt6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     from zju_autologin.config import Config

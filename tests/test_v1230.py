@@ -1,3 +1,4 @@
+import pytest
 """v1.23.0 测试: 验证码流程 / DNS 兜底 / 叙事回放 / 兼容性矩阵。"""
 
 import json
@@ -39,6 +40,9 @@ def test_login_accepts_captcha_tuple():
 
 
 def test_captcha_dialog_signal(tmp_path):
+    import sys
+    if sys.platform == "darwin":
+        pytest.skip("macOS headless GUI")
     from PyQt6.QtWidgets import QApplication, QLineEdit
     app = QApplication.instance() or QApplication([])
     from zju_autologin.captcha import CaptchaDialog

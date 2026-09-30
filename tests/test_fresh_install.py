@@ -19,6 +19,9 @@ def test_install_session_reads_marker(tmp_path, monkeypatch):
 
 
 def test_wizard_allows_blank_password_when_saved(tmp_path):
+    import sys as _s
+    if _s.platform == "darwin":
+        pytest.skip("macOS runner 无窗口服务, QPixmap 初始化会 Abort")
     from PyQt6.QtWidgets import QApplication
     QApplication.instance() or QApplication([])
     from zju_autologin.wizard import SetupWizard
