@@ -18,10 +18,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
         run: |
           pip install -r requirements.txt
           pip install pytest
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pip install pytest
+          # 核心协议/CLI 层零依赖; macOS runner 无 Qt 运行库,
+          # GUI 测试通过 importorskip 自动跳过, 验证跨平台核心
+          pip install PyQt6 PyQt6-Qt6 || true
 
       - name: Run tests
         run: python -m pytest tests/ -q
