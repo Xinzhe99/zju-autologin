@@ -1,7 +1,6 @@
 import pytest
 """v1.23.0 测试: 验证码流程 / DNS 兜底 / 叙事回放 / 兼容性矩阵。"""
 
-import json
 from unittest.mock import patch
 
 from PyQt6.QtWidgets import QDialog
@@ -23,7 +22,6 @@ def test_fetch_captcha_parses_image(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    import http.cookiejar
     monkeypatch.setattr(S.urllib.request, "build_opener",
                         lambda *a, **k: type("O", (), {"open": lambda s, r, timeout: Resp()})())
     out = c.fetch_captcha()
@@ -32,9 +30,7 @@ def test_fetch_captcha_parses_image(monkeypatch):
 
 def test_login_accepts_captcha_tuple():
     """login(_captcha=...) 不改变无验证码路径(回归保护)。"""
-    c = S.SrunClient()
-    calls = {}
-    real = c.login
+    S.SrunClient()
     # 仅验证签名可调(网络由其他测试覆盖)
     assert True
 
@@ -44,10 +40,10 @@ def test_captcha_dialog_signal(tmp_path):
     if sys.platform == "darwin":
         pytest.skip("macOS headless GUI")
     from PyQt6.QtWidgets import QApplication, QLineEdit
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     from zju_autologin.captcha import CaptchaDialog
     from zju_autologin.config import Config
-    cfg = Config(str(tmp_path / "c.json"))
+    Config(str(tmp_path / "c.json"))
     got = []
     # 不走 __init__(会启动真实网络线程取图), 直接搭最小部件验证信号链
     dlg = CaptchaDialog.__new__(CaptchaDialog)
