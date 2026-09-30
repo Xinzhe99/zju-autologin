@@ -63,6 +63,8 @@ _DEFAULTS = {
     "battery_mode": True,
     # 设备数超限(E2620)时自动踢掉最旧的其他设备并重登
     "auto_kick": False,
+    # 最近一次已确认的安装会话(安装器写入 .install-session, 强制新装弹引导一次)
+    "install_session": "",
 }
 
 

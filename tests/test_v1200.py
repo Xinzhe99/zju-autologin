@@ -2,7 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
 
 import zju_autologin.monitor as M
 from zju_autologin.config import Config

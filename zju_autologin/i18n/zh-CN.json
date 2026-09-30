@@ -288,5 +288,6 @@
   "log.net_changed": "网络环境变化，立即检测…",
   "log.autokick": "设备超限，已自动踢掉最旧设备 {ip}（上线于 {since}），重登中…",
   "chk.auto_kick": "设备超限时自动踢最旧设备",
-  "btn.diagnose": "网络诊断"
+  "btn.diagnose": "网络诊断",
+  "wiz.pwd_keep_ph": "已保存——留空则保持不变"
 }

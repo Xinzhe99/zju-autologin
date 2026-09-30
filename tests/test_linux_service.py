@@ -1,9 +1,6 @@
 """Linux systemd 保活的单元生成与 CLI 参数测试（不触真实 systemd）。"""
 
-import stat
 import sys
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 

@@ -288,5 +288,6 @@
   "log.net_changed": "Network changed; checking immediately…",
   "log.autokick": "Device limit: auto-kicked oldest device {ip} (since {since}), re-logging in…",
   "chk.auto_kick": "Auto-kick oldest device on limit",
-  "btn.diagnose": "Diagnose"
+  "btn.diagnose": "Diagnose",
+  "wiz.pwd_keep_ph": "Saved — leave blank to keep"
 }

@@ -1,8 +1,6 @@
 """Linux 桌面覆盖测试: XDG 自启 / GUI 入口 / pkexec 提权脚本（mock, 不触真实系统）。"""
 
 import sys
-from pathlib import Path
-from unittest.mock import patch
 
 import zju_autologin.autostart as autostart
 import zju_autologin.service as service

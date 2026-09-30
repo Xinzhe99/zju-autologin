@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from zju_autologin.config import Config
-from zju_autologin.monitor import MonitorWorker, probe_internet  # noqa: E402
+from zju_autologin.monitor import MonitorWorker  # noqa: E402
 
 pytest.importorskip("PyQt6.QtCore", reason="需要 PyQt6")
 
@@ -23,6 +23,7 @@ pytest.importorskip("PyQt6.QtCore", reason="需要 PyQt6")
 def make_worker(tmp_path, **cfg_overrides) -> MonitorWorker:
     cfg = Config(path=str(tmp_path / "cfg.json"))
     cfg.username = "3230104321"
+    cfg.set_password("test-pass")  # 显式凭据: 测试自持, 绝不依赖环境 keyring
     cfg.data["notify_provider"] = "none"  # 测试不发真实推送
     for key, value in cfg_overrides.items():
         cfg.data[key] = value
@@ -67,6 +68,7 @@ def test_no_campus_on_portal_error(tmp_path):
 def test_need_config_without_credentials(tmp_path):
     worker, cfg = make_worker(tmp_path)
     cfg.username = ""
+    cfg.data["password_backend"] = "none"
     with patch.object(MonitorWorker, "_client") as mc:
         mc.return_value.get_status.return_value = dict(OFFLINE)
         info = run_check(worker)
@@ -186,7 +188,7 @@ def test_notify_pushes_after_threshold_and_resets(tmp_path):
 def test_traffic_alert_monthly_once(tmp_path):
     worker, cfg = make_worker(tmp_path, traffic_limit_gb=10)
     sent = []
-    with patch.object(MonitorWorker, "_client") as mc, \
+    with patch.object(MonitorWorker, "_client"), \
          patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b, **kw: sent.append(t) or (True, "")):
         worker._check_traffic_limit(20 * 1024 ** 3)
         worker._check_traffic_limit(21 * 1024 ** 3)  # 同月不再推

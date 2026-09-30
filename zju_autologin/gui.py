@@ -22,6 +22,19 @@ from zju_autologin.ui import MainWindow
 from zju_autologin.wizard import SetupWizard
 
 
+def _install_session() -> str:
+    """安装版目录下的 .install-session 内容(安装器每次安装写入); 便携/源码为空。"""
+    if not getattr(sys, "frozen", False):
+        return ""
+    try:
+        from pathlib import Path
+
+        marker = Path(sys.executable).parent / ".install-session"
+        return marker.read_text(encoding="ascii", errors="replace").strip()
+    except OSError:
+        return ""
+
+
 def main() -> int:
     crash.install()  # 全局异常钩子：写日志 + 托盘提示，避免无声退出
     if len(sys.argv) > 1 and sys.argv[1] in ("watch", "--watch"):
@@ -57,9 +70,17 @@ def main() -> int:
     config = Config()
     i18n.set_lang(config.language)
 
-    # 首次使用或凭据不全 → 引导向导（含在线账号自动检测）
-    # 密码缺失(重装/清理)时同样进入向导, 向导会带出账号并要求补一次密码
-    if not config.username or not config.get_password():
+    # 新安装会话检测: 安装器每次安装写入 .install-session 标记,
+    # 首启发现未确认过的新会话 → 强制弹一次引导(覆盖升级也弹, 符合
+    # "新装必见引导"的设计; 便携/源码无标记, 行为不变)
+    session = _install_session()
+    fresh_install = bool(session) and session != config.install_session
+    if fresh_install:
+        config.data["install_session"] = session  # 先记 seen, 取消也不纠缠
+        config.save()
+
+    # 首次使用、凭据不全或新安装会话 → 引导向导（含在线账号自动检测）
+    if not config.username or not config.get_password() or fresh_install:
         wizard = SetupWizard(config)
         wizard.exec()
         i18n.set_lang(config.language)

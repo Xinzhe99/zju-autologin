@@ -46,6 +46,7 @@ class SetupWizard(QDialog):
     def __init__(self, config: Config) -> None:
         super().__init__()
         self._config = config
+        self._has_saved_password = bool(config.get_password())  # 构建页面前就绪(占位符用)
         self._initial_lang = config.language
         self._detect_thread: _DetectThread | None = None
 
@@ -137,7 +138,8 @@ class SetupWizard(QDialog):
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
         self._edit_pwd = QLineEdit()
         self._edit_pwd.setEchoMode(QLineEdit.EchoMode.Password)
-        self._edit_pwd.setPlaceholderText(tr("ph.password"))
+        self._edit_pwd.setPlaceholderText(
+            tr("wiz.pwd_keep_ph") if self._has_saved_password else tr("ph.password"))
 
         pwd_row = QHBoxLayout()
         self._eye = QToolButton()
@@ -213,7 +215,8 @@ class SetupWizard(QDialog):
 
     def _go_next(self) -> None:
         idx = self._stack.currentIndex()
-        if idx == 1 and (not self._edit_user.text().strip() or not self._edit_pwd.text()):
+        pwd_missing = not self._edit_pwd.text() and not self._has_saved_password
+        if idx == 1 and (not self._edit_user.text().strip() or pwd_missing):
             self._account_error.setText(tr("wiz.error_need"))
             self._account_error.show()
             return

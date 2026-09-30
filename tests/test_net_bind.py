@@ -1,7 +1,6 @@
 """绑定源地址连接的管道测试：本地 HTTP 服务器 + 127.0.0.1 源绑定。"""
 
 import http.server
-import socket
 import threading
 
 from zju_autologin.net import _BoundHTTPConnection, bound_opener, candidate_source_ips
@@ -47,7 +46,6 @@ def test_bound_opener_constructs():
 
 
 def test_candidates_exclude_loopback_and_fakeip():
-    import socket as sockmod
     ips = candidate_source_ips()
     for ip in ips:
         assert not ip.startswith("127.") and not ip.startswith("198.18.")
