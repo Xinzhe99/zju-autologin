@@ -529,6 +529,7 @@ class Monitor(QObject):
     statusChanged = pyqtSignal(dict)
     logLine = pyqtSignal(str)
     updateAvailable = pyqtSignal(str, str)
+    captchaRequired = pyqtSignal()
 
     checkRequested = pyqtSignal()
     loginRequested = pyqtSignal()
@@ -547,6 +548,7 @@ class Monitor(QObject):
         self._worker.statusChanged.connect(self.statusChanged)
         self._worker.logLine.connect(self.logLine)
         self._worker.updateAvailable.connect(self.updateAvailable)
+        self._worker.captchaRequired.connect(self.captchaRequired)
 
         self.checkRequested.connect(self._worker.check_manual)
         self.loginRequested.connect(self._worker.login_now)
