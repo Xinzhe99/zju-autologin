@@ -26,7 +26,7 @@ ZJU's campus network (wired + ZJUWLAN) uses a Srun portal that enforces a **mand
 
 ## Install
 
-Grab a package from [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) (built by GitHub Actions):
+Grab a package from [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) (built by GitHub Actions). Slow in mainland China? Prefix the URL with `https://gh-proxy.com/` to accelerate — e.g. `https://gh-proxy.com/https://github.com/.../ZJUAutoLogin-windows-setup.exe`.
 
 | Platform | Installer | Portable |
 | --- | --- | --- |

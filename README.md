@@ -47,7 +47,17 @@
 
 ## 下载安装
 
-到 [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 下载最新版（由 GitHub Actions 自动构建）：
+到 [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 下载最新版（由 GitHub Actions 自动构建）。
+
+**国内下载慢？** 在下载链接前加代理前缀即可加速（实测 ~1.5 MB/s）：
+
+```
+https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
+```
+
+或直接复制改好的最新版直链：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/ZJUAutoLogin-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/ZJUAutoLogin-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/ZJUAutoLogin-macos.dmg)
+
+> 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
 | 平台 | 安装版（推荐） | 便携版 |
 | --- | --- | --- |
@@ -106,7 +116,7 @@
 
 ```bash
 # 安装
-pip install zju-autologin          # PyPI（推荐）
+pip install zju-autologin          # PyPI（推荐；国内慢用: pip install zju-autologin -i https://pypi.tuna.tsinghua.edu.cn/simple）
 # pip install git+https://github.com/Xinzhe99/zju-autologin   # 从 GitHub 直装最新
 
 # 一行启用：装 systemd 服务 + 写凭据(root:600) + 立即启动
