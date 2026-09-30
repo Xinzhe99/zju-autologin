@@ -50,6 +50,7 @@
 | 平台 | 安装版（推荐） | 便携版 |
 | --- | --- | --- |
 | Windows | `ZJUAutoLogin-*-windows-setup.exe` | `ZJUAutoLogin-*-windows-portable.zip` |
+| Windows 仅保活（8MB） | — | `zju-autologin-windows-cli.exe` |
 | macOS | `ZJUAutoLogin-*-macos.dmg` | `ZJUAutoLogin-*-macos-portable.zip` |
 
 - Windows 安装包按用户安装（无需管理员权限），可选创建桌面图标与开机自启
@@ -103,7 +104,7 @@
 - ✅ **更新检查**：发现新版本托盘提醒，Windows 版一键下载（校验 SHA256）并安装
 - ✅ **多语言**：简体中文 / English，跟随系统语言，可随时切换；深色模式跟随系统
 - ✅ **CLI 模式**：无界面运行，可配合任务计划或 SSH 使用
-- 其他：流量/套餐展示与月度超额提醒、定时主动重登、网络事件统计、一键复制诊断、配置导出/导入、笔记本电池降频、崩溃自报告、多校门户接入向导、托盘快速开关、打开登录页
+- 其他：流量/套餐展示与月度超额提醒、定时主动重登、网络事件统计（掉线回放）、一键复制诊断、配置导出/导入、笔记本电池降频、崩溃自报告+看护自愈、多校门户接入向导、托盘快速开关、打开登录页、门户新装会话强制引导
 
 
 ## Linux / 嵌入式设备（一行命令启用）
@@ -211,9 +212,11 @@ GET /cgi-bin/rad_user_info
 **命令行模式**（可配合任务计划 / SSH；系统级保活任务即以 `watch` 方式运行）：
 
 ```bash
-python cli.py check     # 查询当前在线状态
-python cli.py login     # 立即登录一次
-python cli.py watch 30  # 常驻守护（每 30 秒检测）
+zju-autologin check     # 查询当前在线状态
+zju-autologin login     # 立即登录一次
+zju-autologin watch 30  # 常驻守护（每 30 秒检测）
+zju-autologin diagnose  # 一键网络自诊断
+zju-autologin serve     # 无头设备 Web 配置页（仅 127.0.0.1，浏览器改配置）
 ```
 
 **代理/VPN 用户**：门户认证始终直连（不走代理），不受 Clash 等工具影响；HTTPS 被掐断时自动降级 HTTP 重试，瞬断自动快速重试。外网探测 / 更新检查 / 消息推送的路由可在 设置 → 高级选项 → 网络代理 中选择（跟随系统 / 强制直连 / 自定义地址）。
