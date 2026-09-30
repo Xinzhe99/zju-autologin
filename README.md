@@ -210,7 +210,13 @@ python cli.py watch 30  # 常驻守护（每 30 秒检测）
 
 每个渠道如何获取 Key/Webhook、每项该填什么，见 **[通知渠道配置指南](docs/notifications.md)**。
 
-**其他深澜高校（通用工具）**：本项目协议为标准深澜（Srun）实现，适用于所有 srun 高校。接入向导内置**社区共建的门户预设**（[portals.json](zju_autologin/portals.json)，欢迎为你的学校提 PR 一行接入）；也可设置 → 高级选项 → 接入其他高校门户，填地址自动探测 ac_id。完整协议规范见 **[docs/srun-protocol.md](docs/srun-protocol.md)**（任何语言可据此实现）。
+**其他深澜高校（通用工具）**：本项目协议为标准深澜（Srun）实现，适用于所有 srun 高校。引导向导内置**学校识别页**（三层漏斗）：
+
+1. **零输入自动识别**——连上未认证的校园网后打开向导，自动捕获 captive portal 重定向拿到门户地址 + ac_id，直接下一步（约 80% 深澜学校无需任何配置）
+2. **预设选择**——社区共建的 [portals.json](zju_autologin/portals.json) 高校列表（欢迎为你的学校提 PR 一行）
+3. **手动粘贴**——浏览器登录页网址贴入，一键探测（解析 ac_id + 实测 challenge + **验证码预检**）
+
+探测成功即提示接入就绪；贵校若开启登录验证码会明确告知。首次登录后自动回读运营商后缀（@cmcc 等下次免填）。完整协议规范见 **[docs/srun-protocol.md](docs/srun-protocol.md)**（任何语言可据此实现）。
 
 ## 配置与密码存储
 

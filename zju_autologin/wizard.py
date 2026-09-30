@@ -35,11 +35,15 @@ class _DetectThread(QThread):
     detected = pyqtSignal(dict)
 
     def run(self) -> None:
+        # 同时做零输入门户发现: 未认证时 captive 重定向能拿到门户地址+ac_id
+        discovered = SrunClient.discover_portal(timeout=3.0)
         try:
-            self.detected.emit(SrunClient(timeout=3.0).get_status())
-        except Exception as exc:  # noqa: BLE001 - 超时/网络栈异常也要发信号, 否则欢迎页永远停在「正在检测…」
-            self.detected.emit({"portal_ok": False, "online": False, "username": "",
-                                "ip": "", "raw": str(exc)})
+            status = SrunClient(timeout=3.0).get_status()
+        except Exception as exc:  # noqa: BLE001 - 超时也要发信号, 否则欢迎页永远停在「正在检测…」
+            status = {"portal_ok": False, "online": False, "username": "",
+                      "ip": "", "raw": str(exc)}
+        status["discovered_portal"] = discovered
+        self.detected.emit(status)
 
 
 class SetupWizard(QDialog):
@@ -57,6 +61,7 @@ class SetupWizard(QDialog):
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_welcome_page())
+        self._stack.addWidget(self._build_school_page())
         self._stack.addWidget(self._build_account_page())
         self._stack.addWidget(self._build_done_page())
 
@@ -123,6 +128,112 @@ class SetupWizard(QDialog):
         lay.addWidget(self._detect_label)
         lay.addStretch(1)
         return page
+
+    def _build_school_page(self) -> QWidget:
+        """学校识别页: 三层漏斗(自动识别 > 预设选择 > 手动粘贴)。"""
+        from .portals import load_portals
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setSpacing(10)
+        self._school_title = QLabel()
+        self._school_title.setObjectName("cardTitle")
+        lay.addWidget(self._school_title)
+
+        # 第 1 层: 自动识别状态
+        self._school_auto = QLabel()
+        self._school_auto.setObjectName("statusDetail")
+        self._school_auto.setWordWrap(True)
+        lay.addWidget(self._school_auto)
+
+        # 第 2 层: 预设下拉
+        self._school_combo = QComboBox()
+        self._school_combo.addItem(tr("school.custom"), "")
+        for p in load_portals():
+            self._school_combo.addItem(p.get("name", "?"), p)
+        self._school_combo.currentIndexChanged.connect(self._on_school_preset)
+        self._school_combo_lbl = QLabel()
+        self._school_combo_lbl.setObjectName("fieldKey")
+        lay.addWidget(self._school_combo_lbl)
+        lay.addWidget(self._school_combo)
+
+        # 第 3 层: 手动粘贴
+        self._school_url_lbl = QLabel()
+        self._school_url_lbl.setObjectName("fieldKey")
+        lay.addWidget(self._school_url_lbl)
+        self._school_url = QLineEdit()
+        self._school_url.setPlaceholderText("https://portal.xxx.edu.cn")
+        lay.addWidget(self._school_url)
+        self._btn_school_probe = QPushButton()
+        self._btn_school_probe.setObjectName("secondary")
+        self._btn_school_probe.clicked.connect(self._probe_school)
+        self._school_probe_result = QLabel()
+        self._school_probe_result.setObjectName("statusDetail")
+        self._school_probe_result.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(self._btn_school_probe)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(self._school_probe_result)
+        lay.addStretch(1)
+        return page
+
+    def _on_school_preset(self) -> None:
+        data = self._school_combo.currentData()
+        if data:
+            self._school_url.setText(data.get("base_url", ""))
+            self._probe_school()
+
+    def _probe_school(self) -> None:
+        """探测手动粘贴/预设的门户: ac_id 自动解析 + challenge 实测 + 验证码预检。"""
+        url = self._school_url.text().strip().rstrip("/")
+        if not url.startswith("http"):
+            self._school_probe_result.setText(tr("school.url_invalid"))
+            return
+        self._btn_school_probe.setEnabled(False)
+        self._school_probe_result.setText(tr("school.probing"))
+
+        def work():
+            client = SrunClient(base_url=url, timeout=6.0)
+            probe = client.probe_portal()
+            probe["captcha"] = client.check_captcha() if probe.get("ok") else False
+            return probe
+
+        self._probe_thread = _DetectThread.__new__(_DetectThread)  # 复用线程壳
+        from PyQt6.QtCore import QThread as _QT
+        self._probe_thread = _QT(self)
+        # 用独立轻量线程执行
+        class _T(_QT):
+            done = pyqtSignal(object)
+            def run(self_inner):
+                try:
+                    self_inner.done.emit(work())
+                except Exception as exc:  # noqa: BLE001
+                    self_inner.done.emit(exc)
+        self._probe_thread = _T(self)
+        self._probe_thread.done.connect(self._probe_done)
+        self._probe_thread.start()
+
+    def _probe_done(self, result) -> None:
+        self._btn_school_probe.setEnabled(True)
+        if isinstance(result, Exception):
+            self._school_probe_result.setText(tr("school.probe_fail", msg=str(result)[:80]))
+            return
+        if result.get("ok"):
+            self._config.data["base_url"] = self._school_url.text().strip().rstrip("/")
+            self._config.data["ac_id"] = result.get("acid") or "auto"
+            if result.get("captcha"):
+                self._school_probe_result.setText(
+                    tr("school.probe_ok_captcha", acid=result.get("acid", "?")))
+            else:
+                self._school_probe_result.setText(
+                    tr("school.probe_ok", acid=result.get("acid", "?")))
+        else:
+            self._school_probe_result.setText(tr("school.probe_fail",
+                                                 msg=result.get("msg", "?")))
+        if result.get("ok") and "zju.edu.cn" not in self._school_url.text():
+            self._school_probe_result.setText(
+                self._school_probe_result.text() + "  " + tr("school.contribute"))
 
     def _build_account_page(self) -> QWidget:
         page = QWidget()
@@ -254,6 +365,22 @@ class SetupWizard(QDialog):
         self._detect_thread.start()
 
     def _on_detected(self, status: dict) -> None:
+        # 零输入门户识别成功(未认证被重定向): 学校页直通, 自动填 base_url/ac_id
+        disc = status.get("discovered_portal") or {}
+        if disc.get("base_url"):
+            if disc["base_url"].rstrip("/") != self._config.base_url.rstrip("/"):
+                self._config.data["base_url"] = disc["base_url"]
+                if disc.get("ac_id"):
+                    self._config.data["ac_id"] = disc["ac_id"]
+                self._school_auto.setText(tr("school.auto_found", url=disc["base_url"],
+                                             ac_id=disc.get("ac_id") or "auto"))
+                self._school_url.setText(disc["base_url"])
+            else:
+                self._school_auto.setText(tr("school.auto_default"))
+        elif status.get("portal_ok"):
+            self._school_auto.setText(tr("school.auto_default"))
+        else:
+            self._school_auto.setText(tr("school.auto_offline"))
         if status.get("online") and status.get("username"):
             if not self._edit_user.text().strip():
                 self._edit_user.setText(status["username"])
@@ -290,6 +417,11 @@ class SetupWizard(QDialog):
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
         self._edit_pwd.setPlaceholderText(tr("ph.password"))
         self._pwd_note.setText(tr("wiz.pwd_note"))
+        self._school_title.setText(tr("school.title"))
+        self._school_combo_lbl.setText(tr("school.preset"))
+        self._school_url_lbl.setText(tr("school.url"))
+        self._btn_school_probe.setText(tr("school.probe"))
+        self._school_combo.setItemText(0, tr("school.custom"))
         self._account_error.setText(self._account_error.text() and tr("wiz.error_need") or "")
         self._chk_boot.setText(tr("chk.autostart"))
         self._boot_hint.setText(tr("wiz.autostart_hint"))

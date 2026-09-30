@@ -390,6 +390,19 @@ class MonitorWorker(QObject):
                 status = client.get_status()
             except SrunError:
                 status = {}
+            # 回读会话 domain: 运营商用户首次登录后自动补全后缀(下次免填)
+            if status.get("online") and status.get("domain", "") and                     not self._config.domain:
+                try:
+                    from .srun import SrunClient as _SC
+                    rich = _SC(base_url=self._config.base_url,
+                               ac_id=self._config.ac_id).get_status()
+                    sess_domain = rich.get("domain") if isinstance(rich, dict) else ""
+                except Exception:  # noqa: BLE001
+                    sess_domain = ""
+                if sess_domain:
+                    self._config.domain = sess_domain
+                    self._config.save()
+                    self.log(tr("log.domain_backfilled", domain=sess_domain))
             self._emit(
                 "online",
                 username=status.get("username") or result["username"],

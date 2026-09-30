@@ -385,6 +385,7 @@ class SrunClient:
                         "username": str(data.get("user_name") or ""),
                         "ip": str(data.get("user_ip") or data.get("online_ip") or ""),
                         "login_time": _safe_localtime(login_ts),
+                        "domain": str(data.get("domain") or ""),
                         "billing": str(data.get("billing_name") or ""),
                         "all_bytes": _safe_int(data.get("all_bytes")),
                         "latency_ms": latency,
@@ -472,6 +473,16 @@ class SrunClient:
         """从门户首页 CONFIG 里读取服务端识别到的本机 IP（最可靠）。"""
         return self.parse_portal_config().get("ip", "")
 
+    def check_captcha(self) -> bool:
+        """探测门户是否开启登录验证码（开启则无头登录不可用, 需明确告知用户）。"""
+        try:
+            resp = self._jsonp("/v2/srun_portal_captcha_image_info",
+                               {"username": "probe", "ip": ""})
+            data = resp if isinstance(resp, dict) else {}
+            return str(data.get("enable_captcha") or data.get("captcha") or "") in ("1", "true", "True")
+        except Exception:  # noqa: BLE001 - 接口不存在(多数部署)视为无验证码
+            return False
+
     def probe_portal(self, username: str = "probe", ip: str = "") -> dict:
         """探测当前门户可用性（接入向导用）：CONFIG 解析 + challenge 实测。"""
         try:
@@ -500,6 +511,39 @@ class SrunClient:
         ac_id = self.detect_portal_ac_id()
         self._resolved_ac_id = ac_id or DEFAULT_AC_ID
         return self._resolved_ac_id
+
+    @staticmethod
+    def discover_portal(timeout: float = 4.0) -> dict:
+        """通过 captive portal 重定向发现本网段的深澜门户（零输入识别）。
+
+        未认证时任何 HTTP 请求都会被 302 到登录页; 通用版不预设 base_url,
+        从重定向目标提取门户根地址与 ac_id。只认含 srun 特征的目标,
+        避免把其他认证系统(锐捷/Dr.COM)误当深澜。
+        """
+        probe = "http://www.msftconnecttest.com/redirect"
+        location = ""
+        try:
+            req = urllib.request.Request(probe, headers={"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"})
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+            with opener.open(req, timeout=timeout) as resp:
+                location = resp.headers.get("Location", "")
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location", "") if exc.headers else ""
+        except Exception:  # noqa: BLE001
+            return {}
+        if not location or "http" not in location:
+            return {}
+        split = urllib.parse.urlsplit(location)
+        if not split.scheme.startswith("http"):
+            return {}
+        low = location.lower()
+        if "srun_portal" not in low and "cgi-bin" not in low:
+            return {}
+        base = f"{split.scheme}://{split.netloc}"
+        query = urllib.parse.parse_qs(split.query)
+        ac_id = (query.get("ac_id") or query.get("ac-id") or [""])[0]
+        ip = (query.get("user_ip") or query.get("ip") or [""])[0]
+        return {"base_url": base, "ac_id": str(ac_id), "ip": str(ip), "login_url": location}
 
     def detect_portal_ac_id(self) -> str:
         """访问一个 HTTP 探针，从门户劫持重定向 URL 中解析 ac_id / ip。"""

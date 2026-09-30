@@ -289,5 +289,20 @@
   "log.autokick": "Device limit: auto-kicked oldest device {ip} (since {since}), re-logging in…",
   "chk.auto_kick": "Auto-kick oldest device on limit",
   "btn.diagnose": "Diagnose",
-  "wiz.pwd_keep_ph": "Saved — leave blank to keep"
+  "wiz.pwd_keep_ph": "Saved — leave blank to keep",
+  "school.title": "Choose Your University",
+  "school.preset": "Known universities (community)",
+  "school.custom": "Other (enter portal URL)",
+  "school.url": "Portal URL",
+  "school.probe": "Detect & test",
+  "school.probing": "Detecting (parsing ac_id + testing challenge)…",
+  "school.probe_ok": "✅ Detected: ac_id={acid}, challenge passed — click Next",
+  "school.probe_ok_captcha": "⚠ Detected (ac_id={acid}), but your school enables login CAPTCHA — auto-login may not work",
+  "school.probe_fail": "❌ Detection failed: {msg}. Check the URL and that you are on campus",
+  "school.url_invalid": "Enter a full URL starting with http(s)://",
+  "school.auto_found": "✅ Auto-detected your portal: {url} (ac_id={ac_id}) — just click Next",
+  "school.auto_default": "✅ Using the default portal (ZJU). For another school pick from the list or paste its URL",
+  "school.auto_offline": "Not on campus — pick/fill now, it takes effect once connected",
+  "school.contribute": "📡 Consider contributing your school to portals.json (one-line PR)",
+  "log.domain_backfilled": "ISP suffix {domain} detected and saved"
 }

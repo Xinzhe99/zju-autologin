@@ -289,5 +289,20 @@
   "log.autokick": "设备超限，已自动踢掉最旧设备 {ip}（上线于 {since}），重登中…",
   "chk.auto_kick": "设备超限时自动踢最旧设备",
   "btn.diagnose": "网络诊断",
-  "wiz.pwd_keep_ph": "已保存——留空则保持不变"
+  "wiz.pwd_keep_ph": "已保存——留空则保持不变",
+  "school.title": "选择你的学校",
+  "school.preset": "已知高校（社区共建）",
+  "school.custom": "其他学校（手动填门户地址）",
+  "school.url": "门户地址",
+  "school.probe": "探测并测试",
+  "school.probing": "正在探测（解析 ac_id + 实测 challenge）…",
+  "school.probe_ok": "✅ 探测成功：ac_id={acid}，challenge 通过，可直接下一步",
+  "school.probe_ok_captcha": "⚠ 探测成功（ac_id={acid}），但贵校开启了登录验证码——本工具暂不支持验证码登录，可能无法自动认证",
+  "school.probe_fail": "❌ 探测失败：{msg}。请确认地址正确且已在校园网内",
+  "school.url_invalid": "请输入以 http(s):// 开头的完整地址",
+  "school.auto_found": "✅ 已自动识别你的校园网门户：{url}（ac_id={ac_id}）——直接下一步即可",
+  "school.auto_default": "✅ 使用默认配置的门户（浙大）。其他学校请从下拉选择或粘贴门户地址",
+  "school.auto_offline": "未连接校园网——可先选学校/填地址，连上后自动生效",
+  "school.contribute": "📡 欢迎把你的学校贡献到预设库（portals.json 提 PR 一行）",
+  "log.domain_backfilled": "检测到运营商服务后缀 {domain}，已自动保存（下次免填）"
 }
