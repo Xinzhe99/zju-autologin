@@ -1,5 +1,7 @@
 """新安装会话强制引导 + 向导已存密码可留空。"""
 
+import pytest
+
 
 import zju_autologin.gui as G
 from zju_autologin.config import Config

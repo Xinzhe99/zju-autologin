@@ -1,4 +1,3 @@
-import pytest
 """v1.22.0 通用化测试: 门户发现 / 学校页 / 验证码探测 / domain 回读。"""
 
 import sys
