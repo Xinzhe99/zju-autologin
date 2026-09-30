@@ -1420,8 +1420,6 @@ class MainWindow(QMainWindow):
         monitor.statusChanged.connect(self._on_status)
         monitor.logLine.connect(self._append_log)
         monitor.updateAvailable.connect(self._on_update_available)
-        monitor.statusChanged.connect(
-            lambda info: self._tray.setToolTip(self._tray.toolTip()))  # 占位保持引用
         monitor.captchaRequired.connect(self._on_captcha_required)
         crash.UiHolder.window = self
 
