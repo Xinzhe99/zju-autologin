@@ -316,9 +316,10 @@ zju-autologin/
 ```bash
 git clone https://github.com/Xinzhe99/zju-autologin.git
 cd zju-autologin
-pip install -r requirements.txt pytest
-python main.py               # 运行
-python -m pytest tests/ -q   # 测试
+pip install -e ".[dev]"      # 或: pip install -r requirements.txt pytest
+python main.py               # 运行 GUI
+python cli.py check          # 运行 CLI
+python -m pytest tests/ -q   # 测试（113 项）
 build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 ```
 

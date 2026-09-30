@@ -1,4 +1,4 @@
-# ZJU-AutoLogin · Zhejiang University Campus Network Auto-Login
+# ZJU-AutoLogin · Campus Network Auto-Login (Srun)
 
 [![Tests](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml/badge.svg)](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/releases)
