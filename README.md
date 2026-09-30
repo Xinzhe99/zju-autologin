@@ -1,4 +1,4 @@
-# ZJU-AutoLogin · 浙江大学校园网自动登录
+# ZJU-AutoLogin · 校园网自动保活（深澜 Srun 通用）
 
 [![Tests](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml/badge.svg)](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/releases)
@@ -13,7 +13,7 @@
 
 **简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
 
-一个挂在桌面托盘的后台小程序：**自动检测浙江大学校园网认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因为认证过期而失联。
+一个挂在系统托盘的后台小程序：**自动检测校园网（深澜 Srun 门户）认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因认证过期而失联。支持 Windows / macOS / Linux，适用于所有深澜高校——浙江大学为首发验证校，其他学校向导一键接入（见[学校兼容性](#学校兼容性)）。
 
 | 主界面 | 首次引导 |
 | --- | --- |
@@ -25,6 +25,8 @@
 - [下载安装](#下载安装)
 - [快速上手](#快速上手)
 - [功能一览](#功能)
+- [Linux / 嵌入式设备](#linux--嵌入式设备一行命令启用)
+- [学校兼容性](#学校兼容性)
 - [校园网认证机制解析](#校园网认证机制解析)
 - [进阶用法](#进阶用法)
 - [配置与密码存储](#配置与密码存储)
@@ -80,7 +82,7 @@
 
 - 托盘图标即状态（绿=在线 / 红=掉线 / 蓝=检测中 / 灰=无校园网），悬停可看 IP 与本月流量
 - 右键托盘图标：立即检测 / 立即登录 / 打开登录页 / 临时关闭自动登录 / 退出
-- 状态页可看认证账号、IP、上线时间、套餐与本月流量；「运行日志」页可查历史与统计
+- 主窗可看认证账号、IP、上线时间；「日志」按钮打开独立日志窗（含掉线回放与统计）
 
 界面支持简体中文 / English，默认跟随系统语言。
 
@@ -105,7 +107,6 @@
 - ✅ **多语言**：简体中文 / English，跟随系统语言，可随时切换；深色模式跟随系统
 - ✅ **CLI 模式**：无界面运行，可配合任务计划或 SSH 使用
 - 其他：流量/套餐展示与月度超额提醒、定时主动重登、网络事件统计（掉线回放）、一键复制诊断、配置导出/导入、笔记本电池降频、崩溃自报告+看护自愈、多校门户接入向导、托盘快速开关、打开登录页、门户新装会话强制引导
-
 
 ## Linux / 嵌入式设备（一行命令启用）
 
@@ -145,7 +146,7 @@ zju-autologin-gui                     # 启动图形界面（托盘/设置/向�
 
 **OpenWrt / Alpine 路由器（一机保全网）**：从 Releases 下载 `zju-autologin-linux-musl`（musl 静态二进制），用 [tools/install-openwrt.sh](tools/install-openwrt.sh) 一键安装 procd/systemd 服务——路由器级保活，全宿舍/实验室共享不掉线。
 
-**无 Python 的设备**：从 [Releases](releases) 下载静态二进制 `zju-autologin-linux-x86_64` / `-aarch64`（glibc 环境；Alpine/OpenWrt 等 musl 系统请用 pip 路线），`sudo ./zju-autologin-linux-* enable -u 学号` 同样一行启用。
+**无 Python 的设备**：从 [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 下载静态二进制 `zju-autologin-linux-x86_64` / `-aarch64`（glibc 环境；Alpine/OpenWrt 等 musl 系统请用 pip 路线），`sudo ./zju-autologin-linux-* enable -u 学号` 同样一行启用。
 
 **服务机制**：systemd 单元（`/etc/systemd/system/zju-autologin.service`），`Restart=always` 崩溃自动拉起、`After=network-online.target` 等网络就绪、凭据存 `/etc/zju-autologin/config.json`（root:600、base64 混淆，与 Windows SYSTEM 任务/macOS LaunchDaemon 同级）。
 
@@ -269,33 +270,43 @@ zju-autologin serve     # 无头设备 Web 配置页（仅 127.0.0.1，浏览器
 
 ```
 zju-autologin/
-├── main.py                    # GUI 入口
-├── cli.py                     # 命令行入口（check / login / watch）
+├── main.py                    # 开发期入口（等价 zju-autologin-gui）
+├── cli.py                     # 命令行薄壳
+├── pyproject.toml             # 打包元数据（PyPI / console scripts / extras）
 ├── zju_autologin/
-│   ├── srun.py                # 深澜 Srun 协议实现（认证/状态/设备管理/参数探测）
-│   ├── monitor.py             # 后台监控线程（自动重登 + 退避 + 推送 + 事件记录）
+│   ├── gui.py                 # GUI 入口（pip 安装后的 zju-autologin-gui 命令）
+│   ├── cli.py                 # CLI 实现（check/login/watch/enable/disable/status/diagnose/serve）
+│   ├── srun.py                # 深澜协议（认证/状态/设备管理/门户发现/验证码/DNS 兜底）
+│   ├── monitor.py             # 后台监控线程（自动重登/退避/推送/网卡监视/事件记录）
+│   ├── wizard.py              # 首次引导向导（学校识别 + 账号自动检测）
+│   ├── captcha.py             # 验证码输入弹窗（图片 + 换一张）
+│   ├── diag.py                # 一键网络自诊断
+│   ├── narrative.py           # 掉线叙事回放（事件时间线人话化）
+│   ├── webui.py               # 无头设备 Web 配置页（serve，仅 127.0.0.1）
+│   ├── watchdog.py            # GUI 崩溃看护（gui.alive 标记 + 计划任务拉起）
 │   ├── notify.py              # 掉线推送（Bark/Server酱/企业微信/钉钉/飞书/SMTP）
-│   ├── net.py                 # 网络出口选择（门户直连 / 按代理设置路由 / 网卡绑定）
-│   ├── routes.py              # 门户直连路由（绕过 TUN/VPN，需管理员确认）
-│   ├── service.py             # 系统级保活（Windows SYSTEM 计划任务 + ProgramData 配置）
-│   ├── wizard.py              # 首次引导向导（自动检测在线账号）
-│   ├── i18n.py + i18n/        # 多语言模块与翻译文件（zh-CN / en-US）
-│   ├── config.py              # 配置持久化（跨平台路径）+ 系统凭据管理器
-│   ├── autostart.py           # 开机自启（Windows 注册表 / macOS LaunchAgent）
+│   ├── net.py                 # 网络出口（代理路由/网卡绑定/外网探测）
+│   ├── routes.py              # 门户直连路由（绕过 TUN/VPN，Windows）
+│   ├── service.py             # 系统级保活（Win SYSTEM 任务/mac LaunchDaemon/Linux systemd）
+│   ├── autostart.py           # 开机自启（注册表/LaunchAgent/XDG autostart）
+│   ├── portals.py + portals.json  # 社区共建高校预设库（向导下拉）
+│   ├── config.py              # 配置持久化（跨平台路径）+ 凭据管理器
 │   ├── updates.py             # GitHub Releases 更新检查
-│   ├── power.py               # 电源状态（笔记本电池智能降频）
-│   ├── crash.py               # 全局崩溃捕获
-│   ├── ui.py                  # PyQt6 主窗口（侧边栏导航）+ 托盘
-│   └── theme.py               # 极简双主题（Codex 风格，浅/深，自绘控件图标）
-├── .github/workflows/release.yml  # 打 tag 自动构建安装包/便携包并发布 Release
-├── .github/workflows/test.yml     # push/PR 自动跑 pytest
-├── tests/                         # 协议加密基准向量（门户 JS 生成）、状态机、推送渠道测试
-├── README.en.md                   # English readme
-├── CONTRIBUTING.md                # 贡献指南（含新语言接入步骤）
-├── installer.iss              # Inno Setup 安装包脚本（Windows）
-├── resources/                 # 校徽 logo、自绘控件图标
-├── tools/                     # 开发工具（资源生成、JS 交叉验证、UI 截图）
-└── build_exe.bat              # PyInstaller 打包脚本
+│   ├── i18n.py + i18n/        # 多语言（zh-CN / en-US）
+│   ├── power.py               # 电源状态（电池智能降频）
+│   ├── crash.py / runtime.py  # 崩溃捕获 / 单实例锁共享
+│   ├── ui.py                  # PyQt6 界面（紧凑主窗 + 独立设置/日志窗 + 托盘）
+│   └── theme.py               # 浅/深双主题（自绘控件图标）
+├── .github/workflows/release.yml  # 打 tag 自动构建 10 资产（Win/mac/Linux×3/musl/PyPI）
+├── .github/workflows/test.yml     # push/PR 跑 pytest（Windows + macOS matrix）
+├── tests/                         # 113 项测试（含 conftest keyring 隔离）
+├── docs/                          # srun-protocol.md 协议规范 / notifications.md 推送指南
+├── README.*.md                    # 7 语言 readme（en/ja/ko/es/fr/de）
+├── CONTRIBUTING.md                # 贡献指南（含新语言/新学校接入步骤）
+├── installer.iss                  # Inno Setup 安装包脚本（Windows）
+├── resources/                     # 校徽 logo、自绘控件图标
+├── tools/                         # 开发工具（兼容性矩阵/JS 交叉验证/UI 截图/恢复脚本）
+└── build_exe.bat                  # PyInstaller 本地打包脚本
 ```
 
 ## 开发说明
@@ -333,7 +344,7 @@ build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 
 ## 免责声明
 
-本项目仅供浙江大学师生便利性使用，认证协议的实现来源于公开可访问的门户前端代码。请遵守学校《网络安全管理办法》相关规定，勿用于破坏认证体系或他人账号的用途。校徽版权归浙江大学所有，此处仅作标识用途。
+本项目仅供各高校师生便利性使用，认证协议的实现来源于公开可访问的门户前端代码。请遵守所在学校网络安全管理规定，勿用于破坏认证体系或他人账号的用途。校徽版权归浙江大学所有，此处仅作首发校标识用途。
 
 ## License
 
