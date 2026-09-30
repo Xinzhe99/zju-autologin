@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zju-autologin"
-version = "1.24.0"
+version = "1.24.1"
 description = "ZJU campus network (Srun portal) auto-login & keep-alive: CLI + systemd service + PyQt6 GUI"
 readme = "README.md"
 requires-python = ">=3.10"
