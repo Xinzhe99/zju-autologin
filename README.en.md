@@ -1,4 +1,4 @@
-# ZJU-AutoLogin · Campus Network Auto-Login (Srun)
+# ZJU-AutoLogin · Zhejiang University Campus Network Auto-Login
 
 [![Tests](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml/badge.svg)](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/releases)
@@ -12,7 +12,9 @@
 
 [简体中文](README.md) | **English** | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
 
-A tray application that runs in the background: it **watches the campus network (Srun portal) authentication state and re-authenticates automatically with your saved credentials** whenever it drops or expires — so Remote Desktop / SSH sessions never die because of an expired captive-portal login. Works at any Srun university; Zhejiang University is the founding verified school.
+A tray application that runs in the background: it **watches the ZJU campus network authentication state and re-authenticates automatically with your saved credentials** whenever it drops or expires — so Remote Desktop / SSH sessions never die because of an expired captive-portal login.
+
+> Built and maintained for Zhejiang University (net.zju.edu.cn). The protocol follows the Srun standard, so **it may also work at other Srun universities** — the wizard auto-detects yours; feedback and contributions welcome.
 
 | Main window | First-run wizard |
 | --- | --- |
@@ -20,7 +22,7 @@ A tray application that runs in the background: it **watches the campus network 
 
 ## Why
 
-Campus portals (Srun) enforce a **mandatory manual re-login every 14 days** even with silent auth (MacAuth) enabled, and IP changes / reconnects / reboots drop the session too. If that happens while you are away, your remote connection is gone. This tool logs back in for you before you even notice.
+ZJU's campus network (wired + ZJUWLAN) uses a Srun portal that enforces a **mandatory manual re-login every 14 days** even with silent auth (MacAuth) enabled, and IP changes / reconnects / reboots drop the session too. If that happens while you are away, your remote connection is gone. This tool logs back in for you before you even notice.
 
 ## Install
 
@@ -66,7 +68,7 @@ Recommended for remote access: enable **System-level keep-alive** in Settings (a
 - **i18n** — 简体中文 / English, follows the system language; dark mode follows the system
 - CLI: `check | login | watch | enable | disable | status | diagnose | serve`
 
-The full protocol spec (challenge / XXTEA / custom Base64 / SHA1) reusable for any Srun campus in any language: **[docs/srun-protocol.md](docs/srun-protocol.md)**. School compatibility matrix and the community portal list: [portals.json](zju_autologin/portals.json) — one-line PR adds your university.
+The full protocol spec (challenge / XXTEA / custom Base64 / SHA1), reusable in any language: **[docs/srun-protocol.md](docs/srun-protocol.md)**. Community-tested school list: [portals.json](zju_autologin/portals.json) — one-line PR adds your university (unofficial support).
 
 ## Support & Contributing
 

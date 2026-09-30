@@ -1,4 +1,4 @@
-# ZJU-AutoLogin · 校园网自动保活（深澜 Srun 通用）
+# ZJU-AutoLogin · 浙江大学校园网自动登录
 
 [![Tests](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml/badge.svg)](https://github.com/Xinzhe99/zju-autologin/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/Xinzhe99/zju-autologin)](https://github.com/Xinzhe99/zju-autologin/releases)
@@ -13,7 +13,9 @@
 
 **简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md)
 
-一个挂在系统托盘的后台小程序：**自动检测校园网（深澜 Srun 门户）认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因认证过期而失联。支持 Windows / macOS / Linux，适用于所有深澜高校——浙江大学为首发验证校，其他学校向导一键接入（见[学校兼容性](#学校兼容性)）。
+一个挂在系统托盘的后台小程序：**自动检测浙江大学校园网认证状态，掉线/过期后用保存的学号密码自动重新登录**，保证远程桌面、SSH 等连接不会因认证过期而失联。支持 Windows / macOS / Linux。
+
+> 本工具面向浙江大学（net.zju.edu.cn）开发与维护。认证协议基于深澜（Srun）标准实现，**其他使用深澜门户的高校也可能可用**——向导会自动探测你的学校，欢迎反馈与贡献（见[学校兼容性](#学校兼容性)）。
 
 | 主界面 | 首次引导 |
 | --- | --- |
@@ -153,6 +155,8 @@ zju-autologin-gui                     # 启动图形界面（托盘/设置/向�
 ## 学校兼容性
 
 <!-- COMPAT-MATRIX -->
+> 以下为社区实测反馈的学校。你的学校不在列？跑一遍向导探测，成功后欢迎提 PR 加一行。
+
 | 学校 / University | 门户 | 状态 |
 | --- | --- | --- |
 | 浙江大学 / Zhejiang University | `https://net.zju.edu.cn` | ✅ 2026-09 验证 |
@@ -228,9 +232,9 @@ zju-autologin serve     # 无头设备 Web 配置页（仅 127.0.0.1，浏览器
 
 每个渠道如何获取 Key/Webhook、每项该填什么，见 **[通知渠道配置指南](docs/notifications.md)**。
 
-**其他深澜高校（通用工具）**：本项目协议为标准深澜（Srun）实现，适用于所有 srun 高校。引导向导内置**学校识别页**（三层漏斗）：
+**其他深澜高校（非官方支持）**：本项目按浙大环境开发，协议为标准深澜（Srun）实现，理论上其他深澜高校也可能可用（未逐一验证）。引导向导内置**学校识别页**（三层漏斗）：
 
-1. **零输入自动识别**——连上未认证的校园网后打开向导，自动捕获 captive portal 重定向拿到门户地址 + ac_id，直接下一步（约 80% 深澜学校无需任何配置）
+1. **零输入自动识别**——连上未认证的校园网后打开向导，自动捕获 captive portal 重定向拿到门户地址 + ac_id，直接下一步
 2. **预设选择**——社区共建的 [portals.json](zju_autologin/portals.json) 高校列表（欢迎为你的学校提 PR 一行）
 3. **手动粘贴**——浏览器登录页网址贴入，一键探测（解析 ac_id + 实测 challenge + **验证码预检**）
 
@@ -345,7 +349,7 @@ build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 
 ## 免责声明
 
-本项目仅供各高校师生便利性使用，认证协议的实现来源于公开可访问的门户前端代码。请遵守所在学校网络安全管理规定，勿用于破坏认证体系或他人账号的用途。校徽版权归浙江大学所有，此处仅作首发校标识用途。
+本项目为面向浙江大学师生的校园网便利性工具，认证协议的实现来源于公开可访问的门户前端代码。其他深澜高校的使用为非官方支持行为，请自行确认并遵守所在学校网络安全管理规定，勿用于破坏认证体系或他人账号的用途。校徽版权归浙江大学所有，此处仅作标识用途。
 
 ## License
 
