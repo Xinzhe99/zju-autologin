@@ -25,7 +25,7 @@ def test_wizard_allows_blank_password_when_saved(tmp_path):
     if _s.platform == "darwin":
         pytest.skip("macOS runner 无窗口服务, QPixmap 初始化会 Abort")
     from PyQt6.QtWidgets import QApplication
-    _app = QApplication.instance() or QApplication([])
+    _app = _app = QApplication.instance() or QApplication([])
     from zju_autologin.wizard import SetupWizard
     cfg = Config(str(tmp_path / "c.json"))
     cfg.username = "3230104321"

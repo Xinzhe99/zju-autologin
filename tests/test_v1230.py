@@ -40,7 +40,7 @@ def test_captcha_dialog_signal(tmp_path):
     if sys.platform == "darwin":
         pytest.skip("macOS headless GUI")
     from PyQt6.QtWidgets import QApplication, QLineEdit
-    QApplication.instance() or QApplication([])
+    _app = QApplication.instance() or QApplication([])
     from zju_autologin.captcha import CaptchaDialog
     from zju_autologin.config import Config
     Config(str(tmp_path / "c.json"))
