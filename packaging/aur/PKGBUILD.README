@@ -1,0 +1,30 @@
+# Maintainer: Xinzhe Xie <xiexinzheyyy@163.com>
+# AUR PKGBUILD（提交到 AUR: zju-autologin）
+# 流程: 
+#   git clone ssh://aur@aur.archlinux.org/zju-autologin.git
+#   cp PKGBUILD .SRCINFO .git/ && git push
+# Linux 版本指向 PyPI sdist（协议层零依赖, 无需打包二进制）
+
+pkgname=zju-autologin
+pkgver=1.24.1
+pkgrel=1
+pkgdesc="浙江大学校园网（深澜 Srun）自动登录保活工具"
+arch=('any')
+url="https://github.com/Xinzhe99/zju-autologin"
+license=('MIT')
+depends=('python>=3.10')
+makedepends=('python-setuptools')
+optdepends=(
+  'python-pyqt6: GUI (zju-autologin-gui)'
+  'python-keyring: system keyring credential storage'
+)
+source=("$pkgname-$pkgver.tar.gz::https://files.pythonhosted.org/packages/source/z/$pkgname/$pkgname-$pkgver.tar.gz")
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')  # 发版时计算替换
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl ||
+    pip install --root="$pkgdir" --optimize=1 .
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

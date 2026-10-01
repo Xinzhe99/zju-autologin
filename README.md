@@ -304,6 +304,8 @@ build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 
 ## 支持与贡献
 
+📋 [更新日志](CHANGELOG.md) · 🔒 [安全政策](SECURITY.md) · 📜 [行为准则](CODE_OF_CONDUCT.md)
+
 > 💬 建议仓库主人到 Settings → General → Features 开启 **Discussions**（使用问答与学校适配讨论），让 issue 区专注 bug 与 PR。
 
 如果这个工具帮到了你，欢迎点一个 ⭐ Star——是对作者最大的鼓励，也能让更多需要的同学看到：

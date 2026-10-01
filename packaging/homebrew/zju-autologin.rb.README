@@ -1,0 +1,23 @@
+# Homebrew Cask（提交到 Homebrew/homebrew-cask 的模板）
+# 流程: brew tap homebrew/cask → fork homebrew-cask → Casks/z/zju-autologin.rb → PR
+# 每次发新版更新 version / sha256（brew fetch --cask 可算）
+# 注意: 官方 cask 要求 app 已公证(notarized)——本应用未签名，可能被要求进第三方 tap。
+# 备选: 自建 tap 仓库 Xinzhe99/homebrew-zju，放入此文件即可 brew tap 使用。
+
+cask "zju-autologin" do
+  version "1.24.1"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"  # 发版时计算替换
+
+  url "https://github.com/Xinzhe99/zju-autologin/releases/download/v#{version}/ZJUAutoLogin-#{version}-macos.dmg"
+  name "ZJU AutoLogin"
+  desc "浙江大学校园网（深澜 Srun）自动登录保活工具"
+  homepage "https://github.com/Xinzhe99/zju-autologin"
+
+  app "ZJUAutoLogin.app"
+
+  zap trash: [
+    "~/Library/Application Support/ZJUAutoLogin",
+    "/Library/LaunchDaemons/com.zju.autologin.plist",
+    "~/Library/LaunchAgents/com.zju.autologin.plist",
+  ]
+end

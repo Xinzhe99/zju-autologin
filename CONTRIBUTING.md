@@ -44,3 +44,7 @@ python -m pytest tests/ -q   # 测试
 ## 协议参考
 
 深澜 Srun 门户的认证细节（XXTEA + 自定义 base64 + HMAC-MD5 + SHA1 校验链）记录在 [README.md](README.md) 的"校园网认证机制解析"一节。请勿利用本项目做超出校园网自助认证范围的事情。
+
+## 包管理器发布（winget / Homebrew / AUR）
+
+三份 manifest 模板在 [packaging/](packaging/) 目录（含逐步提交指引）。每次发新版后更新版本号与 sha256 再提交到对应社区仓库。Homebrew 注意：官方 cask 要求公证，未签名应用建议自建第三方 tap。
