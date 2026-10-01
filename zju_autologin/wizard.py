@@ -148,9 +148,18 @@ class SetupWizard(QDialog):
 
         # 第 2 层: 预设下拉
         self._school_combo = QComboBox()
-        self._school_combo.addItem(tr("school.custom"), "")
+        # 顺序: 当前配置门户(默认浙大)置顶并默认选中 → 社区预设 → 其他(手动)
+        default_portal = next(
+            (p for p in load_portals()
+             if p.get("base_url", "").rstrip("/") == self._config.base_url.rstrip("/")), None)
+        default_label = default_portal["name"] if default_portal else self._config.base_url.rstrip("/")
+        self._school_combo.addItem(default_label, self._config.base_url)
         for p in load_portals():
+            if p.get("base_url", "").rstrip("/") == self._config.base_url.rstrip("/"):
+                continue  # 已作首项
             self._school_combo.addItem(p.get("name", "?"), p)
+        self._school_combo.addItem(tr("school.custom"), "")
+        self._school_combo.setCurrentIndex(0)  # 默认选中当前门户(浙大)
         self._school_combo.currentIndexChanged.connect(self._on_school_preset)
         self._school_combo_lbl = QLabel()
         self._school_combo_lbl.setObjectName("fieldKey")
@@ -180,6 +189,9 @@ class SetupWizard(QDialog):
 
     def _on_school_preset(self) -> None:
         data = self._school_combo.currentData()
+        if isinstance(data, str):          # 首项(当前/默认门户)
+            self._school_url.setText(data)
+            return                          # 默认项无需探测
         if data:
             self._school_url.setText(data.get("base_url", ""))
             self._probe_school()
@@ -421,7 +433,9 @@ class SetupWizard(QDialog):
         self._school_combo_lbl.setText(tr("school.preset"))
         self._school_url_lbl.setText(tr("school.url"))
         self._btn_school_probe.setText(tr("school.probe"))
-        self._school_combo.setItemText(0, tr("school.custom"))
+        # 首项=默认门户(专名不译), 末项=自定义(需随语言刷新)
+        if self._school_combo.count() > 0:
+            self._school_combo.setItemText(self._school_combo.count() - 1, tr("school.custom"))
         self._account_error.setText(self._account_error.text() and tr("wiz.error_need") or "")
         self._chk_boot.setText(tr("chk.autostart"))
         self._boot_hint.setText(tr("wiz.autostart_hint"))

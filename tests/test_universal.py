@@ -94,7 +94,12 @@ def test_wizard_school_page_exists(tmp_path):
     assert wz._school_combo.count() >= 2   # 自定义 + 浙大种子
     # 预设选择联动(屏蔽真实网络探测线程, 防阻塞解释器退出)
     wz._probe_school = lambda: None
+    # 默认顺序: 首项=浙大(默认选中), 末项=自定义
+    assert wz._school_combo.currentText().startswith("浙江大学")
+    assert wz._school_combo.currentIndex() == 0
+    assert wz._school_combo.itemData(0) == "https://net.zju.edu.cn"
+    assert wz._school_combo.itemText(wz._school_combo.count() - 1).startswith("其他学校")
     wz._school_combo.setCurrentIndex(1)
-    assert "zju.edu.cn" in wz._school_url.text()
+    assert wz._school_url.text() == ""
     if wz._detect_thread is not None and wz._detect_thread.isRunning():
         wz._detect_thread.wait(6000)
