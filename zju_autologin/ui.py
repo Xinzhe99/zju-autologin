@@ -853,15 +853,15 @@ class SettingsWindow(QDialog):
         ddns_grid.setHorizontalSpacing(10)
         ddns_grid.setVerticalSpacing(8)
         self._combo_ddns = QComboBox()
-        for pid, name in (("off", tr("ddns.off")), ("cloudflare", tr("ddns.cloudflare")), ("aliyun", tr("ddns.aliyun"))):
+        for pid, name in (("off", tr("ddns.off")), ("duckdns", tr("ddns.duckdns")), ("cloudflare", tr("ddns.cloudflare")), ("aliyun", tr("ddns.aliyun"))):
             self._combo_ddns.addItem(name, pid)
         self._edit_ddns_domain = QLineEdit()
-        self._edit_ddns_domain.setPlaceholderText(tr("ddns.domain_ph"))
+        self._edit_ddns_domain.setPlaceholderText(tr("ddns.domain_ph") + " / " + tr("ddns.duckdns_ph_domain"))
         self._edit_ddns_token = QLineEdit()
         self._edit_ddns_token.setPlaceholderText(tr("ddns.token_ph"))
         self._edit_ddns_secret = QLineEdit()
         self._edit_ddns_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self._edit_ddns_secret.setPlaceholderText(tr("ddns.secret_ph"))
+        self._edit_ddns_secret.setPlaceholderText(tr("ddns.secret_ph") + " / " + tr("ddns.duckdns_ph_secret"))
         self._ddns_labels = []
         for row, (key, w) in enumerate((("ddns.provider_lbl", self._combo_ddns), ("field.domain", self._edit_ddns_domain), ("ddns.token_ph", self._edit_ddns_token), ("ddns.secret_ph", self._edit_ddns_secret))):
             lbl = QLabel()
@@ -1072,7 +1072,7 @@ class SettingsWindow(QDialog):
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
         self._edit_heartbeat.setText(cfg.heartbeat_url or "")
-        idx = self._combo_ddns.findData(cfg.ddns_provider if cfg.ddns_provider in ("off", "cloudflare", "aliyun") else "off")
+        idx = self._combo_ddns.findData(cfg.ddns_provider if cfg.ddns_provider in ("off", "duckdns", "cloudflare", "aliyun") else "off")
         self._combo_ddns.setCurrentIndex(max(0, idx))
         self._edit_ddns_domain.setText(cfg.ddns_domain or "")
         self._edit_ddns_token.setText(cfg.ddns_token or "")

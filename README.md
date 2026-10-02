@@ -108,7 +108,7 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 - ✅ **首次引导向导**：在线时自动带出账号，只输一次密码；新装/覆盖安装必弹
 
 **远程可达**
-- ✅ **DDNS 动态域名**：IP 变化自动更新 Cloudflare/阿里云解析——认证保住"网在"，DDNS 保住"找得到"（设置 → 高级选项）
+- ✅ **DDNS 动态域名**：IP 变化自动更新解析——认证保住"网在"，DDNS 保住"找得到"。支持 **DuckDNS（免费）**/ Cloudflare / 阿里云；没有域名？[duckdns.org](https://www.duckdns.org) 用 GitHub 登录即得免费子域名
 - ✅ **开机上线推送带 IP**：停电恢复/重启后第一时间告诉你"机器回来了，IP 是 X，可以连了"
 - ✅ **状态钩子**：认证成功/掉线时执行自定义命令（更新DDNS/挂载/呼叫 HomeAssistant 皆可）
 - ✅ **通用 Webhook 通知**：POST 任意 JSON 到任意 URL

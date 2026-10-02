@@ -7,6 +7,7 @@
 支持的服务商:
 - cloudflare: 需要 API Token(Zone:DNS:Edit 权限) + Zone ID + 域名
 - aliyun:     需要 AccessKey ID/Secret + 域名(解析在默认 Zone 查询)
+- duckdns:    免费, https://duckdns.org 注册即得; 域名填 yourname(即 yourname.duckdns.org)
 
 纯标准库; 失败静默记日志, 绝不影响保活主流程。
 """
@@ -104,6 +105,30 @@ def _ali_sign(cfg, params: dict) -> dict:
     return all_p
 
 
+def update_duckdns(cfg, host: str, ip: str) -> tuple[bool, str]:
+    """DuckDNS(免费): host 形如 yourname(无需 .duckdns.org), token 为账户 token。
+
+    API: https://www.duckdns.org/update?domains=X&token=Y&ip=Z → "OK" / "KO"
+    支持内网 IP 解析(在校内外均可解析, 但连接仍需在 VPN/校园网内)。
+    """
+    import urllib.parse as _up
+
+    domain = host.removesuffix(".duckdns.org").strip()
+    if not domain or not (cfg.ddns_secret or "").strip():
+        return False, "missing domain or token"
+    url = ("https://www.duckdns.org/update"
+           f"?domains={_up.quote(domain)}&token={_up.quote(cfg.ddns_secret.strip())}"
+           f"&ip={_up.quote(ip)}")
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace").strip()
+        if body == "OK":
+            return True, "updated"
+        return False, f"api said: {body[:40]}"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)[:80]
+
+
 def update_aliyun(cfg, host: str, ip: str) -> tuple[bool, str]:
     rr, _, domain = host.partition(".")
     if not domain:
@@ -144,4 +169,6 @@ def push_ddns(cfg, ip: str) -> tuple[bool, str]:
         return update_cloudflare(cfg, host, ip)
     if provider == "aliyun":
         return update_aliyun(cfg, host, ip)
+    if provider == "duckdns":
+        return update_duckdns(cfg, host, ip)
     return False, f"unknown provider {provider}"

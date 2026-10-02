@@ -353,5 +353,8 @@
   "webui.latency": "Auth latency",
   "webui.today_drops": "Drops today",
   "webui.uptime": "Uptime",
-  "webui.refresh": "Auto-refresh (5s)"
+  "webui.refresh": "Auto-refresh (5s)",
+  "ddns.duckdns": "DuckDNS (free)",
+  "ddns.duckdns_ph_domain": "yourname (i.e. yourname.duckdns.org)",
+  "ddns.duckdns_ph_secret": "token from duckdns.org dashboard"
 }

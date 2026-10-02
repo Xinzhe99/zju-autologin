@@ -53,7 +53,7 @@ _DEFAULTS = {
     # 心跳死信开关（healthchecks.io 等；本机在线时定期 ping，机器失联由外部服务报警）
     "heartbeat_url": "",
     # DDNS 动态域名: IP 变化自动更新解析(off/cloudflare/aliyun)
-    "ddns_provider": "off",
+    "ddns_provider": "off",   # off/duckdns/cloudflare/aliyun
     "ddns_domain": "",      # 如 lab.example.com
     "ddns_token": "",       # cloudflare=Zone ID; aliyun=AccessKey ID
     "ddns_secret": "",      # cloudflare=API Token; aliyun=AccessKey Secret

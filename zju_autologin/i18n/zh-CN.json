@@ -353,5 +353,8 @@
   "webui.latency": "认证延迟",
   "webui.today_drops": "今日掉线",
   "webui.uptime": "本次在线",
-  "webui.refresh": "自动刷新中（5s）"
+  "webui.refresh": "自动刷新中（5s）",
+  "ddns.duckdns": "DuckDNS（免费）",
+  "ddns.duckdns_ph_domain": "你的名字（即 你的名字.duckdns.org）",
+  "ddns.duckdns_ph_secret": "DuckDNS 页面上的 token"
 }
