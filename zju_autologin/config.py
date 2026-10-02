@@ -52,6 +52,16 @@ _DEFAULTS = {
     "win_geometry": "",
     # 心跳死信开关（healthchecks.io 等；本机在线时定期 ping，机器失联由外部服务报警）
     "heartbeat_url": "",
+    # DDNS 动态域名: IP 变化自动更新解析(off/cloudflare/aliyun)
+    "ddns_provider": "off",
+    "ddns_domain": "",      # 如 lab.example.com
+    "ddns_token": "",       # cloudflare=Zone ID; aliyun=AccessKey ID
+    "ddns_secret": "",      # cloudflare=API Token; aliyun=AccessKey Secret
+    # 状态变化钩子: online/offline 时执行的自定义命令(空=禁用)
+    "hook_on_online": "",
+    "hook_on_offline": "",
+    # 月度网络报告: 每月首日推送上月统计
+    "monthly_report": True,
     # 网络出口：门户认证始终直连；探测/更新/推送按此设置路由
     # system=跟随系统代理, direct=强制直连, custom=使用 proxy_url
     "proxy_mode": "system",

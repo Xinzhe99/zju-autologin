@@ -8,12 +8,17 @@
 from __future__ import annotations
 
 import html
+import json
 import urllib.parse
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import Config
 from .i18n import set_lang, tr
 from .srun import SrunClient
+
+
+_STAT_JS = (Path(__file__).parent / "webui_stat.js").read_text(encoding="utf-8")
 
 
 def _page(cfg: Config, msg: str = "") -> str:
@@ -39,9 +44,42 @@ code{{background:#f4f4f4;padding:2px 6px;border-radius:4px}}
 <label>门户地址</label><input name="base_url" value="{safe_portal}">
 <button type="submit">保存并立即检测</button>
 </form>
+__STAT_BLOCK__
 <p style="color:#888;font-size:12px">仅本机 127.0.0.1 可访问 · 启用系统级保活请在终端
 <code>sudo zju-autologin enable</code></p>
-</body></html>"""
+</body></html>""".replace("__STAT_BLOCK__", _STAT_JS)
+
+
+def _status_json(cfg: Config) -> str:
+    """实时状态(只读): 在线状态/延迟/今日掉线/最近事件。"""
+    import time as _t
+
+    from .config import read_events
+    from .srun import SrunClient, SrunError
+    from .net import probe_internet
+
+    info = {"ts": _t.time(), "online": False, "latency_ms": None, "drops_today": 0,
+            "recent": [], "internet": False}
+    try:
+        st = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id, timeout=4.0).get_status()
+        info["online"] = bool(st.get("online"))
+        info["latency_ms"] = st.get("latency_ms")
+        info["ip"] = st.get("ip", "")
+        if info["online"]:
+            info["internet"] = probe_internet(timeout=3.0)
+    except SrunError:
+        pass
+    today = _t.strftime("%Y-%m-%d")
+    events = read_events(60)
+    info["recent"] = [
+        {"time": _t.strftime("%m-%d %H:%M:%S", _t.localtime(e.get("ts") or 0)),
+         "event": e.get("event", ""), "detail": str(e.get("detail", ""))[:40]}
+        for e in events[-10:]]
+    info["drops_today"] = sum(
+        1 for e in events
+        if e.get("event") in ("offline", "no_campus")
+        and _t.strftime("%Y-%m-%d", _t.localtime(e.get("ts") or 0)) == today)
+    return json.dumps(info, ensure_ascii=False)
 
 
 def make_handler(cfg: Config) -> type:
@@ -50,7 +88,17 @@ def make_handler(cfg: Config) -> type:
             pass
 
         def do_GET(self) -> None:  # noqa: N802
-            if urllib.parse.urlsplit(self.path).path != "/":
+            path = urllib.parse.urlsplit(self.path).path
+            if path == "/api/status":
+                body = _status_json(cfg).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path != "/":
                 self.send_error(404)
                 return
             body = _page(cfg).encode("utf-8")

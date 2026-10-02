@@ -720,7 +720,7 @@ class SettingsWindow(QDialog):
         notify_grid.setHorizontalSpacing(10)
         notify_grid.setVerticalSpacing(8)
         self._combo_provider = QComboBox()
-        for pid in ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "smtp"):
+        for pid in ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "webhook", "smtp"):
             self._combo_provider.addItem(self._provider_label(pid), pid)
         self._edit_key = QLineEdit()
         self._btn_notify_test = QPushButton()
@@ -845,6 +845,53 @@ class SettingsWindow(QDialog):
         self._lbl_proxy_url.setObjectName("fieldKey")
         adv_grid.addWidget(self._lbl_proxy_url, 4, 0)
         adv_grid.addWidget(self._edit_proxy_url, 4, 1)
+        # DDNS 区块
+        self._ddns_title = QLabel()
+        self._ddns_title.setObjectName("cardTitle")
+        glay.addWidget(self._ddns_title)
+        ddns_grid = QGridLayout()
+        ddns_grid.setHorizontalSpacing(10)
+        ddns_grid.setVerticalSpacing(8)
+        self._combo_ddns = QComboBox()
+        for pid, name in (("off", tr("ddns.off")), ("cloudflare", tr("ddns.cloudflare")), ("aliyun", tr("ddns.aliyun"))):
+            self._combo_ddns.addItem(name, pid)
+        self._edit_ddns_domain = QLineEdit()
+        self._edit_ddns_domain.setPlaceholderText(tr("ddns.domain_ph"))
+        self._edit_ddns_token = QLineEdit()
+        self._edit_ddns_token.setPlaceholderText(tr("ddns.token_ph"))
+        self._edit_ddns_secret = QLineEdit()
+        self._edit_ddns_secret.setEchoMode(QLineEdit.EchoMode.Password)
+        self._edit_ddns_secret.setPlaceholderText(tr("ddns.secret_ph"))
+        self._ddns_labels = []
+        for row, (key, w) in enumerate((("ddns.provider_lbl", self._combo_ddns), ("field.domain", self._edit_ddns_domain), ("ddns.token_ph", self._edit_ddns_token), ("ddns.secret_ph", self._edit_ddns_secret))):
+            lbl = QLabel()
+            lbl.setObjectName("fieldKey")
+            ddns_grid.addWidget(lbl, row, 0)
+            ddns_grid.addWidget(w, row, 1)
+            self._ddns_labels.append((lbl, key))
+        self._chk_monthly = QCheckBox()
+        ddns_grid.addWidget(self._chk_monthly, 4, 0, 1, 2)
+        glay.addLayout(ddns_grid)
+
+        # 状态钩子
+        self._hooks_title = QLabel()
+        self._hooks_title.setObjectName("cardTitle")
+        glay.addWidget(self._hooks_title)
+        self._edit_hook_on = QLineEdit()
+        self._edit_hook_on.setPlaceholderText(tr("hook.online_ph"))
+        self._edit_hook_off = QLineEdit()
+        self._edit_hook_off.setPlaceholderText(tr("hook.offline_ph"))
+        hook_grid = QGridLayout()
+        hook_grid.setVerticalSpacing(8)
+        self._hook_labels = []
+        for row, (w, key) in enumerate(((self._edit_hook_on, "hook.online_ph"), (self._edit_hook_off, "hook.offline_ph"))):
+            lbl = QLabel()
+            lbl.setObjectName("fieldKey")
+            hook_grid.addWidget(lbl, row, 0)
+            hook_grid.addWidget(w, row, 1)
+            self._hook_labels.append((lbl, key))
+        glay.addLayout(hook_grid)
+
         prow = QHBoxLayout()
         prow.addWidget(self._chk_proactive)
         prow.addWidget(self._time_proactive)
@@ -908,6 +955,7 @@ class SettingsWindow(QDialog):
             "wecom": ("企业微信机器人", "WeCom bot"),
             "dingtalk": ("钉钉机器人", "DingTalk bot"),
             "feishu": ("飞书机器人", "Feishu bot"),
+            "webhook": ("通用 Webhook", "Generic webhook"),
             "smtp": ("邮件 (SMTP)", "Email (SMTP)"),
         }
         zh, en = names.get(pid, (pid, pid))
@@ -960,6 +1008,13 @@ class SettingsWindow(QDialog):
         for i in range(self._combo_proxy.count()):
             pid = self._combo_proxy.itemData(i)
             self._combo_proxy.setItemText(i, tr(f"net.proxy.{pid}"))
+        self._ddns_title.setText(tr("settings.ddns"))
+        self._hooks_title.setText(tr("settings.hooks"))
+        for lbl, key in self._ddns_labels:
+            lbl.setText(tr(key))
+        for lbl, key in self._hook_labels:
+            lbl.setText(tr(key))
+        self._chk_monthly.setText(tr("chk.monthly"))
         self._btn_export.setText(tr("btn.export_cfg"))
         self._btn_import.setText(tr("btn.import_cfg"))
         self._btn_portal.setText(tr("btn.portal_wizard"))
@@ -1017,6 +1072,14 @@ class SettingsWindow(QDialog):
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
         self._edit_heartbeat.setText(cfg.heartbeat_url or "")
+        idx = self._combo_ddns.findData(cfg.ddns_provider if cfg.ddns_provider in ("off", "cloudflare", "aliyun") else "off")
+        self._combo_ddns.setCurrentIndex(max(0, idx))
+        self._edit_ddns_domain.setText(cfg.ddns_domain or "")
+        self._edit_ddns_token.setText(cfg.ddns_token or "")
+        self._edit_ddns_secret.setText(cfg.ddns_secret or "")
+        self._chk_monthly.setChecked(bool(cfg.monthly_report))
+        self._edit_hook_on.setText(cfg.data.get("hook_on_online") or "")
+        self._edit_hook_off.setText(cfg.data.get("hook_on_offline") or "")
         self._edit_smtp_host.setText(cfg.smtp_host or "")
         self._spin_smtp_port.setValue(cfg.smtp_port)
         self._edit_smtp_user.setText(cfg.smtp_user or "")
@@ -1079,6 +1142,13 @@ class SettingsWindow(QDialog):
         cfg.base_url = self._edit_base.text().strip() or "https://net.zju.edu.cn"
         cfg.ac_id = self._edit_acid.text().strip() or "80"
         cfg.heartbeat_url = self._edit_heartbeat.text().strip()
+        cfg.ddns_provider = self._combo_ddns.currentData() or "off"
+        cfg.ddns_domain = self._edit_ddns_domain.text().strip()
+        cfg.ddns_token = self._edit_ddns_token.text().strip()
+        cfg.ddns_secret = self._edit_ddns_secret.text()
+        cfg.monthly_report = self._chk_monthly.isChecked()
+        cfg.data["hook_on_online"] = self._edit_hook_on.text().strip()
+        cfg.data["hook_on_offline"] = self._edit_hook_off.text().strip()
         cfg.proxy_mode = self._combo_proxy.currentData() or "system"
         cfg.proxy_url = self._edit_proxy_url.text().strip()
         cfg.proactive_relogin = self._chk_proactive.isChecked()

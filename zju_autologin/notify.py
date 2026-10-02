@@ -11,7 +11,7 @@ import ssl
 import urllib.parse
 import urllib.request
 
-PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "smtp")
+PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "webhook", "smtp")
 
 import re as _re
 
@@ -132,6 +132,13 @@ def send_notification(cfg, title: str, body: str,
         if not key.startswith("http"):
             return False, "feishu webhook url required"
         return _http_json(key, {"msg_type": "text", "content": {"text": f"{title}\n{body}"}},
+                          opener=opener)
+
+    if provider == "webhook":
+        # 通用 webhook: POST JSON 到任意 URL (HomeAssistant/n8n/自建)
+        if not key.startswith("http"):
+            return False, "webhook url required"
+        return _http_json(key, {"title": title, "body": body, "source": "zju-autologin"},
                           opener=opener)
 
     if provider == "smtp":

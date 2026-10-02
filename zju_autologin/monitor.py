@@ -20,6 +20,7 @@ from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, 
 
 from . import updates
 from .config import Config, append_event, append_usage_snapshot
+from .ddns import ddns_enabled, push_ddns
 from .net import build_opener, probe_internet
 from .power import on_battery
 from .i18n import tr
@@ -106,6 +107,7 @@ class MonitorWorker(QObject):
         self._update_timer.setInterval(_UPDATE_INTERVAL * 1000)
         self._update_timer.timeout.connect(self.check_updates)
         self._update_timer.start()
+        QTimer.singleShot(5000, self._maybe_monthly_report)
 
     @pyqtSlot()
     def stop(self) -> None:
@@ -316,6 +318,9 @@ class MonitorWorker(QObject):
                 self._fail_count = 0
                 self._auth_error = ""
                 self._ping_heartbeat()
+                self._push_ddns_if_changed(status.get("ip", ""))
+                self._run_hooks("online")
+                self._boot_notify(status)
                 all_bytes = int(status.get("all_bytes") or 0)
                 if all_bytes > 0:
                     today = time.strftime("%Y-%m-%d")
@@ -481,6 +486,62 @@ class MonitorWorker(QObject):
             self._maybe_push("notify.fail_title", tr("notify.fail_body", msg=msg))
         self._emit("login_fail", username=result["username"], detail=msg)
         return False
+
+    # ------------------------------------------------- DDNS/钩子/月报
+
+    def _push_ddns_if_changed(self, ip: str) -> None:
+        """IP 变化或登录成功后更新 DDNS 解析(静默, 失败仅记日志)。"""
+        if not ip or not ddns_enabled(self._config):
+            return
+        if ip == getattr(self, "_ddns_last_ip", ""):
+            return  # IP 未变
+        self._ddns_last_ip = ip
+        ok, detail = push_ddns(self._config, ip)
+        self.log(tr("log.ddns_result", domain=self._config.ddns_domain, detail=detail))
+
+    def _run_hooks(self, event: str) -> None:
+        """状态变化钩子: 执行用户命令(超时 30s, 输出进日志)。"""
+        cmd = (self._config.data.get(f"hook_on_{event}") or "").strip()
+        if not cmd:
+            return
+        try:
+            import subprocess
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                               timeout=30, encoding="utf-8", errors="replace")
+            out = (r.stdout or r.stderr or "").strip()[:120]
+            self.log(tr("log.hook_run", event=event, code=r.returncode) +
+                      (f" | {out}" if out else ""))
+        except Exception as exc:  # noqa: BLE001 - 钩子失败不影响主流程
+            self.log(tr("log.hook_fail", event=event, err=str(exc)[:80]))
+
+    def _boot_notify(self, status: dict) -> None:
+        """重启后首次在线: 推送带 IP(远程用户知道何时/连哪)。"""
+        if getattr(self, "_boot_notified", False):
+            return
+        self._boot_notified = True
+        ip = status.get("ip", "")
+        if self._config.notify_provider != "none" and not self._notify_sent:
+            self._maybe_push("notify.boot_title", tr("notify.boot_body", ip=ip))
+
+    def _maybe_monthly_report(self) -> None:
+        """每月首日推送上月网络统计。"""
+        if not self._config.monthly_report:
+            return
+        today = time.strftime("%Y-%m")
+        if self._config.data.get("last_month_report") == today:
+            return
+        from .config import read_events
+        events = read_events(2000)
+        month_events = [e for e in events
+                        if time.strftime("%Y-%m", time.localtime(e.get("ts") or 0)) != today]
+        drops = sum(1 for e in month_events if e.get("event") in ("offline", "no_campus"))
+        self._config.data["last_month_report"] = today
+        self._config.save()
+        if drops == 0 and not month_events:
+            return
+        self.log(tr("log.monthly", n=drops))
+        if self._config.notify_provider != "none":
+            self._maybe_push("notify.monthly_title", tr("notify.monthly_body", n=drops))
 
     def _check_traffic_limit(self, all_bytes: int) -> None:
         """月度流量上限提醒：超过用户设定值时每月推送一次。"""
