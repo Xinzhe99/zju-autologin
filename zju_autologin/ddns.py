@@ -55,6 +55,22 @@ def _cf_zone_id(cfg) -> str:
     return (cfg.ddns_token or "").strip()
 
 
+def _cf_find_record(cfg, host: str) -> tuple[str, str] | None:
+    """返回 (record_id, current_ip) 或 None。"""
+    zone = _cf_zone_id(cfg)
+    if not zone:
+        return None
+    name = host.split(".")[0]
+    status, data = _http_json(
+        f"https://api.cloudflare.com/client/v4/zones/{zone}/dns_records"
+        f"?type={'AAAA' if ':' in (cfg._ddns_last_ip or '') else 'A'}&name={urllib.parse.quote(host)}",
+        headers=_cf_headers(cfg))
+    if status == 200 and data.get("result"):
+        rec = data["result"][0]
+        return rec["id"], rec.get("content", "")
+    return None
+
+
 def update_cloudflare(cfg, host: str, ip: str) -> tuple[bool, str]:
     zone = _cf_zone_id(cfg)
     if not zone:
