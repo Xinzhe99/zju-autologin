@@ -57,3 +57,28 @@ def test_installer_launch_failure_restores_ui(qapp, tmp_path):
     assert win._update_pkg == ""
     assert win._update_banner.text()
     assert "example.invalid" in list(win._log_buffer)[-1]
+
+
+def _iss_text() -> str:
+    root = os.path.join(os.path.dirname(__file__), "..")
+    with open(os.path.join(root, "installer.iss"), encoding="utf-8") as f:
+        return f.read()
+
+
+def test_installer_runs_after_silent_update():
+    """静默更新装完必须拉起程序: 安装脚本需含 skipifnotsilent 启动项(回归守卫)。"""
+    iss = _iss_text()
+    run_section = iss.split("[Run]")[1].split("[UninstallRun]")[0]
+    # 可见安装: 完成页复选框; 静默安装(应用内更新): 直接启动
+    assert "postinstall skipifsilent" in run_section
+    assert "skipifnotsilent" in run_section
+    assert run_section.count("ZJUAutoLogin.exe") >= 2
+
+
+def test_updater_no_restartapplications_flag():
+    """应用是自退出的, /RESTARTAPPLICATIONS 无效; 静默拉起交给安装脚本。"""
+    src = os.path.join(os.path.dirname(__file__), "..", "zju_autologin", "ui.py")
+    with open(src, encoding="utf-8") as f:
+        ui_src = f.read()
+    assert "/RESTARTAPPLICATIONS" not in ui_src
+    assert '"/SILENT", "/CLOSEAPPLICATIONS"' in ui_src

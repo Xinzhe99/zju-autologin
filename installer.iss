@@ -41,7 +41,11 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\ZJUAutoLogin.exe"; Tasks: d
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "ZJUAutoLogin"; ValueData: """{app}\ZJUAutoLogin.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
+; 可见安装: 完成页「启动程序」复选框(默认勾选)
 Filename: "{app}\ZJUAutoLogin.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; 静默安装(应用内更新以 /SILENT 拉起): 完成后直接启动, 更新闭环的"最后一拉"
+; (RESTARTAPPLICATIONS 救不了自退出的进程, 必须由安装器主动拉起)
+Filename: "{app}\ZJUAutoLogin.exe"; Flags: nowait runasoriginaluser skipifnotsilent
 
 [UninstallRun]
 Filename: "{sys}\reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ZJUAutoLogin /f"; Flags: runhidden; RunOnceId: "DelAutoStart"

@@ -1957,7 +1957,9 @@ class MainWindow(QMainWindow):
                 return
         try:
             if sys.platform == "win32":
-                subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
+                # 不带重启已关程序的安装器参数: 它只对被安装器强关的进程生效, 而本
+                # 应用是自退出的; 静默装完的拉起由 installer.iss 的 skipifnotsilent 项负责
+                subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS"])
             elif not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
                 raise OSError(tr("update.open_fail"))
         except Exception as exc:  # noqa: BLE001 - 安装器被杀软拦截/文件被占用等
