@@ -1502,6 +1502,16 @@ class MainWindow(QMainWindow):
         self._settings_window = SettingsWindow(self._config, self._monitor, self)
         self._logs_window = LogsWindow(self)
 
+        # 看护任务协作: 清上轮更新的暂停标记 → 立即心跳 → 存量老脚本趁机升级;
+        # 之后每 5 分钟心跳一次(阈值 10 分钟, 双倍冗余)
+        from . import watchdog
+        watchdog.resume()
+        watchdog.touch_alive()
+        watchdog.refresh_if_installed()
+        self._alive_timer = QTimer(self)
+        self._alive_timer.timeout.connect(watchdog.touch_alive)
+        self._alive_timer.start(5 * 60 * 1000)
+
     # ------------------------------------------------------------------ UI
 
     def _card(self) -> QFrame:
@@ -1932,6 +1942,10 @@ class MainWindow(QMainWindow):
             return
         self._append_log(tr("update.downloaded"))
         self._tray.hide()
+        # 更新期间 GUI 会退出、exe 被覆写: 暂停看护任务, 防止其在安装中途拉起
+        # 写了一半的 exe(表现为 Failed to load Python DLL); 新版启动时会自动恢复
+        from . import watchdog
+        watchdog.pause_for_update()
         # 原地自更新（Codex 式体验, 无需安装器）:
         #   Windows 便携版: 解压 zip 出 exe → 重命名运行中的 exe → 新版归位 → 重启
         #   macOS .app 包: 解压 zip 得新 .app → 移动覆盖旧 .app → 重启
