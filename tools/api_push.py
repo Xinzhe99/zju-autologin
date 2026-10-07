@@ -103,23 +103,34 @@ def main() -> int:
     print(f"local HEAD = {local[:9]}  parent = {parent[:9]}")
 
     remote = api("GET", "git/ref/heads/main")["object"]["sha"]
-    print(f"remote main = {remote[:9]}")
-    if remote != parent:
-        # 同一份内容在本地与远端可能是两个不同的提交对象(例如远端提交由 API 生成),
-        # 这时不能只看 sha。判据: 本地父提交的 tree 与远端 main 的 tree 完全一致
-        # → 内容没有分叉, 可以安全地以远端 main 为父重建本地提交。
-        local_parent_tree = git("rev-parse", f"{parent}^{{tree}}")
-        remote_tree = api("GET", f"git/commits/{remote}")["tree"]["sha"]
-        if local_parent_tree != remote_tree:
-            sys.exit("拒绝推送: 本地与远端 main 内容已分叉(需要先同步/变基), 绝不强推")
-        print(f"注意: 远端 main 与本地父提交内容一致(tree {local_parent_tree[:9]}), "
-              f"仅提交对象不同 → 以远端 main 为父重建提交")
+    remote_tree = api("GET", f"git/commits/{remote}")["tree"]["sha"]
+    print(f"remote main = {remote[:9]} (tree {remote_tree[:9]})")
+
+    if local == remote:
+        print("本地与远端一致, 无需推送")
+        return 0
+
+    # 找到本地链上 tree 与远端 main 完全一致的那个提交: 它就是"远端 main 的内容在
+    # 本地的等价提交"。同一份内容在本地与远端可能是不同提交对象(远端由 API 生成),
+    # 所以不能只比 sha; 但内容必须对得上, 否则就是真分叉 → 拒绝。
+    base = None
+    for sha in git("rev-list", "HEAD").splitlines():
+        if git("rev-parse", f"{sha}^{{tree}}") == remote_tree:
+            base = sha
+            break
+    if base is None:
+        sys.exit("拒绝推送: 本地链上找不到与远端 main 内容一致的提交(已分叉), 绝不强推")
+    extra = git("rev-list", "--count", f"{base}..HEAD")
+    print(f"本地基线 {base[:9]} 与远端 main 内容一致; 其上新增 {extra} 个提交")
+    if base != local:
+        print(f"注意: 远端 main 与本地提交对象不同, 将以远端 main({remote[:9]}) 为父重建提交")
 
     if args.tag and api_optional("GET", f"git/ref/tags/{args.tag}"):
         sys.exit(f"标签 {args.tag} 已存在, 拒绝覆盖")
 
-    changed = git("diff", "--name-only", parent, local).splitlines()
-    print(f"changed files: {len(changed)}")
+    # 只上传新增/修改的文件: 删除由下面的全量 tree 自动体现(路径不在 tree 里即删除)
+    changed = git("diff", "--name-only", "--diff-filter=d", parent, local).splitlines()
+    print(f"changed files: {len(changed)} (上传 blob)")
 
     if args.dry_run:
         print("dry-run: 不做任何写操作")

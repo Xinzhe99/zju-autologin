@@ -10,6 +10,10 @@ build/
 dist/
 *.spec.bak
 
+# 工具缓存
+.pytest_cache/
+.ruff_cache/
+
 # 运行时产物（配置含账号信息，绝不入库）
 *.local.json
 config.json

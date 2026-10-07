@@ -127,7 +127,9 @@ class MonitorWorker(QObject):
         self._update_timer.setInterval(_UPDATE_INTERVAL * 1000)
         self._update_timer.timeout.connect(self.check_updates)
         self._update_timer.start()
-        self._maybe_monthly_report()
+        # 月报: 启动后择机看一眼(真正的触发条件在方法内部), 之后每个在线检测周期
+        # 都会再看一次, 因此常驻数月的机器也能在每月 1 日发出月报
+        QTimer.singleShot(5000, self._maybe_monthly_report)
 
     @pyqtSlot()
     def stop(self) -> None:
