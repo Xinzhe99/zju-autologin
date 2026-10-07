@@ -438,6 +438,20 @@ class StatsDialog(QDialog):
         lay = QVBoxLayout(self)
         events = read_events(300)
 
+        # 掉线回放: 把事件流讲成人话(这项功能此前只在 README 里存在, 没有调用点)
+        try:
+            from .narrative import build_narrative
+            story = build_narrative(12)
+        except Exception:  # noqa: BLE001 - 叙事只是锦上添花, 不能拖垮统计窗
+            story = ""
+        if story:
+            narrative_lbl = QLabel(story)
+            narrative_lbl.setObjectName("statusDetail")
+            narrative_lbl.setWordWrap(True)
+            narrative_lbl.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
+            lay.addWidget(narrative_lbl)
+
         # 每日流量增量
         usage = read_usage(40)
         deltas: list[float] = []

@@ -14,10 +14,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from zju_autologin.config import Config
-from zju_autologin.monitor import MonitorWorker  # noqa: E402
-
+# importorskip 必须在 import monitor 之前: monitor 模块级就 import PyQt6,
+# 放在后面等于没保护(无 Qt 的 runner 会在收集阶段直接报错而不是跳过)
 pytest.importorskip("PyQt6.QtCore", reason="需要 PyQt6")
+
+from zju_autologin.config import Config  # noqa: E402
+from zju_autologin.monitor import MonitorWorker  # noqa: E402
 
 
 def make_worker(tmp_path, **cfg_overrides) -> MonitorWorker:

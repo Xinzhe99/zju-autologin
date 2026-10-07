@@ -9,6 +9,9 @@ append_file_log 写进用户真实的 %APPDATA%/ZJUAutoLogin/app.log，
 污染线上运行日志。故所有测试的 config_dir 一律指向临时目录。
 """
 
+import sys
+import types
+
 import pytest
 
 
@@ -41,12 +44,17 @@ def _stub_keyring(monkeypatch):
             store.pop((service, username), None)
 
     fake = FakeKeyring()
+    module = types.ModuleType("keyring")
+    module.set_password = fake.set_password
+    module.get_password = fake.get_password
+    module.delete_password = fake.delete_password
+    module.get_keyring = lambda: "fake"
     monkeypatch.setattr("keyring.set_password", fake.set_password, raising=False)
     monkeypatch.setattr("keyring.get_password", fake.get_password, raising=False)
     monkeypatch.setattr("keyring.delete_password", fake.delete_password, raising=False)
-    # Config 内部 import keyring 的路径也一并替换
-    import sys
-    monkeypatch.setitem(sys.modules, "keyring", fake)
+    # 用一个真正的模块对象替换: 之前塞的是实例, 其它代码一旦访问
+    # keyring.errors / get_keyring 就 AttributeError, 还会被 broad except 吞掉
+    monkeypatch.setitem(sys.modules, "keyring", module)
     yield store
 
 

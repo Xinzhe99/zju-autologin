@@ -10,6 +10,8 @@
 """
 
 import json
+import os
+import tempfile
 from unittest.mock import MagicMock, patch
 
 from zju_autologin.config import Config
@@ -50,7 +52,9 @@ class FakeOpener:
 
 
 def make_cfg(**overrides) -> Config:
-    cfg = Config(path="/tmp/_notify_test.json")
+    # 不要用 "/tmp/...": Windows 上会解析成当前盘的 \tmp\..., 落到预期之外的位置。
+    # 配置目录已由 conftest 沙箱化, 这里给个纯内存路径即可。
+    cfg = Config(path=os.path.join(tempfile.gettempdir(), "_zju_notify_test.json"))
     cfg.data["notify_provider"] = "none"
     cfg.data.update(overrides)
     return cfg

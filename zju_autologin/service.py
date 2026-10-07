@@ -463,6 +463,8 @@ def _install_darwin(cfg) -> tuple[bool, str]:
                 if cfg_path != final_cfg else "")
     sh = (
         f"mkdir -p '{svc_dir}' && "
+        # launchd 要求 StandardOutPath 的父目录存在, 否则作业可能起不来
+        "mkdir -p '/Library/Logs/ZJUAutoLogin' && "
         + copy_cfg
         + f"cp '{tmp_plist}' '{plist}' && "
         f"chown root:wheel '{plist}' && chmod 644 '{plist}' && "

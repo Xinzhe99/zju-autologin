@@ -10,6 +10,9 @@ import time
 from .config import read_events
 from .i18n import tr
 
+# 最后一条事件超过这个时长就认为"已经不在掉线状态"(程序可能关了几天)
+_STILL_DOWN_WINDOW = 30 * 60
+
 
 def _describe(event: str, detail: str) -> str:
     mapping = {
@@ -36,9 +39,11 @@ def build_narrative(limit: int = 40) -> str:
     lines = []
     prev_online: bool | None = None
     outage_start: float | None = None
+    last_ts = 0.0
     for e in events:
         event = str(e.get("event", ""))
         ts = float(e.get("ts") or 0)
+        last_ts = max(last_ts, ts)
         stamp = time.strftime("%m-%d %H:%M:%S", time.localtime(ts))
         if event in ("online", "authed_no_internet"):
             if outage_start is not None:
@@ -51,7 +56,10 @@ def build_narrative(limit: int = 40) -> str:
             prev_online = False
         lines.append(f"{stamp} {_describe(event, str(e.get('detail', ''))[:60])}")
     if outage_start is not None:
-        secs = int(time.time() - outage_start)
-        lines.append(tr("nar.still_down", secs=secs))
+        # 只在"确实还在掉线"时才说还在掉: 程序关了一周再打开, 文件最后一条仍是
+        # offline, 原样输出会宣称"已持续掉线 168 小时", 而网络其实早好了
+        if time.time() - last_ts <= _STILL_DOWN_WINDOW:
+            secs = int(time.time() - outage_start)
+            lines.append(tr("nar.still_down", secs=secs))
     # 输出最近 N 行
     return chr(10).join(lines[-limit:])
