@@ -146,16 +146,35 @@ def test_boot_notify_once(tmp_path):
 def test_monthly_report_guard(tmp_path, monkeypatch):
     """月报只在每月 1 日、且上月确有事件时才推。"""
     import time as _t
+    fixed = _t.struct_time((2026, 11, 1, 9, 0, 0, 5, 305, 0))
+
+    class FakeTime:
+        """只把"当前时间"钉在 11 月 1 日; 带参数调用照旧走真实实现。
+
+        以前直接 patch 掉整个 time.localtime, 于是连事件时间戳的换算也返回
+        固定值 —— 上月的判断被悄悄破坏, 断言只能靠日志时间戳里恰好有个 "1"
+        才通过(20:03:47 这种时刻就会红)。
+        """
+
+        def __getattr__(self, name):
+            return getattr(_t, name)
+
+        def localtime(self, *args):
+            if not args:
+                return fixed
+            return _t.localtime(*args)
+
     cfg = _cfg(tmp_path, monthly_report=True)
     worker = M.MonitorWorker(cfg)
 
-    # 非 1 日: 什么都不做
-    worker._maybe_monthly_report()
-    assert cfg.data.get("last_month_report") in ("", None)
+    # 非 1 日(用真实时间): 什么都不做
+    if _t.localtime().tm_mday != 1:      # 恰好在 1 号跑测试时这条不适用
+        worker._maybe_monthly_report()
+        assert cfg.data.get("last_month_report") in ("", None)
+
+    monkeypatch.setattr(M, "time", FakeTime())
 
     # 1 日 + 无事件: 记账但不推
-    monkeypatch.setattr(M.time, "localtime",
-                        lambda *a: _t.struct_time((2026, 11, 1, 9, 0, 0, 5, 305, 0)))
     with patch("zju_autologin.config.read_events", return_value=[]), \
          patch.object(M.MonitorWorker, "_maybe_push") as push:
         worker._maybe_monthly_report()
@@ -177,7 +196,8 @@ def test_monthly_report_guard(tmp_path, monkeypatch):
          patch.object(M.MonitorWorker, "_maybe_push") as push:
         worker2._maybe_monthly_report()
     assert cfg2.data["last_month_report"] == "2026-11"
-    assert any("1" in line for line in logs)  # 上月只有 1 次掉线, 不是 3 次
+    # 断言真实文案而不是"日志里出现过 1": 上月只有 1 次掉线(不是 3 次)
+    assert any("掉线 1 次" in line or "1 drops" in line for line in logs), logs
 
 
 def test_ddns_duckdns_chain(tmp_path):
