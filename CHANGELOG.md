@@ -2,6 +2,23 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [1.25.5] - 2026-10-07
+
+1.25.4 用真实产物做端到端复核时又发现两处，一并修掉。
+
+### 修复
+- **看护模式（`watch`）的日志与事件写到错误目录**：用的是「当前账号的配置目录」而不是
+  `--config` 所在目录。服务以 root/SYSTEM 运行时日志落到 `/root/.config/zju-autologin`
+  或系统配置目录，用户与 GUI 都看不到 —— 出问题时等于没有日志。现与 GUI 一致：
+  一律写在配置文件旁边（`/etc/zju-autologin`、`C:\ProgramData\ZJUAutoLogin`）
+- **月报改为启动后延迟触发**：原先在 worker 启动流程里同步执行，
+  每月 1 日首次检测会被推送阻塞数秒
+
+### 其他
+- `.zcodeignore` 同步 `.gitignore`（补齐 `.pytest_cache/`、`.ruff_cache/`）
+- `tools/api_push.py`：支持「远端提交对象不同但内容一致」的仓库状态，
+  仍拒绝真正的分叉；删除文件不再尝试上传 blob
+
 ## [1.25.4] - 2026-10-07
 
 全模块深度审计后的缺陷修复版。共修复 40 余处缺陷，其中多处属于「功能从未真正生效」级别。

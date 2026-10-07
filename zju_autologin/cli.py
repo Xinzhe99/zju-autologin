@@ -80,7 +80,12 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
 
     from zju_autologin.config import append_event, append_file_log
 
-    heartbeat_file = Path(cfg.path).parent / "service.heartbeat"
+    # 日志/事件写到 --config 所在目录, 与 GUI 的 _log_dir 一致:
+    # 服务模式下配置文件在 /etc/zju-autologin(或 ProgramData), 而 append_* 的
+    # 默认目录是"当前用户的 config_dir" —— 服务以 root/SYSTEM 运行时会写到
+    # /root/.config 或系统配置目录, 用户永远看不到, 排障时等于没有日志。
+    log_dir = Path(cfg.path).parent
+    heartbeat_file = log_dir / "service.heartbeat"
 
     def touch_heartbeat() -> None:
         try:
@@ -90,7 +95,7 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
 
     seconds = max(10, min(600, int(interval))) if interval else cfg.interval
     print(tr("cli.watching", n=seconds))
-    append_file_log(tr("cli.watching", n=seconds))
+    append_file_log(tr("cli.watching", n=seconds), log_dir)
     touch_heartbeat()
     prev_state = ""
     while True:
@@ -98,7 +103,7 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
             code = cmd_check(cfg)
             state = "online" if code == 0 else "offline"
             if state != prev_state:
-                append_event(state, "cli watch")
+                append_event(state, "cli watch", log_dir)
                 prev_state = state
             if code != 0:
                 result = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id).login(
@@ -106,7 +111,7 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
                 line = (tr("cli.login_ok_prefix") if result["ok"]
                         else tr("cli.login_fail_prefix")) + tr("cli.auto_relogin", msg=result["msg"])
                 print(line)
-                append_file_log(line)
+                append_file_log(line, log_dir)
         except KeyboardInterrupt:
             print(tr("cli.exited"))
             return 0

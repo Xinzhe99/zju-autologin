@@ -180,6 +180,13 @@ def test_watch_command_writes_heartbeat(tmp_path, monkeypatch):
         cli.cmd_watch(cfg, 1)
     hb = tmp_path / "service.heartbeat"
     assert hb.exists()  # 心跳已写入
+    # 日志/事件必须落在 --config 所在目录: 服务以 root/SYSTEM 运行时,
+    # append_* 的默认目录是那个账号的 config_dir, 用户根本看不到
+    app_log = tmp_path / "app.log"
+    assert app_log.exists(), "watch 日志写到别处了, 排障时等于没有日志"
+    assert "守护模式启动" in app_log.read_text(encoding="utf-8") or \
+           "Watch mode started" in app_log.read_text(encoding="utf-8")
+    assert (tmp_path / "events.jsonl").exists()
 
 
 def test_write_service_config_refuses_empty_credentials(tmp_path, monkeypatch):
