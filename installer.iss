@@ -63,18 +63,44 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ZJUAutoLogin"; Flags
 Filename: "{sys}\cmd.exe"; Parameters: "/C rmdir /S /Q ""C:\ProgramData\ZJUAutoLogin"""; Flags: runhidden; RunOnceId: "DelSvcData"
 
 [Code]
+// 关掉正在运行的 ZJU AutoLogin(托盘 GUI 与无界面 watch 进程同名)。
+// 文件被占用时 Inno 无法删除/替换, 只能登记"重启后删除"; 该记录会一直留在系统的
+// PendingFileRenameOperations 里, 之后每次安装都会被"上一次安装未完成, 请重启"
+// 挡住 —— 而它指向的正是 {app}\ZJUAutoLogin.exe, 只能清注册表才能解(2026-10-08 事故)。
+procedure StopOurProcesses;
+var
+  Rc: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'),
+       '/IM ZJUAutoLogin.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  { 系统级保活计划任务(如有): 尽力停止, 无管理员权限时失败可忽略 }
+  Exec(ExpandConstant('{sys}\schtasks.exe'),
+       '/End /TN ZJUAutoLogin', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  Exec(ExpandConstant('{sys}\schtasks.exe'),
+       '/End /TN ZJUAutoLogin-Watchdog', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  Sleep(800);  { 等文件句柄释放 }
+end;
+
 // 每次安装写一个安装会话标记: 应用靠它判断"这是新装/覆盖安装", 强制弹一次引导向导。
-// v1.24.0 起 gui.py 就在读 {app}\.install-session, 但安装器从未写过它,
-// 于是"新装必见引导"实际上从未生效。
+// v1.24.0 起 gui.py 就在读 {app}\.install-session, 但安装器曾长期没写过它,
+// "新装必见引导"一度从未生效。
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   MarkerPath: String;
   Content: String;
 begin
-  if CurStep = ssPostInstall then
+  if CurStep = ssInstall then
+    StopOurProcesses
+  else if CurStep = ssPostInstall then
   begin
     MarkerPath := ExpandConstant('{app}\.install-session');
     Content := GetDateTimeString('yyyymmddhhnnss', #0, #0);
     SaveStringToFile(MarkerPath, Content, False);
   end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    StopOurProcesses;  { 卸载同样要先关程序, 否则又留下"重启后删除"残留 }
 end;

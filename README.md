@@ -55,7 +55,7 @@
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.6/ZJUAutoLogin-1.25.6-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.6/ZJUAutoLogin-1.25.6-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.6/ZJUAutoLogin-1.25.6-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.7/ZJUAutoLogin-1.25.7-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.7/ZJUAutoLogin-1.25.7-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.7/ZJUAutoLogin-1.25.7-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
@@ -69,6 +69,19 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 - 便携版解压即用，不写注册表
 - 已安装的旧版本会在检测到新版本时于界面顶部提示**一键更新**
 - macOS 未做代码签名：首次打开若被 Gatekeeper 拦截，请右键 App →"打开"，或到"系统设置 → 隐私与安全性"放行
+
+> **安装时提示「上一次安装未完成，请重启」？** 这不是本软件没装完，而是 Windows 里残留了
+> 指向本程序文件的"挂起重命名"记录（通常由「程序还在运行时卸载/升级」产生，1.25.7 起
+> 安装器会先自动关闭程序，不会再产生）。清除方法（管理员 PowerShell，只删本程序相关条目）：
+>
+> ```powershell
+> $k='HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+> $o=(Get-ItemProperty $k).PendingFileRenameOperations
+> $n=for($i=0;$i -lt $o.Count;$i+=2){ if("$($o[$i])$($o[$i+1])" -notmatch 'zjuautologin'){ $o[$i]; if($i+1 -lt $o.Count){$o[$i+1]} } }
+> Set-ItemProperty $k -Name PendingFileRenameOperations -Value $n -Type MultiString
+> ```
+>
+> 之后重新运行安装包即可；或改用免安装的便携版。
 
 ## 快速上手
 

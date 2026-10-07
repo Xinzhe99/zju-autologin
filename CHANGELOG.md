@@ -2,6 +2,17 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [1.25.7] - 2026-10-08
+
+### 修复（仅安装器，应用代码无变化）
+- **「上一次安装未完成，请重启」死循环**：程序还在运行时卸载/升级，`ZJUAutoLogin.exe`
+  被占用，Inno 删不掉只能登记"重启后删除"；这条记录留在系统的
+  `PendingFileRenameOperations` 里且指向 `{app}\ZJUAutoLogin.exe`，此后**每次**安装都被
+  Inno 的 `PreviousInstallCompleted` 检查挡下（该检查比较注册表而非文件是否存在，
+  且排在脚本 `PrepareToInstall` 之前，无法用脚本跳过）。现安装/卸载一开始就先关闭本程序
+  （taskkill + 停保活计划任务），不再产生新的残留
+- README 补充受影响机器的自救方法（管理员 PowerShell 精准清除本程序相关条目）
+
 ## [1.25.6] - 2026-10-07
 
 ### 修复
