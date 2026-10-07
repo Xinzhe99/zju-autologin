@@ -52,7 +52,13 @@ class SetupWizard(QDialog):
         self._config = config
         self._has_saved_password = bool(config.get_password())  # 构建页面前就绪(占位符用)
         self._initial_lang = config.language
+        # 取消向导时要原样还回去: 探测/自动识别都不该偷偷改用户配置
+        self._initial_data = dict(config.data)
         self._detect_thread: _DetectThread | None = None
+        self._probe_thread: QThread | None = None
+        self._probe_gen = 0
+        self._pending_base_url = ""
+        self._pending_ac_id = ""
 
         self.setStyleSheet(theme.get_qss(config.theme))
         self.setWindowTitle(tr("wiz.title"))
@@ -204,18 +210,19 @@ class SetupWizard(QDialog):
             return
         self._btn_school_probe.setEnabled(False)
         self._school_probe_result.setText(tr("school.probing"))
+        self._probe_gen += 1
+        gen = self._probe_gen  # 代际号: 上一次探测结果晚到时必须丢弃
 
         def work():
             client = SrunClient(base_url=url, timeout=6.0)
             probe = client.probe_portal()
             probe["captcha"] = client.check_captcha() if probe.get("ok") else False
+            probe["url"] = url  # 探测时的地址, 而不是回来时输入框里的内容
+            probe["gen"] = gen
             return probe
 
-        self._probe_thread = _DetectThread.__new__(_DetectThread)  # 复用线程壳
-        from PyQt6.QtCore import QThread as _QT
-        self._probe_thread = _QT(self)
         # 用独立轻量线程执行
-        class _T(_QT):
+        class _T(QThread):
             done = pyqtSignal(object)
             def run(self_inner):
                 try:
@@ -227,13 +234,17 @@ class SetupWizard(QDialog):
         self._probe_thread.start()
 
     def _probe_done(self, result) -> None:
-        self._btn_school_probe.setEnabled(True)
         if isinstance(result, Exception):
+            self._btn_school_probe.setEnabled(True)
             self._school_probe_result.setText(tr("school.probe_fail", msg=str(result)[:80]))
             return
+        if result.get("gen") != self._probe_gen:
+            return  # 旧探测(用户已改选学校)的结果, 丢弃, 免得 URL/ac_id 张冠李戴
+        self._btn_school_probe.setEnabled(True)
         if result.get("ok"):
-            self._config.data["base_url"] = self._school_url.text().strip().rstrip("/")
-            self._config.data["ac_id"] = result.get("acid") or "auto"
+            # 待定值: 用户若取消向导, 不能把没确认过的门户写进配置
+            self._pending_base_url = self._school_url.text().strip().rstrip("/")
+            self._pending_ac_id = result.get("acid") or "auto"
             if result.get("captcha"):
                 self._school_probe_result.setText(
                     tr("school.probe_ok_captcha", acid=result.get("acid", "?")))
@@ -338,26 +349,48 @@ class SetupWizard(QDialog):
 
     def _go_next(self) -> None:
         idx = self._stack.currentIndex()
-        pwd_missing = not self._edit_pwd.text() and not self._has_saved_password
-        if idx == 1 and (not self._edit_user.text().strip() or pwd_missing):
+        # 账号页是第 2 页(index=2)。校验必须挂在账号页上: 早期写成 idx == 1
+        # (学校页), 于是"下一步"在还没见过账号输入框时就索要账号密码,
+        # 全新安装的用户永远走不出向导。
+        if idx == 2 and not self._account_ok():
             self._account_error.setText(tr("wiz.error_need"))
             self._account_error.show()
             return
+        self._apply_school_url()
         if idx < self._stack.count() - 1:
             self._stack.setCurrentIndex(idx + 1)
         else:
             self._finish()
         self._update_nav()
 
+    def _account_ok(self) -> bool:
+        pwd_missing = not self._edit_pwd.text() and not self._has_saved_password
+        return bool(self._edit_user.text().strip()) and not pwd_missing
+
+    def _apply_school_url(self) -> None:
+        """把学校页手动粘贴的门户地址落到配置(探测失败也能生效)。"""
+        url = self._school_url.text().strip().rstrip("/")
+        if url.startswith("http") and url != self._config.base_url.rstrip("/"):
+            self._config.data["base_url"] = url
+            self._config.data["ac_id"] = self._pending_ac_id or "auto"
+
     def _update_nav(self) -> None:
         idx = self._stack.currentIndex()
         self._btn_back.setVisible(idx > 0)
         self._btn_next.setText(tr("wiz.finish") if idx == self._stack.count() - 1 else tr("wiz.next"))
-        if idx == 1:
+        if idx != 2:
             self._account_error.hide()
 
     def _finish(self) -> None:
+        if not self._account_ok():
+            # 兜底: 任何路径(含回车/程序化调用)都必须过校验
+            self._stack.setCurrentIndex(2)
+            self._account_error.setText(tr("wiz.error_need"))
+            self._account_error.show()
+            self._update_nav()
+            return
         cfg = self._config
+        self._apply_school_url()
         cfg.username = self._edit_user.text()
         cfg.domain = self._edit_domain.text()
         cfg.language = self._lang.currentData() or "auto"
@@ -377,13 +410,14 @@ class SetupWizard(QDialog):
         self._detect_thread.start()
 
     def _on_detected(self, status: dict) -> None:
-        # 零输入门户识别成功(未认证被重定向): 学校页直通, 自动填 base_url/ac_id
+        # 零输入门户识别成功(未认证被重定向): 学校页直通
+        # 只记待定值, 等用户在最后一页点「完成」才写进配置(取消即丢弃)
         disc = status.get("discovered_portal") or {}
         if disc.get("base_url"):
             if disc["base_url"].rstrip("/") != self._config.base_url.rstrip("/"):
-                self._config.data["base_url"] = disc["base_url"]
+                self._pending_base_url = disc["base_url"]
                 if disc.get("ac_id"):
-                    self._config.data["ac_id"] = disc["ac_id"]
+                    self._pending_ac_id = disc["ac_id"]
                 self._school_auto.setText(tr("school.auto_found", url=disc["base_url"],
                                              ac_id=disc.get("ac_id") or "auto"))
                 self._school_url.setText(disc["base_url"])
@@ -427,7 +461,9 @@ class SetupWizard(QDialog):
         self._lbl_pwd.setText(tr("field.password"))
         self._edit_user.setPlaceholderText(tr("ph.username"))
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
-        self._edit_pwd.setPlaceholderText(tr("ph.password"))
+        # 已存密码时保持"留空即不变"提示, 否则用户会以为必须重输而覆盖可用密码
+        self._edit_pwd.setPlaceholderText(
+            tr("wiz.pwd_keep_ph") if self._has_saved_password else tr("ph.password"))
         self._pwd_note.setText(tr("wiz.pwd_note"))
         self._school_title.setText(tr("school.title"))
         self._school_combo_lbl.setText(tr("school.preset"))
@@ -443,16 +479,20 @@ class SetupWizard(QDialog):
         self._btn_back.setText(tr("wiz.prev"))
         self._update_nav()
 
+    def _wait_threads(self) -> None:
+        for thread in (self._detect_thread, self._probe_thread):
+            if thread is not None and thread.isRunning():
+                thread.wait(6000)
+
     def closeEvent(self, event) -> None:  # noqa: N802
-        # 进程退出兜底: 检测线程在飞时等待收尾(Qt 对运行中线程的销毁会 FailFast)
-        if self._detect_thread is not None and self._detect_thread.isRunning():
-            self._detect_thread.wait(6000)
+        # 进程退出兜底: 检测/探测线程在飞时等待收尾(Qt 对运行中线程的销毁会 FailFast)
+        self._wait_threads()
         super().closeEvent(event)
 
     def done(self, result: int) -> None:  # noqa: N802
-        # 取消向导时回滚界面语言，避免与未保存的配置不一致
+        # 取消向导: 回滚界面语言与探测期间改动过的配置, 避免与未保存的状态不一致
         if result != QDialog.DialogCode.Accepted:
             i18n.set_lang(self._initial_lang)
-        if self._detect_thread is not None and self._detect_thread.isRunning():
-            self._detect_thread.wait(6000)  # 检测超时 3s, 留足余量防悬空线程
+            self._config.data = dict(self._initial_data)
+        self._wait_threads()  # 检测超时 3s / 探测 6s, 留足余量防悬空线程
         super().done(result)

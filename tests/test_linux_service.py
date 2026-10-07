@@ -50,8 +50,31 @@ def test_systemd_unit_content(monkeypatch):
     assert "[Unit]" in unit and "network-online.target" in unit
     assert "Restart=always" in unit          # 崩溃自动重启
     assert "WantedBy=multi-user.target" in unit  # 开机自启
-    assert "--config /etc/zju-autologin/config.json" in unit
+    assert '--config "/etc/zju-autologin/config.json"' in unit  # 含空格路径可解析
     assert "NoNewPrivileges=yes" in unit     # 加固
+    assert "PYTHONUNBUFFERED=1" in unit      # 否则 journalctl 里看不到输出
+
+
+def test_systemd_unit_execstart_frozen_vs_source(monkeypatch):
+    """冻结版不能再拼 `-m zju_autologin.cli`。
+
+    PyInstaller 二进制的 sys.executable 就是程序本身, 加 -m 后 cli.main 认不出
+    子命令, 打印用法后 return 0 —— 认证永不发生, 而 Restart=always 会把
+    systemd 拖进启动限流(README 里 `sudo ./zju-autologin-linux-x86_64 enable` 正是这条路径)。
+    """
+    _force_linux(monkeypatch)
+    monkeypatch.setattr(service.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(service.sys, "executable", "/usr/bin/zju-autologin")
+    frozen_unit = service._systemd_unit("/etc/zju-autologin/config.json")
+    exec_line = next(ln for ln in frozen_unit.splitlines() if ln.startswith("ExecStart="))
+    assert exec_line.startswith("ExecStart=/usr/bin/zju-autologin watch ")
+    assert " -m " not in exec_line
+
+    monkeypatch.setattr(service.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(service.sys, "executable", "/usr/bin/python3")
+    src_unit = service._systemd_unit("/etc/zju-autologin/config.json")
+    src_line = next(ln for ln in src_unit.splitlines() if ln.startswith("ExecStart="))
+    assert "-m zju_autologin.cli watch" in src_line
 
 
 def test_install_linux_writes_config_and_unit(monkeypatch, tmp_path):

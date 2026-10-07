@@ -18,7 +18,12 @@ from .i18n import set_lang, tr
 from .srun import SrunClient
 
 
-_STAT_JS = (Path(__file__).parent / "webui_stat.js").read_text(encoding="utf-8")
+def _stat_js() -> str:
+    """实时状态面板脚本; 打包漏带该静态文件时降级为空(配置功能不受影响)。"""
+    try:
+        return (Path(__file__).parent / "webui_stat.js").read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 def _page(cfg: Config, msg: str = "") -> str:
@@ -47,7 +52,7 @@ code{{background:#f4f4f4;padding:2px 6px;border-radius:4px}}
 __STAT_BLOCK__
 <p style="color:#888;font-size:12px">仅本机 127.0.0.1 可访问 · 启用系统级保活请在终端
 <code>sudo zju-autologin enable</code></p>
-</body></html>""".replace("__STAT_BLOCK__", _STAT_JS)
+</body></html>""".replace("__STAT_BLOCK__", _stat_js())
 
 
 def _status_json(cfg: Config) -> str:
@@ -82,18 +87,46 @@ def _status_json(cfg: Config) -> str:
     return json.dumps(info, ensure_ascii=False)
 
 
+MAX_BODY = 64 * 1024
+
+
+def _local_hosts(port: int) -> set[str]:
+    return {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}", "127.0.0.1", "localhost"}
+
+
 def make_handler(cfg: Config) -> type:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args) -> None:  # 静默
             pass
 
+        def _local_request(self) -> bool:
+            """只认本机来源: 防 DNS rebinding(恶意域名解析到 127.0.0.1)与跨站表单写入。
+
+            仅绑定回环还不够 —— 浏览器会替攻击者页面把请求送到 127.0.0.1,
+            所以必须自己校验 Host 与 Origin/Referer。
+            """
+            port = self.server.server_port
+            host = (self.headers.get("Host") or "").strip().lower()
+            if host and host not in _local_hosts(port):
+                return False
+            origin = (self.headers.get("Origin") or "").strip().lower()
+            if origin:
+                # 跨站表单 POST 一定带 Origin; 只有本机页面放行
+                return any(origin == f"http://{h}" for h in _local_hosts(port))
+            referer = (self.headers.get("Referer") or "").strip().lower()
+            if referer:
+                return any(referer.startswith(f"http://{h}/") for h in _local_hosts(port))
+            return True  # 非浏览器客户端(curl 等)无这两个头
+
         def do_GET(self) -> None:  # noqa: N802
+            if not self._local_request():
+                self.send_error(403, "forbidden")
+                return
             path = urllib.parse.urlsplit(self.path).path
             if path == "/api/status":
                 body = _status_json(cfg).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -112,8 +145,17 @@ def make_handler(cfg: Config) -> type:
             if urllib.parse.urlsplit(self.path).path != "/save":
                 self.send_error(404)
                 return
-            length = int(self.headers.get("Content-Length", 0))
-            data = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+            if not self._local_request():
+                self.send_error(403, "forbidden")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length < 0 or length > MAX_BODY:
+                self.send_error(413, "too large")
+                return
+            data = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
             cfg.username = (data.get("username", [""])[0] or "").strip()
             cfg.domain = (data.get("domain", [""])[0] or "").strip()
             cfg.base_url = (data.get("base_url", [""])[0] or "").strip() or cfg.base_url
@@ -148,4 +190,6 @@ def cmd_serve(cfg: Config, port: int) -> int:
         server.serve_forever()
     except KeyboardInterrupt:
         return 0
+    finally:
+        server.server_close()
     return 0

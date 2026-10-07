@@ -55,7 +55,7 @@
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/ZJUAutoLogin-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/ZJUAutoLogin-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/ZJUAutoLogin-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.4/ZJUAutoLogin-1.25.4-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.4/ZJUAutoLogin-1.25.4-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.4/ZJUAutoLogin-1.25.4-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
@@ -278,7 +278,7 @@ zju-autologin/
 │   └── theme.py               # 浅/深双主题（自绘控件图标）
 ├── .github/workflows/release.yml  # 打 tag 自动构建 10 资产（Win/mac/Linux×3/musl/PyPI）
 ├── .github/workflows/test.yml     # push/PR 跑 pytest（Windows + macOS matrix）
-├── tests/                         # 113 项测试（含 conftest keyring 隔离）
+├── tests/                         # 147 项测试（含 conftest keyring 隔离）
 ├── docs/                          # srun-protocol.md 协议规范 / notifications.md 推送指南
 ├── README.*.md                    # 7 语言 readme（en/ja/ko/es/fr/de）
 ├── CONTRIBUTING.md                # 贡献指南（含新语言/新学校接入步骤）
@@ -298,7 +298,7 @@ cd zju-autologin
 pip install -e ".[dev]"      # 或: pip install -r requirements.txt pytest
 python main.py               # 运行 GUI
 python cli.py check          # 运行 CLI
-python -m pytest tests/ -q   # 测试（113 项）
+python -m pytest tests/ -q   # 测试（147 项）
 build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 ```
 

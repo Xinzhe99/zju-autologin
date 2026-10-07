@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -217,20 +218,20 @@ class Config:
 
     def load(self) -> None:
         with self._lock:
+            self.data = dict(_DEFAULTS)
+            self._plain_password = ""
             if os.path.isfile(self.path):
+                stored: dict | None = None
                 try:
-                    with open(self.path, encoding="utf-8") as fh:
-                        stored = json.load(fh)
-                    for key, default in _DEFAULTS.items():
-                        self.data[key] = stored.get(key, default)
-                    self.password_backend = stored.get("password_backend", "none")
-                    if self.password_backend == "file":
-                        self._plain_password = base64.b64decode(
-                            stored.get("password_b64", "")
-                        ).decode("utf-8", errors="replace")
+                    # utf-8-sig: 记事本另存为"UTF-8 带 BOM"时 json.load 会直接抛错,
+                    # 早期实现据此把整份配置当损坏文件改名备份, 用户账号/门户全丢
+                    with open(self.path, encoding="utf-8-sig") as fh:
+                        loaded = json.load(fh)
+                    if not isinstance(loaded, dict):
+                        raise ValueError("config root is not an object")
+                    stored = loaded
                 except ValueError:
                     # 配置损坏：改名备份再回退默认，避免用户名等无声丢失
-                    self.data = dict(_DEFAULTS)
                     try:
                         backup = f"{self.path}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
                         os.replace(self.path, backup)
@@ -239,13 +240,32 @@ class Config:
                     except OSError:
                         pass
                 except OSError:
-                    self.data = dict(_DEFAULTS)
-            else:
-                self.data = dict(_DEFAULTS)
+                    stored = None
+                if stored is not None:
+                    # 合并而非逐键覆盖: monitor 等模块会写 _DEFAULTS 之外的键
+                    # (如 last_month_report), 逐键覆盖会让它们每次重启后消失
+                    self.data = {**dict(_DEFAULTS), **stored}
+                    for key, default in _DEFAULTS.items():
+                        value = self.data.get(key)
+                        # 手改/跨版本写入的 null 与错类型必须回退默认值, 否则
+                        # username=null 会变成真值字符串 "None"(跳过引导向导)
+                        if value is None or not isinstance(value, type(default)):
+                            self.data[key] = default
+                    self.password_backend = str(stored.get("password_backend") or "none")
+                    if self.password_backend == "file":
+                        try:
+                            self._plain_password = base64.b64decode(
+                                str(stored.get("password_b64") or "")
+                            ).decode("utf-8", errors="replace")
+                        except (ValueError, TypeError):
+                            # 只有密码这一段坏了: 丢密码即可, 不要连账号门户一起丢
+                            self._plain_password = ""
+                            self.password_backend = "none"
         if self.password_backend != "file":
             self._plain_password = self._load_password_keyring()
 
-    def save(self) -> None:
+    def save(self) -> bool:
+        """原子落盘; 返回是否写成功(调用方据此提示用户, 别再无脑报"已保存")。"""
         payload = dict(self.data)
         payload["password_backend"] = self.password_backend
         payload.pop("password", None)
@@ -256,13 +276,31 @@ class Config:
             ).decode("ascii")
         try:
             with self._lock:
-                # 临时文件 + 原子替换，避免并发写产生截断 JSON
-                tmp = f"{self.path}.tmp"
-                with open(tmp, "w", encoding="utf-8") as fh:
-                    json.dump(payload, fh, ensure_ascii=False, indent=2)
-                os.replace(tmp, self.path)
+                # 临时文件 + 原子替换，避免并发写产生截断 JSON。
+                # 唯一文件名: GUI 与 `serve` 是两个进程, 固定 xxx.tmp 会互相踩;
+                # 0600: 这份文件可能含 password_b64(base64 不是加密), 早期按 umask
+                # 落成 0644, 同机任何用户都能读走校园网密码
+                directory = os.path.dirname(os.path.abspath(self.path)) or "."
+                os.makedirs(directory, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(prefix=".zju-cfg-", suffix=".tmp", dir=directory)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        json.dump(payload, fh, ensure_ascii=False, indent=2)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    if sys.platform != "win32":
+                        os.chmod(tmp, 0o600)
+                    os.replace(tmp, self.path)
+                except BaseException:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    raise
+            return True
         except OSError as exc:
             print(f"[ZJUAutoLogin] warning: failed to save config: {exc}", file=sys.stderr)
+            return False
 
     # --------------------------------------------------------------- 字段
 
@@ -353,6 +391,22 @@ class Config:
             self.password_backend = "keyring"
         except Exception:  # noqa: BLE001
             self.password_backend = "file"  # 退化为混淆存储
+
+    def forget_password(self) -> None:
+        """清除已保存的凭据(内存 + 系统凭据管理器 + 配置里的混淆副本)。
+
+        早期实现用 set_password("") 顶掉条目: 凭据管理器里会留下一条空记录,
+        而且后端拒绝空值时旧密码仍在, 界面却已提示"已清除"。
+        """
+        self._plain_password = ""
+        try:
+            import keyring
+
+            keyring.delete_password(KEYRING_SERVICE, "account")
+        except Exception:  # noqa: BLE001 - 条目不存在或后端不支持删除
+            pass
+        self.password_backend = "none"
+        self.data.pop("password_b64", None)
 
     def password_backend_key(self) -> str:
         """返回 'keyring' / 'file' / 'none'，由 UI 翻译成可见文案。"""

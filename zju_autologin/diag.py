@@ -18,7 +18,7 @@ import urllib.request
 from .config import Config
 from .i18n import tr
 from .net import candidate_source_ips
-from .srun import SrunClient, SrunError
+from .srun import SrunClient
 
 
 def _proxy_env() -> list[str]:
@@ -56,12 +56,12 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
 
     client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
 
-    # 2) 门户可达性
+    # 2) 门户可达性 (诊断工具绝不能因为一个意外异常而崩掉)
     try:
         status = client.get_status()
         row(tr("diag.portal"), tr("diag.portal_ok"),
             tr("diag.portal_latency", ms=status.get("latency_ms", "?")))
-    except SrunError as exc:
+    except Exception as exc:  # noqa: BLE001
         row(tr("diag.portal"), tr("diag.portal_fail", err=str(exc)[:80]),
             tr("diag.portal_fail_advice", base_url=cfg.base_url))
         return tr("diag.summary_no_portal"), rows
@@ -74,7 +74,11 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
                 tr("diag.offline_no_cred_advice"))
             return tr("diag.summary_no_cred"), rows
         row(tr("diag.auth"), tr("diag.offline"))
-        result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
+        try:
+            result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
+        except Exception as exc:  # noqa: BLE001 - portal 可达但登录请求失败(网关瞬断等)
+            row(tr("diag.login_test"), str(exc)[:80], tr("diag.login_test_other_advice"))
+            return tr("diag.summary_other"), rows
         err = str(result.get("resp", {}).get("error", ""))
         if result.get("ok"):
             row(tr("diag.login_test"), tr("diag.login_test_ok"))
@@ -96,8 +100,13 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
     row(tr("diag.auth"), tr("diag.online"),
         tr("diag.online_detail", user=status.get("username", ""),
            ip=status.get("ip", "")))
-    from .monitor import probe_internet
-    if probe_internet():
+    # 走 net.probe_internet: monitor 那份会连带 import PyQt6, 而无 GUI 依赖的
+    # 瘦身包/服务器上根本没装 Qt, 早期 import 会让 diagnose 直接栈崩;
+    # 同时按用户配置的代理策略探测, 与保活主流程保持一致
+    from .net import build_opener, probe_internet
+
+    opener = build_opener(cfg.proxy_mode, cfg.proxy_url)
+    if probe_internet(opener=opener):
         row(tr("diag.internet"), tr("diag.internet_ok"))
         return tr("diag.summary_all_ok"), rows
     row(tr("diag.internet"), tr("diag.internet_fail"),

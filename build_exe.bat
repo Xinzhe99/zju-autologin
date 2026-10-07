@@ -6,6 +6,8 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole ^
     --icon resources\zju.ico ^
     --add-data "resources;resources" ^
     --add-data "zju_autologin\i18n;zju_autologin\i18n" ^
+    --add-data "zju_autologin\portals.json;zju_autologin" ^
+    --add-data "zju_autologin\webui_stat.js;zju_autologin" ^
     main.py
 echo.
 echo 打包完成: dist\ZJUAutoLogin.exe

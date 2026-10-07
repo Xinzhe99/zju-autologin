@@ -18,9 +18,13 @@ def load_portals() -> list[dict]:
         try:
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
+            if not isinstance(data, dict):
+                # 根节点不是对象(截断/坏合并后的合法 JSON)时 data.get 会
+                # AttributeError 逸出, 违背"解析失败返回空列表"的约定
+                continue
             portals = data.get("portals")
             if isinstance(portals, list):
                 return [p for p in portals if isinstance(p, dict) and p.get("base_url")]
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError):
             continue
     return []

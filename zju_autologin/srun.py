@@ -34,6 +34,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import http.client
 import json
 import re
 import socket
@@ -68,13 +69,13 @@ _IDX_IP = 8
 
 
 def _safe_int(value) -> int:
-    """字段类型突变(字符串科学计数/None)时兜底为 0, 不让 ValueError 逸出。"""
+    """字段类型突变(字符串科学计数/None)时兜底为 0, 不让异常逸出。"""
     try:
         return int(value or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         try:
             return int(float(value))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
 
 
@@ -90,11 +91,74 @@ def _safe_localtime(ts: int) -> str:
         return ""
 
 
+def _login_outcome(username: str, ip: str, resp: dict) -> dict:
+    """把门户的登录响应翻译成统一结果(便于单测直接喂响应体)。
+
+    "本机 IP 已在线" 属成功语义, 但不同部署把它放在 suc_msg 或 error 里。
+    只认 suc_msg 会把有效会话判成登录失败: 用户收到"登录失败"推送、界面转红,
+    重试还被退避到 10 分钟 —— 双登录/设备超限场景下的典型误报。
+    """
+    ok = resp.get("error") == "ok"
+    suc_msg = str(resp.get("suc_msg", "") or "")
+    already = (suc_msg == "ip_already_online_error"
+               or str(resp.get("error", "")) == "ip_already_online_error")
+    if already:
+        msg = tr("srun.already_online")
+    elif ok:
+        msg = tr("srun.login_ok")
+    else:
+        msg = friendly_error(resp)
+    return {"ok": ok or already, "msg": msg, "username": username, "ip": ip, "resp": resp}
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """阻止自动跟随 302，用于捕获 captive portal 重定向地址。"""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
         return None
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """TCP 连到指定 IP, 但 TLS 按 verify_hostname 校验证书。
+
+    注意 verify_hostname 必须由调用方显式给出: 走 IP 直连时 URL 的 host 就是
+    IP, 只按 self.host 校验会变成"校验证书对 IP 有效", 那是永远失败的。
+    """
+
+    def __init__(self, host: str, pinned_ip: str, verify_hostname: str = "", **kwargs) -> None:
+        super().__init__(host, **kwargs)
+        self._pinned_ip = pinned_ip
+        self._verify_hostname = verify_hostname or host
+
+    def connect(self) -> None:  # noqa: D102 - 复刻 HTTPSConnection.connect, 只换目标地址
+        sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout,
+            getattr(self, "source_address", None))
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+            server_hostname = self._tunnel_host
+        else:
+            server_hostname = self._verify_hostname
+        self.sock = self._context.wrap_socket(sock, server_hostname=server_hostname)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    """把 https 请求钉到指定 IP, 证书仍按原始主机名校验。"""
+
+    def __init__(self, pinned_ip: str, hostname: str, context=None) -> None:
+        super().__init__(context=context)
+        self._pinned_ip = pinned_ip
+        self._hostname = hostname
+
+    def https_open(self, req):  # noqa: D102
+        def factory(host, **kwargs):
+            kwargs.pop("check_hostname", None)
+            return _PinnedHTTPSConnection(host, self._pinned_ip,
+                                          verify_hostname=self._hostname,
+                                          context=self._context, **kwargs)
+
+        return self.do_open(factory, req)
 
 
 # 绕过系统代理的直连 opener（门户与认证 API 只应走校园网直连）
@@ -280,24 +344,31 @@ class SrunClient:
         if not ips:
             raise SrunError(tr("srun.dns_down"))
         if not dns_alive:
-            # DNS 故障兜底: 按缓存 IP 直连。Host 头保虚拟主机; https 证书是签给
-            # 域名的, 换 IP 后校验必失败 —— 此场景退化为"加密但不验身份"
-            # (IP 来自此前直连成功时的缓存, 可信度可接受)
+            # DNS 故障兜底: 按缓存 IP 直连, Host 头保留虚拟主机。
+            # 关键: 证书校验不降级 —— 以前这里关掉校验(verify_mode=CERT_NONE),
+            # 而登录查询串里就带着口令摘要与 XXTEA 密钥(密钥是同串里的明文
+            # challenge), 等于把密码交给路上的任何人。现在改为把 TCP 钉到缓存
+            # IP、TLS 仍按原主机名验证: 中间人拿不出有效证书, 直接失败。
             import ssl
 
             ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            ip_opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler({}),
-                urllib.request.HTTPSHandler(context=ctx))
+            parts = urllib.parse.urlsplit(url)
+            port = parts.port
+            host_header = host if port is None else f"{host}:{port}"
             last_exc: Exception | None = None
             for ip in ips[:2]:
-                fallback_url = urllib.parse.urlunsplit(
-                    urllib.parse.urlsplit(url)._replace(netloc=ip))
-                headers["Host"] = host
+                netloc = ip if port is None else f"{ip}:{port}"
+                fallback_url = urllib.parse.urlunsplit(parts._replace(netloc=netloc))
+                headers["Host"] = host_header
                 try:
                     req = urllib.request.Request(fallback_url, headers=headers)
+                    if parts.scheme == "https":
+                        ip_opener = urllib.request.build_opener(
+                            urllib.request.ProxyHandler({}),
+                            _PinnedHTTPSHandler(ip, host, context=ctx))
+                    else:
+                        ip_opener = urllib.request.build_opener(
+                            urllib.request.ProxyHandler({}))
                     with ip_opener.open(req, timeout=self.timeout) as resp:
                         return resp.read().decode("utf-8", errors="replace")
                 except Exception as exc:  # noqa: BLE001
@@ -392,21 +463,26 @@ class SrunClient:
         if captcha:
             params["captcha"] = captcha
         host = urllib.parse.urlsplit(self.base_url).netloc
-        if extra_headers:
-            self._extra_headers = dict(extra_headers)
-        try:
-            body = self._get(path, params, https_only=https_only,
-                             deadline=time.monotonic() + 25.0)
-        finally:
-            self._extra_headers = {}
-        try:
-            return _parse_jsonp(body)
-        except SrunError:
-            # 响应体不是合法 JSONP: 当前策略拿到的是错误页(代理劫持/网关 502 等),
-            # 清除刚写入的策略缓存, 让下一轮重试其余策略而非永久毒化
-            if _STRATEGY_CACHE.get(host) == "" or True:
-                _STRATEGY_CACHE.pop(host, None)
-            raise
+        last_exc: SrunError | None = None
+        # 最多两轮: 第一轮解析失败说明当前策略拿到的是错误页(代理劫持/网关 502/
+        # 维护页), 摘掉策略缓存后按自然顺序再试一次, 而不是像以前那样直接抛错
+        # 并把坏策略留在缓存里继续毒化后续每一次请求。
+        for attempt in range(2):
+            if extra_headers:
+                self._extra_headers = dict(extra_headers)
+            try:
+                body = self._get(path, params, https_only=https_only,
+                                 deadline=time.monotonic() + 25.0)
+            finally:
+                self._extra_headers = {}
+            try:
+                return _parse_jsonp(body)
+            except SrunError as exc:
+                last_exc = exc
+                cached = _STRATEGY_CACHE.pop(host, None)
+                if attempt or not cached:
+                    break
+        raise last_exc or SrunError(tr("srun.response_bad"))
 
     # ------------------------------------------------------------------ 状态
 
@@ -422,8 +498,9 @@ class SrunClient:
         """
         # 1) JSONP 富形态（带 callback 时返回 JSON，含套餐/流量/余额）
         t0 = time.perf_counter()
+        deadline = time.monotonic() + 25.0  # 与 _jsonp 同一预算, 防多网卡机器单轮阻塞数分钟
         body = self._get("/cgi-bin/rad_user_info",
-                         {"callback": "zjulogin_status"}).strip()
+                         {"callback": "zjulogin_status"}, deadline=deadline).strip()
         latency = int((time.perf_counter() - t0) * 1000)
         if body.endswith(")") and "(" in body:
             try:
@@ -452,7 +529,7 @@ class SrunClient:
                     return self._offline_status(body)
 
         # 2) 纯文本形态：逗号分隔（第 1 列用户名、第 2 列上线时间戳、第 9 列 IP）
-        body = self._get("/cgi-bin/rad_user_info", {}).strip()
+        body = self._get("/cgi-bin/rad_user_info", {}, deadline=deadline).strip()
         if body.startswith("not_online"):
             return self._offline_status(body)
         fields = body.split(",")
@@ -621,6 +698,9 @@ class SrunClient:
             location = exc.headers.get("Location", "") if exc.headers else ""
         except Exception:  # noqa: BLE001
             return {}
+        # captive portal 常用相对 Location(RFC 7231 允许), 与 detect_portal_ac_id
+        # 保持一致先补全; 早期直接判 "http" not in location 会漏掉这类门户
+        location = urllib.parse.urljoin(probe, location)
         if not location or "http" not in location:
             return {}
         split = urllib.parse.urlsplit(location)
@@ -684,13 +764,18 @@ class SrunClient:
                 "user_name": str(it.get("user_name") or ""),
                 "os_name": str(it.get("os_name") or ""),
                 "client_type": str(it.get("client_type") or ""),
-                "add_time": int(it.get("add_time") or 0),
+                "add_time": _safe_int(it.get("add_time")),
             }
             for it in items if isinstance(it, dict)
         ]
 
-    def kick_device(self, username: str, target_ip: str) -> tuple[bool, str]:
-        """把账号在 target_ip 上的在线设备踢下线（设备数超限时使用）。"""
+    def kick_device(self, username: str, target_ip: str, domain: str = "") -> tuple[bool, str]:
+        """把账号在 target_ip 上的在线设备踢下线（设备数超限时使用）。
+
+        domain 必须与 list_online_devices 用同一口径: 运营商后缀账号
+        (如 3230104321@cmcc) 少了后缀会导致签名/账号对不上, 踢号永远失败。
+        """
+        username = (username + domain).strip()
         ts = str(int(time.time()))
         unbind = "1"
         sign = hashlib.sha1(f"{ts}{username}{target_ip}{unbind}{ts}".encode()).hexdigest()
@@ -782,12 +867,4 @@ class SrunClient:
         except SrunError as exc:
             return {"ok": False, "msg": str(exc), "username": username, "ip": ip, "resp": {}}
 
-        ok = resp.get("error") == "ok"
-        suc_msg = str(resp.get("suc_msg", "") or "")
-        if ok and suc_msg == "ip_already_online_error":
-            msg = tr("srun.already_online")
-        elif ok:
-            msg = tr("srun.login_ok")
-        else:
-            msg = friendly_error(resp)
-        return {"ok": ok, "msg": msg, "username": username, "ip": ip, "resp": resp}
+        return _login_outcome(username, ip, resp)

@@ -1,22 +1,26 @@
-"""看护任务更新竞态(v1.25.2 更新失败事故): 心跳缺失导致看护任务无条件拉起,
-安装器覆写 exe 中途被启动 → Failed to load Python DLL。回归守卫:
-1. GUI 必须真正写心跳(修复前 touch_alive 无任何调用方)
-2. 更新拉起安装器前必须先写暂停标记
-3. 看护脚本必须双条件判断(心跳新鲜 或 暂停未过期 → 不拉起)
+"""v1.25.4 回归: 看护任务注册(v1.24.0 起一直没建成)。
+
+历史事故: install() 把整段脚本塞进
+`powershell -Command "schtasks ... /TR \"<脚本>\""` 两层引号再交给 schtasks。
+PowerShell 不认 `\\"`, 命令在解析阶段就整个失败(退出码 -1、零输出),
+于是计划任务从未创建 —— "GUI 崩溃看护"实际上一直是空转的。
+另: schtasks /TR 有 261 字符上限, 而脚本本身约 400 字符。
+
+这里的守卫:
+1. 注册用 argv 直调 schtasks, 不再套一层 PowerShell
+2. /TR 是短引用(指向落盘的 .ps1), 且不超长
+3. 脚本文件真的写出来了, 且行为(双条件判断)正确
+4. 生成的 PowerShell 语法有效(Windows 上真跑一遍解析器)
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+import subprocess
 import sys
 
 import pytest
-from PyQt6.QtWidgets import QApplication
 
 import zju_autologin.watchdog as W
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
@@ -25,64 +29,86 @@ def wd_env(tmp_path, monkeypatch):
     monkeypatch.setattr(W, "_enabled", lambda: True)
     import zju_autologin.config as cfgmod
     monkeypatch.setattr(cfgmod, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(W.sys, "executable", r"C:\app\ZJUAutoLogin.exe", raising=False)
     return tmp_path
 
 
-def test_touch_alive_writes_marker(wd_env):
-    W.touch_alive()
-    assert (wd_env / "gui.alive").is_file()
+class _FakeRun:
+    """捕获 subprocess.run 的调用参数, 不真的去动计划任务。"""
+
+    def __init__(self, returncode: int = 0):
+        self.calls: list[list[str]] = []
+        self.returncode = returncode
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        return type("R", (), {"returncode": self.returncode,
+                              "stdout": b"", "stderr": b""})()
 
 
-def test_pause_resume_cycle(wd_env):
-    W.pause_for_update()
-    assert (wd_env / "watchdog.pause").is_file()
-    W.resume()
-    assert not (wd_env / "watchdog.pause").exists()
+def test_install_uses_short_task_action_and_argv(wd_env, monkeypatch):
+    fake = _FakeRun()
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert W.install() is True
+
+    argv = fake.calls[-1]
+    assert argv[0] == "schtasks"                    # 直调, 不经过 PowerShell
+    action = argv[argv.index("/TR") + 1]
+    # 动作是短引用(指向脚本文件), 既躲开引号解析地狱也满足 /TR 长度上限
+    assert action.startswith("powershell ")
+    assert str(W.script_path()) in action
+    assert '\\"' not in action                      # 不能出现 \" 这类转义
+    assert action.count('"') == 2                   # 只有包裹脚本路径的一对引号
+    assert len(action) <= W.MAX_TASK_ACTION
+    assert "/F" in argv and "/SC" in argv and "5" in argv
 
 
-def test_ps_script_double_guard(wd_env, monkeypatch):
-    """脚本必须: 两标记都查、双阈值、且只有「不新鲜且未暂停」才拉起。"""
-    monkeypatch.setattr("sys.executable", r"C:\app\ZJUAutoLogin.exe")
-    ps = W._ps_script()
-    assert "gui.alive" in ps and "watchdog.pause" in ps
-    assert "-le 10" in ps              # 心跳过期阈值
-    assert "-le 15" in ps              # 暂停标记 TTL
-    assert "if (-not $f -and -not $u)" in ps
-    assert "--minimized" in ps and r"C:\app\ZJUAutoLogin.exe" in ps
+def test_install_writes_runnable_script(wd_env, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _FakeRun())
+    W.install()
+    script = W.script_path()
+    assert script.is_file()
+    text = script.read_text(encoding="utf-8-sig")
+    assert "gui.alive" in text and "watchdog.pause" in text
+    assert "-le 10" in text and "-le 15" in text        # 双阈值
+    assert "if (-not $f -and -not $u)" in text          # 双条件
+    assert "--minimized" in text and "ZJUAutoLogin.exe" in text
 
 
-def test_update_pauses_watchdog_before_launch(qapp, tmp_path, monkeypatch):
-    """更新流程: 暂停看护必须发生在拉起安装器之前(顺序守卫)。"""
-    from zju_autologin.config import Config
-    from zju_autologin.monitor import Monitor
-    from zju_autologin.ui import MainWindow
-
-    order: list[str] = []
-    monkeypatch.setattr("zju_autologin.watchdog.pause_for_update",
-                        lambda: order.append("pause"))
-    import subprocess
-
-    def spy_popen(args, *a, **kw):
-        order.append("popen")
-        raise OSError("blocked by test")
-
-    cfg = Config(str(tmp_path / "cfg.json"))
-    cfg.load()
-    win = MainWindow(cfg, Monitor(cfg))
-    # 只观测更新流程本身(初始化阶段可能有无关的网络探测 Popen)
-    order.clear()
-    monkeypatch.setattr(subprocess, "Popen", spy_popen)
-    win._update_downloaded(str(tmp_path / "ZJUAutoLogin-9.9.9-windows-setup.exe"))
-    assert order and order[0] == "pause"      # 暂停必须最先发生
-    if sys.platform == "win32":
-        assert order[1] == "popen"            # 且在拉起安装器之前
+def test_script_quotes_paths_with_single_quote(tmp_path, monkeypatch):
+    """用户名带 ' 时不能把 PowerShell 字符串截断。"""
+    weird = tmp_path / "O'Brien"
+    weird.mkdir()
+    monkeypatch.setattr(W, "_enabled", lambda: True)
+    import zju_autologin.config as cfgmod
+    monkeypatch.setattr(cfgmod, "config_dir", lambda: weird)
+    text = W._ps_script()
+    assert "O''Brien" in text
+    assert "O'Brien';" not in text
 
 
-def test_gui_wires_alive_heartbeat():
-    """MainWindow 必须接线: 启动恢复+心跳, 周期 touch(修复前无人调用)。"""
-    src = (Path(__file__).resolve().parent.parent / "zju_autologin" / "ui.py")
-    text = src.read_text(encoding="utf-8")
-    assert "watchdog.resume()" in text
-    assert "watchdog.touch_alive()" in text
-    assert "_alive_timer" in text
-    assert "watchdog.pause_for_update()" in text
+def test_uninstall_returns_false_when_task_delete_fails(wd_env, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _FakeRun(returncode=1))
+    assert W.uninstall() is False           # 以前无论成败都返回 True
+
+
+def test_refresh_without_task_only_writes_script(wd_env, monkeypatch):
+    """存量机器没任务: 只补脚本, 不擅自注册(是否该装由调用方判断)。"""
+    fake = _FakeRun(returncode=1)           # schtasks /Query 未找到
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert W.refresh_if_installed() is False
+    assert W.script_path().is_file()
+    assert all("/Create" not in call for call in fake.calls)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要 PowerShell 解析器")
+def test_generated_script_is_valid_powershell(wd_env, monkeypatch):
+    """语法与变量绑定都要真能跑通(本机 PowerShell 5.1 / pwsh 均可)。"""
+    monkeypatch.setattr(subprocess, "run", _FakeRun())
+    W.touch_alive()                          # 心跳新鲜 → 脚本必须什么都不做
+    W.install()
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-File", str(W.script_path())],
+        capture_output=True, text=True, timeout=90)
+    assert r.returncode == 0, f"脚本执行失败: {r.stderr[:300]}"

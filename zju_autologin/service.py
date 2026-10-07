@@ -33,10 +33,48 @@ def _exe_and_args(config_path: str) -> tuple[str, str]:
     """返回计划任务要执行的 (程序, 参数)。"""
     if getattr(sys, "frozen", False):
         return sys.executable, f'watch --config "{config_path}"'
-    pythonw = Path(sys.executable).with_name("pythonw.exe")
-    main_py = Path(__file__).parent.parent / "main.py"
-    interpreter = pythonw if pythonw.is_file() else Path(sys.executable)
-    return str(interpreter), f'"{main_py}" watch --config "{config_path}"'
+    from .autostart import gui_argv
+
+    argv = gui_argv()
+    rest = [*argv[1:], "watch", "--config", config_path]
+    return argv[0], " ".join(f'"{a}"' if " " in a else a for a in rest)
+
+
+def _lockdown_windows_acl(path: Path) -> None:
+    """去掉继承 ACL, 只留 SYSTEM/Administrators。失败即视为事故(绝不留下可读的密码)。"""
+    r = subprocess.run(["icacls", str(path), "/inheritance:r",
+                        "/grant", "SYSTEM:F", "/grant", "Administrators:F"],
+                       capture_output=True, timeout=15,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if r.returncode != 0:
+        detail = (r.stdout + r.stderr).decode("gbk", errors="replace").strip()[:200]
+        raise PermissionError(f"icacls failed ({r.returncode}): {detail}")
+
+
+def _write_private(path: Path, text: str) -> None:
+    """0600 原子写: 同目录临时文件 + fsync + replace。
+
+    直接 write_text 有两个坑: 崩在中途留下半截 JSON(下次启动静默回退默认配置,
+    保活无声失效), 以及 umask 决定的 0644 窗口内密码可被同机其他用户读到。
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if sys.platform == "win32":
+            _lockdown_windows_acl(tmp)
+        else:
+            os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def write_service_config(cfg) -> Path:
@@ -59,30 +97,15 @@ def write_service_config(cfg) -> Path:
     try:
         sdir.mkdir(parents=True, exist_ok=True)
         path = sdir / "config.json"
-        path.write_text(text, encoding="utf-8")
-        if sys.platform == "win32":
-            # 密码混淆存放, 至少不能让同机其他普通用户可读: 仅 SYSTEM/管理员
-            subprocess.run(["icacls", str(path), "/inheritance:r",
-                            "/grant", "SYSTEM:F", "/grant", "Administrators:F"],
-                           capture_output=True, timeout=15,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        else:
-            try:
-                path.chmod(0o600)
-            except OSError:
-                pass
+        _write_private(path, text)
     except PermissionError:
-        if sys.platform != "darwin":
+        if sys.platform == "win32":
             raise  # Windows 计划任务必须指向全局配置, 落到临时文件会让服务读不到凭据
-        # macOS /Library 需 root：先写临时文件，由提权命令 cp 到目标目录
+        # macOS/Linux 需 root：先写临时文件(600)，由提权命令搬运到目标目录
         fd, tmp_name = tempfile.mkstemp(prefix="zju_svc_cfg_", suffix=".json")
         os.close(fd)
         path = Path(tmp_name)
-        path.write_text(text, encoding="utf-8")
-        try:
-            path.chmod(0o600)  # /tmp 1777, 含 password_b64 不能全局可读
-        except OSError:
-            pass
+        _write_private(path, text)
     return path
 
 
@@ -272,8 +295,21 @@ def _linux_unit_path() -> Path:
     return Path("/etc/systemd/system") / f"{UNIT_NAME}.service"
 
 
+def _cli_argv(config_path: str) -> tuple[str, str]:
+    """返回 systemd ExecStart 的 (程序, 参数)。
+
+    冻结版(PyInstaller)的 sys.executable 就是二进制本身, 再加 `-m zju_autologin.cli`
+    会被当成位置参数 → cli.main 认不出, 打印用法后 return 0, 认证永远不会发生,
+    而 Restart=always 会把 systemd 拖进启动限流。
+    """
+    if getattr(sys, "frozen", False):
+        return sys.executable, f'watch --config "{config_path}"'
+    return sys.executable, f'-m zju_autologin.cli watch --config "{config_path}"'
+
+
 def _systemd_unit(cfg_path: str) -> str:
     """systemd 服务单元: 开机自启 + 崩溃自动重启（对应 Windows SYSTEM 计划任务）。"""
+    program, args = _cli_argv(cfg_path)
     return f"""[Unit]
 Description=ZJU Campus Network AutoLogin (srun keepalive)
 After=network-online.target
@@ -281,9 +317,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={sys.executable} -m zju_autologin.cli watch --config {cfg_path}
+ExecStart={program} {args}
 Restart=always
 RestartSec=15
+# 无缓冲输出: 否则 print 被块缓冲, journalctl 里长时间什么都看不到
+Environment=PYTHONUNBUFFERED=1
 # 加固: 服务不需要新权限与真实 /tmp /home
 NoNewPrivileges=yes
 PrivateTmp=yes

@@ -26,7 +26,11 @@ def system_prefers_dark() -> bool:
         if app is not None:
             scheme = app.styleHints().colorScheme()
             if scheme is not None:
-                return scheme.name().endswith("Dark")
+                # PyQt6 里 ColorScheme.name 是 str 而不是方法, 早期写成 name() 会
+                # TypeError 并被下面的 except 吃掉 → macOS/Linux 深色检测永远失灵
+                name = getattr(scheme, "name", scheme)
+                name = name() if callable(name) else name
+                return str(name).endswith("Dark")
     except Exception:  # noqa: BLE001
         pass
     if sys.platform == "win32":

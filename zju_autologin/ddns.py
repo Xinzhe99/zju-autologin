@@ -25,7 +25,8 @@ def ddns_enabled(cfg) -> bool:
 
 
 def _http_json(url: str, payload: dict | None = None, headers: dict | None = None,
-               method: str = "GET", timeout: float = 10.0) -> tuple[int, dict]:
+               method: str = "GET", timeout: float = 10.0,
+               opener=None) -> tuple[int, dict]:
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     for k, v in (headers or {}).items():
@@ -33,7 +34,11 @@ def _http_json(url: str, payload: dict | None = None, headers: dict | None = Non
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # 必须与探测/推送走同一套代理策略: 早期这里用 urlopen 默认 opener,
+        # 用户设了 direct/自定义代理时只有 DDNS 会偷偷走系统代理
+        if opener is None:
+            opener = urllib.request.build_opener()
+        with opener.open(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             return resp.status, (json.loads(body) if body.strip().startswith(("{", "[")) else {})
     except urllib.error.HTTPError as exc:
@@ -56,7 +61,7 @@ def _cf_zone_id(cfg) -> str:
     return (cfg.ddns_token or "").strip()
 
 
-def update_cloudflare(cfg, host: str, ip: str) -> tuple[bool, str]:
+def update_cloudflare(cfg, host: str, ip: str, opener=None) -> tuple[bool, str]:
     zone = _cf_zone_id(cfg)
     if not zone:
         return False, "missing zone id (ddns_token)"
@@ -64,16 +69,26 @@ def update_cloudflare(cfg, host: str, ip: str) -> tuple[bool, str]:
     status, data = _http_json(
         f"https://api.cloudflare.com/client/v4/zones/{zone}/dns_records"
         f"?type={rec_type}&name={urllib.parse.quote(host)}",
-        headers=_cf_headers(cfg))
-    if status != 200 or not data.get("result"):
+        headers=_cf_headers(cfg), opener=opener)
+    if status != 200:
         return False, f"query failed: HTTP {status}"
+    if not data.get("result"):
+        # 记录还不存在(新域名/换过类型): 直接建, 而不是报"HTTP 200 查询失败"
+        status, data = _http_json(
+            f"https://api.cloudflare.com/client/v4/zones/{zone}/dns_records",
+            payload={"type": rec_type, "name": host, "content": ip,
+                     "ttl": 60, "proxied": False},
+            headers=_cf_headers(cfg), method="POST", opener=opener)
+        if status == 200 and data.get("success"):
+            return True, "created"
+        return False, f"create failed: HTTP {status} {json.dumps(data)[:120]}"
     rec = data["result"][0]
     if rec.get("content") == ip:
         return True, "unchanged"
     status, data = _http_json(
         f"https://api.cloudflare.com/client/v4/zones/{zone}/dns_records/{rec['id']}",
         payload={"type": rec_type, "name": host, "content": ip, "ttl": 60, "proxied": False},
-        headers=_cf_headers(cfg), method="PUT")
+        headers=_cf_headers(cfg), method="PUT", opener=opener)
     if status == 200 and data.get("success"):
         return True, "updated"
     return False, f"update failed: HTTP {status} {json.dumps(data)[:120]}"
@@ -105,7 +120,7 @@ def _ali_sign(cfg, params: dict) -> dict:
     return all_p
 
 
-def update_duckdns(cfg, host: str, ip: str) -> tuple[bool, str]:
+def update_duckdns(cfg, host: str, ip: str, opener=None) -> tuple[bool, str]:
     """DuckDNS(免费): host 形如 yourname(无需 .duckdns.org), token 为账户 token。
 
     API: https://www.duckdns.org/update?domains=X&token=Y&ip=Z → "OK" / "KO"
@@ -116,11 +131,15 @@ def update_duckdns(cfg, host: str, ip: str) -> tuple[bool, str]:
     domain = host.removesuffix(".duckdns.org").strip()
     if not domain or not (cfg.ddns_secret or "").strip():
         return False, "missing domain or token"
+    # IPv6 要用 ipv6= 参数, 塞进 ip= 会被 DuckDNS 忽略
+    field = "ipv6" if ":" in ip else "ip"
     url = ("https://www.duckdns.org/update"
            f"?domains={_up.quote(domain)}&token={_up.quote(cfg.ddns_secret.strip())}"
-           f"&ip={_up.quote(ip)}")
+           f"&{field}={_up.quote(ip)}")
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        if opener is None:
+            opener = urllib.request.build_opener()
+        with opener.open(url, timeout=10) as resp:
             body = resp.read().decode("utf-8", errors="replace").strip()
         if body == "OK":
             return True, "updated"
@@ -129,46 +148,70 @@ def update_duckdns(cfg, host: str, ip: str) -> tuple[bool, str]:
         return False, str(exc)[:80]
 
 
-def update_aliyun(cfg, host: str, ip: str) -> tuple[bool, str]:
-    rr, _, domain = host.partition(".")
+def update_aliyun(cfg, host: str, ip: str, opener=None) -> tuple[bool, str]:
+    # 主机名切分: 记录 RR 是"去掉注册域名后的部分", 注册域名要从后缀往上找。
+    # 早期用 partition(".") 取第一段, 遇到 lab.dhcp.example.com 会得到
+    # DomainName=dhcp.example.com(不是任何已注册域名) → InvalidDomainName,
+    # 于是多级域名永远建不了记录。
+    rr, domain = _split_host(cfg, host)
     if not domain:
         return False, "host must be like sub.example.com"
+    rec_type = "AAAA" if ":" in ip else "A"
     # 查记录 ID
     p = _ali_sign(cfg, {"Action": "DescribeSubDomainRecords",
-                        "SubDomain": host, "Type": "A"})
+                        "SubDomain": host, "Type": rec_type})
     status, data = _http_json(
-        "https://alidns.aliyuncs.com/?" + urllib.parse.urlencode(p))
+        "https://alidns.aliyuncs.com/?" + urllib.parse.urlencode(p), opener=opener)
     if status != 200:
         return False, f"query failed: HTTP {status} {json.dumps(data)[:120]}"
     records = data.get("DomainRecords", {}).get("Record", [])
     if not records:
         p2 = _ali_sign(cfg, {"Action": "AddDomainRecord", "DomainName": domain,
-                             "RR": rr, "Type": "A", "Value": ip})
+                             "RR": rr, "Type": rec_type, "Value": ip})
         status, data = _http_json(
-            "https://alidns.aliyuncs.com/?" + urllib.parse.urlencode(p2))
+            "https://alidns.aliyuncs.com/?" + urllib.parse.urlencode(p2), opener=opener)
         return (status == 200, f"add: HTTP {status}" if status != 200 else "created")
     rec = records[0]
     if rec.get("Value") == ip:
         return True, "unchanged"
     p3 = _ali_sign(cfg, {"Action": "UpdateDomainRecord", "RecordId": rec["RecordId"],
-                          "RR": rr, "Type": "A", "Value": ip})
+                          "RR": rr, "Type": rec_type, "Value": ip})
     status, data = _http_json(
-        "https://alidns.aliyuncs.com/?" + urllib.parse.urlencode(p3))
+        "https://alidns.aliyuncs.com/?" + urllib.parse.urlencode(p3), opener=opener)
     return (status == 200, f"update: HTTP {status}" if status != 200 else "updated")
+
+
+def _split_host(cfg, host: str) -> tuple[str, str]:
+    """把主机名拆成 (RR, 注册域名)。可选用户填的 zone(ddns_token 里的域)优先。"""
+    host = host.strip().rstrip(".")
+    zone = ""
+    token = (cfg.ddns_token or "").strip()
+    if "." in token and "/" not in token:  # 阿里云: ddns_token = AccessKeyId, 不是域名
+        zone = ""
+    parts = host.split(".")
+    if len(parts) < 2:
+        return "", ""
+    if zone and host.endswith("." + zone):
+        rr = host[: -(len(zone) + 1)]
+        return (rr or "@"), zone
+    # 默认取"最后两段"为注册域名(example.com), 其余为 RR
+    domain = ".".join(parts[-2:])
+    rr = ".".join(parts[:-2]) or "@"
+    return rr, domain
 
 
 # ------------------------------------------------------------------ 入口
 
-def push_ddns(cfg, ip: str) -> tuple[bool, str]:
+def push_ddns(cfg, ip: str, opener=None) -> tuple[bool, str]:
     """把 ip 更新到配置的域名。由 monitor 在 IP 变化/登录成功时调用。"""
     if not ip or not ddns_enabled(cfg):
         return False, "disabled"
     host = cfg.ddns_domain.strip()
     provider = cfg.ddns_provider
     if provider == "cloudflare":
-        return update_cloudflare(cfg, host, ip)
+        return update_cloudflare(cfg, host, ip, opener=opener)
     if provider == "aliyun":
-        return update_aliyun(cfg, host, ip)
+        return update_aliyun(cfg, host, ip, opener=opener)
     if provider == "duckdns":
-        return update_duckdns(cfg, host, ip)
+        return update_duckdns(cfg, host, ip, opener=opener)
     return False, f"unknown provider {provider}"

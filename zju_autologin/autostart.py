@@ -11,27 +11,37 @@ VALUE_NAME = "ZJUAutoLogin"
 PLIST_ID = "com.zju.autologin"
 
 
-def _command() -> list[str] | str:
+def gui_argv() -> list[str]:
+    """启动 GUI 的 argv(不含 --minimized)。
+
+    解析顺序: 打包 exe > console script > 源码树 main.py > -m 模块。
+    早期实现把 `<包目录>/gui.py` 当脚本跑: 那样 sys.path[0] 是包目录本身,
+    `from zju_autologin import ...` 必 ImportError, 源码用户的开机自启
+    从来没能启动过(而且没人看得到错误)。
+    """
     if getattr(sys, "frozen", False):  # PyInstaller 打包
-        # 自启收进托盘而非每次开机弹主窗
-        if sys.platform == "win32":
-            return f'"{sys.executable}" --minimized'
-        return [sys.executable, "--minimized"]
+        return [sys.executable]
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     interpreter = pythonw if sys.platform == "win32" and os.path.isfile(pythonw) else sys.executable
-    # GUI 入口在包内(pip 安装后有 zju-autologin-gui; 源码用 gui 模块)
-    gui_mod = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
+    import shutil as _sh
+
+    exe = _sh.which("zju-autologin-gui")
+    if exe:
+        return [exe]
+    repo_main = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "main.py")
+    if os.path.isfile(repo_main):
+        return [interpreter, repo_main]
+    return [interpreter, "-m", "zju_autologin.gui"]
+
+
+def _command() -> list[str] | str:
+    """自启命令: 统一在 GUI argv 后追加 --minimized。"""
+    args = [*gui_argv(), "--minimized"]
     if sys.platform == "win32":
-        return f'"{interpreter}" "{gui_mod}" --minimized'
-    if sys.platform.startswith("linux"):
-        # pip 安装优先用 console script(无需 python 路径)
-        import shutil as _sh
-        exe = _sh.which("zju-autologin-gui")
-        if exe:
-            return [exe, "--minimized"]
-        pkg_gui = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui.py")
-        return [interpreter, pkg_gui, "--minimized"]
-    return [interpreter, gui_mod, "--minimized"]
+        # 注册表 Run 项存的是命令行字符串; 带空格的路径必须加引号
+        return " ".join(f'"{a}"' if " " in a else a for a in args)
+    return args
 
 
 # ---------------------------------------------------------------- Windows
@@ -120,9 +130,14 @@ def _xdg_autostart_path() -> str:
 
 
 def _xdg_desktop_entry() -> str:
+    import shlex
+
     program = _command()
     args = program if isinstance(program, list) else [program]
-    argv = " ".join(args) + " --minimized"
+    # desktop 规范要求参数按 shell 规则转义: 路径含空格时
+    # `Exec=/opt/My Apps/zju-autologin` 会被当成"程序 /opt/My + 参数 Apps/..."
+    # 静默启动失败。--minimized 已由 _command() 统一追加, 这里不再重复。
+    argv = " ".join(shlex.quote(str(a)) for a in args)
     return ("[Desktop Entry]" + chr(10)
             + "Type=Application" + chr(10)
             + "Name=ZJU AutoLogin" + chr(10)

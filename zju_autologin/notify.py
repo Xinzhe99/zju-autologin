@@ -97,13 +97,15 @@ def send_notification(cfg, title: str, body: str,
         return False, "notify disabled"
 
     if provider == "bark":
-        # key 支持填设备 key 或自建服务完整地址
+        # key 支持填设备 key 或自建服务完整地址。标题/正文里的 "/" 必须转义,
+        # 否则正文(常含门户返回的 msg/URL)会被 Bark 当成额外的路径段解析
+        safe_key = urllib.parse.quote(key, safe="")
+        safe_title = urllib.parse.quote(title, safe="")
+        safe_body = urllib.parse.quote(body, safe="")
         if key.startswith("http"):
-            base = key.rstrip("/")
-            url = f"{base}/{urllib.parse.quote(title)}/{urllib.parse.quote(body)}"
+            url = f"{key.rstrip('/')}/{safe_title}/{safe_body}"
         else:
-            url = ("https://api.day.app/" + urllib.parse.quote(key)
-                   + f"/{urllib.parse.quote(title)}/{urllib.parse.quote(body)}")
+            url = f"https://api.day.app/{safe_key}/{safe_title}/{safe_body}"
         return _http_json(url, opener=opener)
 
     if provider == "serverchan":

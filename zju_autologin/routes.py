@@ -75,16 +75,22 @@ def route_script(ips: list[str], remove: bool = False) -> str:
 
 
 def _valid_ips(raw) -> list[str]:
-    """过滤出合法 IPv4; 防止配置文件被篡改后把任意字符串拼入提权脚本。"""
+    """过滤出合法 IPv4; 防止配置文件被篡改后把任意字符串拼入提权脚本。
+
+    IPv6 必须排除: 脚本里前缀固定写 /32, '::1/32' 这种前缀非法, 会让删除
+    路由的命令整条失败, 残留路由再也清不掉。
+    """
     import ipaddress
 
     out = []
     for ip in raw or []:
         try:
-            ipaddress.ip_address(str(ip).strip())
-            out.append(str(ip).strip())
+            addr = ipaddress.ip_address(str(ip).strip())
         except ValueError:
             continue
+        if addr.version != 4:
+            continue
+        out.append(str(addr))
     return out
 
 

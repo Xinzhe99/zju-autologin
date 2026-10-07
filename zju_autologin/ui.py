@@ -165,6 +165,7 @@ class UpdateDownloadThread(QThread):
         import json as _json
         import urllib.request
 
+        path = ""
         try:
             req = urllib.request.Request(
                 updates.REPO_API,
@@ -197,14 +198,22 @@ class UpdateDownloadThread(QThread):
                 return
             self.progress.emit(0)
             req = urllib.request.Request(url, headers={"User-Agent": "ZJU-AutoLogin"})
-            # 随机临时名: 降低包在 %TEMP% 停留期间被替换的 TOCTOU 面
-            fd, path = tempfile.mkstemp(prefix="zju_aul_pkg_", suffix=os.path.splitext(name)[1])
+            # 随机临时名: 降低包在 %TEMP% 停留期间被替换的 TOCTOU 面。
+            # 保留原始资产名: _pkg_version 要靠它识别版本, 否则"下到一半又发了
+            # 新版就丢弃旧包"的判断永远拿不到版本号, 会装成旧版
+            fd, path = tempfile.mkstemp(prefix="zju_aul_pkg_",
+                                        suffix="-" + os.path.basename(name))
             os.close(fd)
             got = 0
             opener = build_opener(self._proxy_mode, self._proxy_url)
             with opener.open(req, timeout=30) as resp, open(path, "wb") as fh:
                 while True:
                     if self._stop:
+                        fh.close()
+                        try:
+                            os.remove(path)  # 中断的半截包不留在 %TEMP%
+                        except OSError:
+                            pass
                         return
                     chunk = resp.read(65536)
                     if not chunk:
@@ -228,6 +237,11 @@ class UpdateDownloadThread(QThread):
                     return
             self.finished_ok.emit(path)
         except Exception as exc:  # noqa: BLE001
+            if path:
+                try:
+                    os.remove(path)  # 失败/超时同样不留半截包
+                except OSError:
+                    pass
             self.finished_err.emit(str(exc))
 
 
@@ -358,7 +372,7 @@ class DevicesDialog(QDialog):
 
         def work():
             client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
-            return client.kick_device(cfg.username, ip)
+            return client.kick_device(cfg.username, ip, domain=cfg.domain)
 
         self._kick_thread = _FnThread(work, self)
         self._kick_thread.done.connect(self._kick_done)
@@ -971,7 +985,14 @@ class SettingsWindow(QDialog):
         self._form_labels["theme"].setText(tr("settings.theme"))
         self._edit_user.setPlaceholderText(tr("ph.username"))
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
-        self._edit_pwd.setPlaceholderText(tr("ph.password"))
+        # 已存密码时保留"已保存到 X"的提示: 以前这里无条件盖成通用占位符,
+        # 让 _load_settings_into_ui/_save_settings 写的后端提示永远看不见
+        if self._config.get_password():
+            self._edit_pwd.setPlaceholderText(tr(
+                "ph.password_saved",
+                backend=tr(f"password.storage.{self._config.password_backend_key()}")))
+        else:
+            self._edit_pwd.setPlaceholderText(tr("ph.password"))
         self._edit_key.setPlaceholderText(tr("notify.key"))
         self._edit_base.setPlaceholderText("https://net.zju.edu.cn")
         self._edit_acid.setPlaceholderText("80 / auto")
@@ -1010,6 +1031,18 @@ class SettingsWindow(QDialog):
             self._combo_proxy.setItemText(i, tr(f"net.proxy.{pid}"))
         self._ddns_title.setText(tr("settings.ddns"))
         self._hooks_title.setText(tr("settings.hooks"))
+        # DDNS 下拉与占位符也要跟着语言走(以前只在 __init__ 里设过一次,
+        # 切语言后这一块保持旧语言, 与旁边已刷新的控件混在一起)
+        for i in range(self._combo_ddns.count()):
+            pid = self._combo_ddns.itemData(i)
+            self._combo_ddns.setItemText(i, tr(f"ddns.{pid}"))
+        self._edit_ddns_domain.setPlaceholderText(
+            tr("ddns.domain_ph") + " / " + tr("ddns.duckdns_ph_domain"))
+        self._edit_ddns_token.setPlaceholderText(tr("ddns.token_ph"))
+        self._edit_ddns_secret.setPlaceholderText(
+            tr("ddns.secret_ph") + " / " + tr("ddns.duckdns_ph_secret"))
+        self._edit_hook_on.setPlaceholderText(tr("hook.online_ph"))
+        self._edit_hook_off.setPlaceholderText(tr("hook.offline_ph"))
         for lbl, key in self._ddns_labels:
             lbl.setText(tr(key))
         for lbl, key in self._hook_labels:
@@ -1068,7 +1101,12 @@ class SettingsWindow(QDialog):
         self._edit_key.setText(cfg.notify_key or "")
         self._spin_threshold.setValue(cfg.notify_threshold)
         self._chk_recovery.setChecked(bool(cfg.notify_recovery))
-        self._spin_traffic.setValue(int(cfg.traffic_limit_gb or 0))
+        try:
+            self._spin_traffic.setValue(int(float(cfg.traffic_limit_gb or 0)))
+        except (TypeError, ValueError):
+            # 手改/导入的配置可能是 ""/"unlimited": 以前直接 int() 抛异常会
+            # 让整个设置页(乃至启动流程)崩掉
+            self._spin_traffic.setValue(0)
         self._edit_base.setText(cfg.base_url or "")
         self._edit_acid.setText(str(cfg.ac_id or "80"))
         self._edit_heartbeat.setText(cfg.heartbeat_url or "")
@@ -1159,13 +1197,14 @@ class SettingsWindow(QDialog):
         if pwd:
             cfg.set_password(pwd)
             self._edit_pwd.clear()
+            self._eye.setChecked(False)  # 清空后别把下一个密码明文显示出来
             self._edit_pwd.setPlaceholderText(
                 tr("ph.password_saved", backend=tr(f"password.storage.{cfg.password_backend_key()}")))
 
         boot_ok = autostart.set_enabled(self._chk_boot.isChecked())
         self._chk_boot.setChecked(boot_ok)
         cfg.autostart = boot_ok
-        cfg.save()
+        saved = cfg.save()
         self._main._load_settings_into_ui()  # 回填托盘 自动登录/开机自启 勾选
 
         # 系统级保活在勾选时已即时生效; 此处仅校正异常状态不一致
@@ -1185,7 +1224,8 @@ class SettingsWindow(QDialog):
             self._main._logs_window.retranslate_ui()
 
         self._monitor.config_updated()
-        self._save_hint.setText(tr("hint.save_ok"))
+        # 落盘失败必须说清楚: 以前不管写没写成功都提示"已保存"
+        self._save_hint.setText(tr("hint.save_ok") if saved else tr("hint.save_fail"))
         QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
         self._main._append_log(tr("log.settings_saved",
                                   backend=tr(f"password.storage.{cfg.password_backend_key()}")))
@@ -1266,8 +1306,12 @@ class SettingsWindow(QDialog):
             return
         payload = {"_exported_by": f"ZJU-AutoLogin v{__version__}"}
         for key in _DEFAULTS:
-            if key in ("win_geometry", "notify_key", "smtp_pass", "heartbeat_url", "proxy_url"):
-                continue  # 位置/密钥类字段不导出
+            # 位置 + 密钥类字段不导出: 导出文件是给排障用的, 会被贴到 issue 里。
+            # ddns_token/ddns_secret 是 Cloudflare API Token / 阿里云 AccessKey Secret,
+            # 早期漏在名单外, 等于把云 DNS 的写权限一起送出去。
+            if key in ("win_geometry", "notify_key", "smtp_pass", "smtp_user", "smtp_to",
+                       "heartbeat_url", "proxy_url", "ddns_token", "ddns_secret"):
+                continue
             payload[key] = self._config.data.get(key)
         try:
             with open(path, "w", encoding="utf-8") as fh:
@@ -1318,7 +1362,11 @@ class SettingsWindow(QDialog):
         if i18n.current_lang() != self._config.language:
             i18n.set_lang(self._config.language)
         self.retranslate_ui()
+        # 托盘菜单的勾选状态在主窗里: 不重新载入会与导入的值不一致, 用户点一下
+        # 就把刚导入的设置又改回去
+        self._main._load_settings_into_ui()
         self._main.retranslate_ui()
+        autostart.set_enabled(bool(self._config.autostart))
         self._monitor.config_updated()
         self._save_hint.setText(tr("msg.cfg_imported"))
         QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
@@ -1326,7 +1374,8 @@ class SettingsWindow(QDialog):
 
     def _refresh_service_heartbeat(self) -> None:
         """显示系统级保活服务的心跳状态（watch 进程每轮写入时间戳）。"""
-        if not service.is_installed():
+        # 缓存 5 分钟: schtasks 子进程超时可达 15s, 每分钟查一次会周期性卡界面
+        if not service.is_installed(max_age=300):
             self._service_heartbeat.setText(tr("service.heartbeat_off"))
             return
         from .config import service_config_dir
@@ -1394,14 +1443,18 @@ class LogsWindow(QDialog):
         llay.addWidget(self._log, 1)
         root.addWidget(card, 1)
 
-        # 预加载跨重启的历史日志(最近 80 行), 再叠加本次会话缓冲
+        # 预加载跨重启的历史日志(最近 80 行), 再叠加本次会话缓冲。
+        # 本次会话的每一行都已经写进 app.log, 直接拼接会把最近几十行显示两遍,
+        # 所以历史段只取"缓冲里还没有的"那部分。
         try:
             from .config import config_dir
             app_log = config_dir() / "app.log"
             if app_log.exists():
                 history = app_log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+                buffered = set(main._log_buffer)
                 for line in history:
-                    self._log.appendPlainText(line)
+                    if line not in buffered:
+                        self._log.appendPlainText(line)
         except OSError:
             pass
         for line in main._log_buffer:
@@ -1471,6 +1524,9 @@ class MainWindow(QMainWindow):
         self._downloader: UpdateDownloadThread | None = None
         self._settings_window: SettingsWindow | None = None
         self._logs_window: LogsWindow | None = None
+        self._captcha_dlg = None
+        self._banner_mode = ""              # available / downloading / ready
+        self._watchdog_checked = False
         self._log_buffer: deque[str] = deque(maxlen=self._LOG_BUFFER)
 
         self.setWindowTitle(tr("app.name"))
@@ -1507,10 +1563,28 @@ class MainWindow(QMainWindow):
         from . import watchdog
         watchdog.resume()
         watchdog.touch_alive()
-        watchdog.refresh_if_installed()
+        # schtasks/PowerShell 是同步子进程(超时合计可达 45s), 放在 __init__ 里会
+        # 让窗口迟迟不出现(像卡死); 推迟到事件循环起来之后再做, 且一次运行只做一次
+        QTimer.singleShot(0, self._ensure_watchdog_task)
         self._alive_timer = QTimer(self)
         self._alive_timer.timeout.connect(watchdog.touch_alive)
         self._alive_timer.start(5 * 60 * 1000)
+
+    def _ensure_watchdog_task(self) -> None:
+        """启动后补装/升级 GUI 看护任务(不阻塞界面构建)。"""
+        if self._watchdog_checked:
+            return
+        self._watchdog_checked = True
+        from . import watchdog
+        try:
+            if watchdog.refresh_if_installed():
+                return
+            if sys.platform == "win32" and service.is_installed():
+                # v1.25.3 及更早: schtasks 注册命令被引号解析吃掉, 任务从未建成。
+                # 保活开着却没看护任务的存量机器, 启动时补装一次。
+                watchdog.install()
+        except Exception as exc:  # noqa: BLE001 - 看护装不上不影响主功能
+            self._append_log(f"watchdog: {exc}")
 
     # ------------------------------------------------------------------ UI
 
@@ -1743,12 +1817,22 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(self._config.base_url))
 
     def _on_captcha_required(self) -> None:
-        """门户要求验证码: 弹窗输入(同时推系统通知提醒远程用户)。"""
+        """门户要求验证码: 弹窗输入(同时推系统通知提醒远程用户)。
+
+        已有一个待输入弹窗时直接忽略: worker 每轮检测都会重发该信号,
+        不管不顾会叠出一摞模态框, 还会把主窗反复顶到前台。
+        """
         from .captcha import CaptchaDialog
+        if self._captcha_dlg is not None and self._captcha_dlg.isVisible():
+            return
         self.show_normal()
         dlg = CaptchaDialog(self._config, self)
         dlg.submitted.connect(self._submit_captcha)
-        dlg.exec()
+        self._captcha_dlg = dlg
+        try:
+            dlg.exec()
+        finally:
+            self._captcha_dlg = None
 
     def _submit_captcha(self, code: str, cookie: str) -> None:
         self._monitor.login_with_captcha(code, cookie)
@@ -1771,9 +1855,12 @@ class MainWindow(QMainWindow):
             box.setWindowTitle(tr("diag.title"))
             box.setText(report)
             box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            box.addButton(tr("btn.copy_diag"), QMessageBox.ButtonRole.AcceptRole)
+            copy_btn = box.addButton(tr("btn.copy_diag"), QMessageBox.ButtonRole.AcceptRole)
             box.addButton(tr("btn.close"), QMessageBox.ButtonRole.RejectRole)
-            if box.exec() == 0:
+            box.exec()
+            # 自定义按钮 exec() 返回 2/3, 关闭(含 Esc)返回 0 —— 用 == 0 判断会把
+            # "取消"当成"复制", 而真正的复制按钮永远不生效
+            if box.clickedButton() is copy_btn:
                 QApplication.clipboard().setText(report)
 
         self._diag_thread = _FnThread(work, self)
@@ -1788,13 +1875,9 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            import keyring
-            keyring.set_password("ZJUAutoLogin", "account", "")
-        except Exception:  # noqa: BLE001
-            pass
-        self._config.password_backend = "none"
-        self._config.data.pop("password_b64", None)
+        # 真正删除凭据管理器的条目, 而不是用空密码顶掉(会留下一条空记录,
+        # 且后端拒绝空值时旧密码其实还在, 界面却提示已清除)
+        self._config.forget_password()
         self._config.save()
         self._append_log(tr("reconfig.cleared"))
         self._force_quit = True
@@ -1853,8 +1936,7 @@ class MainWindow(QMainWindow):
             self._update_pkg = ""
         self._update_version = version
         self._update_url = url
-        self._update_banner.setText(tr("btn.update_now", version=version))
-        self._update_banner.show()
+        self._set_banner("available")
         if version != self._notified_update_version:
             self._notified_update_version = version
             self._tray_msg_kind = "update"
@@ -1880,10 +1962,37 @@ class MainWindow(QMainWindow):
         self._downloader.finished_err.connect(self._predownload_fail)
         self._downloader.start()
 
+    def _set_banner(self, mode: str, percent: int = 0) -> None:
+        """按状态渲染更新横幅: available / downloading / ready / failed。
+
+        以前每次 retranslate_ui 都无条件写回"更新到 vX", 预下载完成后的
+        "立即重启更新"和下载中的百分比都会被一次语言/主题切换抹掉。
+        """
+        self._banner_mode = mode
+        if mode == "available":
+            self._update_banner.setText(tr("btn.update_now", version=self._update_version))
+        elif mode == "downloading":
+            self._update_banner.setText(tr("update.downloading", percent=percent))
+        elif mode == "ready":
+            self._update_banner.setText(tr("btn.update_ready", version=self._update_version))
+        self._update_banner.show()
+
+    def _render_banner(self) -> None:
+        """重新翻译后按当前状态重画横幅。"""
+        if not self._update_banner.isVisible():
+            return
+        mode = self._banner_mode or "available"
+        self._set_banner("available" if mode == "failed" else mode)
+
     def _predownload_fail(self, error: str) -> None:
         # 复位引用, 否则非 None 守卫永远 return, 更新功能静默永久失效
         self._downloader = None
         self._append_log(tr("update.predl_fail", msg=error))
+        if self._banner_mode == "downloading":
+            # 用户已经点了更新(横幅切到百分比)却等来一个静默失败:
+            # 必须把错误显示出来, 否则横幅永远停在某个百分比
+            self._update_banner.setText(tr("update.failed", msg=error or "?"))
+            self._banner_mode = "failed"
 
     def _predownload_done(self, path: str) -> None:
         self._downloader = None
@@ -1891,7 +2000,7 @@ class MainWindow(QMainWindow):
         self._pkg_verified = True  # 下载线程已做 SHA256 校验
         # 预下载完成：横幅提示即点即更
         if self._update_banner.isVisible():
-            self._update_banner.setText(tr("btn.update_ready", version=self._update_version))
+            self._set_banner("ready")
         self._append_log(tr("update.predl_done"))
 
     def _do_update(self) -> None:
@@ -1903,20 +2012,20 @@ class MainWindow(QMainWindow):
             # 预下载进行中: 横幅接入进度反馈(只接一次, 防重复点击累积连接)
             if not getattr(self._downloader, "_ui_attached", False):
                 self._downloader._ui_attached = True
-                self._update_banner.setText(tr("update.downloading", percent=0))
+                self._set_banner("downloading", 0)
                 self._downloader.progress.connect(
-                    lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
+                    lambda p: self._set_banner("downloading", p))
             return
         if not getattr(sys, "frozen", False):
             QDesktopServices.openUrl(QUrl(self._update_url or updates.RELEASE_PAGE))
             return
         # 预下载未完成（或失败）→ 现场下载, 横幅显示进度
-        self._update_banner.setText(tr("update.downloading", percent=0))
+        self._set_banner("downloading", 0)
         self._downloader = UpdateDownloadThread(
             self._config.proxy_mode, self._config.proxy_url,
             installed=_is_installed_win(), parent=self)
         self._downloader.progress.connect(
-            lambda p: self._update_banner.setText(tr("update.downloading", percent=p)))
+            lambda p: self._set_banner("downloading", p))
         self._downloader.finished_ok.connect(self._update_downloaded)
         self._downloader.finished_err.connect(self._update_failed)
         self._downloader.start()
@@ -1925,6 +2034,7 @@ class MainWindow(QMainWindow):
         self._downloader = None
         self._update_pkg = ""
         self._update_banner.setText(tr("update.failed", msg=error or "?"))
+        self._banner_mode = "failed"
         self._tray.show()  # 下载失败也要恢复托盘, 否则用户失去唯一操作入口
 
     def _update_downloaded(self, path: str) -> None:
@@ -2077,16 +2187,43 @@ class MainWindow(QMainWindow):
         if old.exists():
             old.unlink()
         os.rename(cur, old)  # Windows 允许重命名正在运行的 exe
-        shutil.move(new_path, str(cur))
+        try:
+            shutil.move(new_path, str(cur))
+        except Exception:
+            # 新 exe 没就位就必须把旧的搬回去: 以前异常只被上层改成"更新失败"
+            # 提示, 磁盘上却已经没有可执行文件了(下次开机什么都起不来)
+            try:
+                if not cur.exists():
+                    os.rename(old, cur)
+            except OSError:
+                pass
+            raise
         # 释放单实例锁后重启新版本
         if runtime.app_lock is not None:
             runtime.app_lock.unlock()
         self._append_log(tr("update.swapped"))
+        # 解压用的临时目录也一并清掉(以前只清 macOS 那一支)
+        staging = Path(new_path).parent
+        if staging.name.startswith("zju_aul_upd_"):
+            shutil.rmtree(staging, ignore_errors=True)
         # 保持更新前的窗口状态: 原本开着窗就别重启进托盘
         cmd = [str(cur)] if self.isVisible() else [str(cur), "--minimized"]
         subprocess.Popen(cmd,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self._cleanup_update_files()
         QApplication.quit()
+
+    def _cleanup_update_files(self) -> None:
+        """清理下载包与解压残留(Windows 侧以前会一直留在 %TEMP%)。"""
+        pkg = self._update_pkg
+        self._update_pkg = ""
+        for path in (pkg,):
+            if not path:
+                continue
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     # ---------------------------------------------------------------- 状态
 
@@ -2186,7 +2323,7 @@ class MainWindow(QMainWindow):
         self._tray_boot.setText(tr("tray.autostart"))
 
         if self._update_banner.isVisible():
-            self._update_banner.setText(tr("btn.update_now", version=self._update_version))
+            self._render_banner()
 
         self._set_status_ui(self._last_status.get("state", "checking"),
                             self._last_status.get("detail", ""))
@@ -2208,8 +2345,13 @@ class MainWindow(QMainWindow):
         self._save_geometry()
         # 关机/注销时必须放行: 隐藏到托盘会拖住系统会话结束
         if self._session_end or self._force_quit or not self._config.minimize_to_tray:
+            # 关窗即退出: 只 accept() 而不 quit() 会留下一个僵尸托盘进程 ——
+            # 事件循环还在, 但 monitor 线程已被 stop(), 保活静默失效, 界面
+            # 重新打开也是死的(按钮全无反应)。托盘图标必须一并收掉。
+            self._tray.hide()
             self._shutdown_background()
             event.accept()
+            QApplication.quit()
             return
         event.ignore()
         self.hide()

@@ -15,7 +15,7 @@ JSON_OFFLINE = json.dumps({"error": "not_online_error", "error_msg": ""})
 
 def make_client(monkeypatch, body: str) -> SrunClient:
     client = SrunClient()
-    monkeypatch.setattr(client, "_get", lambda path, params: body)
+    monkeypatch.setattr(client, "_get", lambda path, params, **kw: body)
     return client
 
 

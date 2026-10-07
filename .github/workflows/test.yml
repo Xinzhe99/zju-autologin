@@ -3,13 +3,14 @@ name: Tests
 on:
   push:
     branches: [main]
+    tags: ["v*"]      # 发版也要跑测试: 否则 tag 上的提交从未被验证就发布了
   pull_request:
 
 jobs:
   test:
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +31,15 @@ jobs:
           pip install pytest keyring
           # 核心协议/CLI 层零依赖; macOS runner 无 Qt 运行库,
           # GUI 测试通过 importorskip 自动跳过, 验证跨平台核心
+          pip install PyQt6 PyQt6-Qt6 || true
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # 三个 Linux 二进制是这个项目的主要交付物, 之前完全没有 Linux 测试腿
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3
+          pip install pytest keyring
           pip install PyQt6 PyQt6-Qt6 || true
 
       - name: Run tests

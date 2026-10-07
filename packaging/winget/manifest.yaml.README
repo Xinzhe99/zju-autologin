@@ -5,9 +5,9 @@
 # 参考: https://github.com/microsoft/winget-pkgs/blob/master/doc/authoring/manifest.md
 # 每次发新版需更新 PackageVersion / InstallerSha256 / ReleaseDate（CLI 有 wingetcreate 可半自动）
 
-id: Xinzhe99.ZJU-AutoLogin 1.24.1
+id: Xinzhe99.ZJU-AutoLogin 1.25.4
 PackageIdentifier: Xinzhe99.ZJU-AutoLogin
-PackageVersion: 1.24.1
+PackageVersion: 1.25.4
 PackageName: ZJU AutoLogin
 Publisher: Xinzhe Xie
 License: MIT
@@ -22,7 +22,7 @@ Tags:
 Installers:
   - Architecture: x64
     InstallerType: inno
-    InstallerUrl: https://github.com/Xinzhe99/zju-autologin/releases/download/v1.24.1/ZJUAutoLogin-1.24.1-windows-setup.exe
+    InstallerUrl: https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.4/ZJUAutoLogin-1.25.4-windows-setup.exe
     InstallerSha256: 5290B5C1635A851679B7BC401BB6EEF09EE686BDF22AE5DF551E785A8D03746C
     Scope: user
     UpgradeBehavior: install

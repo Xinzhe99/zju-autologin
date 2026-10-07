@@ -43,17 +43,28 @@ _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
 
 
 def _interface_signature() -> str:
-    """网卡集合指纹(名称+状态+地址), 变化即网络拓扑变化。纯本地调用。"""
+    """网卡集合指纹(名称+状态+地址), 变化即网络拓扑变化。纯本地调用。
+
+    注意: PyQt6 的枚举不能直接 int()(会 TypeError), 必须取 .value —— 早期
+    实现写的是 int(iface.flags()), 结果是每次都在异常兜底里返回空串,
+    网卡变化监听(2s 一次)形同虚设, 切 Wi-Fi 后要等一整个检测间隔才重登。
+    """
     try:
         from PyQt6.QtNetwork import QNetworkInterface
-
-        parts = []
-        for iface in QNetworkInterface.allInterfaces():
-            addrs = ",".join(e.ip().toString() for e in iface.addressEntries())
-            parts.append(f"{iface.name()}:{int(iface.flags())}:{addrs}")
-        return "|".join(sorted(parts))
-    except Exception:  # noqa: BLE001 - QtNetwork 缺失时退化为纯轮询
+    except ImportError:  # 无 QtNetwork: 退化为纯轮询
         return ""
+    parts = []
+    try:
+        for iface in QNetworkInterface.allInterfaces():
+            try:
+                bits = int(iface.flags().value)
+            except AttributeError:  # 非枚举实现
+                bits = int(iface.flags())
+            addrs = ",".join(e.ip().toString() for e in iface.addressEntries())
+            parts.append(f"{iface.name()}:{bits}:{addrs}")
+    except Exception:  # noqa: BLE001 - 枚举失败仍退化为纯轮询, 但不吞掉其它逻辑
+        return ""
+    return "|".join(sorted(parts))
 
 
 class MonitorWorker(QObject):
@@ -82,11 +93,20 @@ class MonitorWorker(QObject):
         self._usage_date = ""
         self._battery_mode_on = False
         self._running = True
+        self._captcha_pending = False
+        self._hook_family = ""
+        self._logged_family = ""
+        self._ddns_last_ip = ""
+        self._report_month = ""
 
     # ------------------------------------------------------------- 线程入口
 
     @pyqtSlot()
     def start(self) -> None:
+        self._running = True  # stop 后再 start 必须复活, 否则检测被静默跳过
+        if self._timer is not None:
+            self._timer.start()
+            return
         self._timer = QTimer()
         self._timer.setInterval(self._config.interval * 1000)
         self._timer.timeout.connect(self.check_once)
@@ -107,7 +127,7 @@ class MonitorWorker(QObject):
         self._update_timer.setInterval(_UPDATE_INTERVAL * 1000)
         self._update_timer.timeout.connect(self.check_updates)
         self._update_timer.start()
-        QTimer.singleShot(5000, self._maybe_monthly_report)
+        self._maybe_monthly_report()
 
     @pyqtSlot()
     def stop(self) -> None:
@@ -138,7 +158,12 @@ class MonitorWorker(QObject):
 
     @pyqtSlot(str, str)
     def login_captcha(self, captcha: str, cookie: str) -> None:
+        # 用户已应答: 无论本次能否立刻执行都先解除待验证码锁存
+        self._captcha_pending = False
         if self._busy:
+            # 正有一次检测在飞: 直接丢弃会让用户输入的验证码石沉大海
+            self.log(tr("log.captcha_busy"))
+            self.captchaRequired.emit()
             return
         self._busy = True
         try:
@@ -163,8 +188,12 @@ class MonitorWorker(QObject):
                 self.log(tr("log.login_failed", msg=result["msg"]))
                 # 码错可重弹
                 if str(result.get("resp", {}).get("error", "")) in ("vcode_error", "E2801", "captcha_error"):
+                    self._captcha_pending = True
                     self.captchaRequired.emit()
                 self._emit("login_fail", username=result["username"], detail=result["msg"])
+        except Exception as exc:  # noqa: BLE001 - 异常逸出 Qt slot 会让整个进程 abort
+            self.log(tr("log.login_failed", msg=exc))
+            self._emit("login_fail", detail=str(exc)[:120])
         finally:
             self._busy = False
 
@@ -182,7 +211,9 @@ class MonitorWorker(QObject):
 
     @pyqtSlot()
     def notify_test(self) -> None:
-        _ok, msg = send_notification(self._config, tr("app.name"), tr("notify.test_body"))
+        opener = self._opener or build_opener(self._config.proxy_mode, self._config.proxy_url)
+        _ok, msg = send_notification(self._config, tr("app.name"), tr("notify.test_body"),
+                                     opener=opener)
         self.log(tr("notify.test_done", msg=msg))
 
     @pyqtSlot(int)
@@ -330,13 +361,15 @@ class MonitorWorker(QObject):
                 if self._notify_sent and self._config.notify_recovery:
                     self._maybe_push_recovery(status.get("ip") or "")
                 self._reset_notify()
+                self._maybe_monthly_report()
                 # 每日定时主动重登（成功后走登录路径刷新状态）
-                if self._should_proactive_relogin():
+                if self._should_proactive_relogin() and not self._auth_error:
                     self.log(tr("log.proactive"))
+                    # 每天只主动试一次: 以前"成功才记日期", 失败就每轮重试,
+                    # 配合每轮清零的通知去重会变成一分钟一条失败+恢复推送
+                    self._last_proactive_date = time.strftime("%Y-%m-%d")
                     if self._do_login(client=client):
-                        # 成功才记日期: 失败则当天后续检测继续重试
-                        self._last_proactive_date = time.strftime("%Y-%m-%d")
-                    return
+                        return
                 self._check_traffic_limit(int(status.get("all_bytes") or 0))
                 latency_ms = status.get("latency_ms")
                 detail_online = tr("detail.online_ok")
@@ -364,13 +397,13 @@ class MonitorWorker(QObject):
             self._busy = False
 
     def _maybe_push_recovery(self, ip: str) -> None:
-        send_notification(
+        ok, msg = send_notification(
             self._config,
             tr("notify.recovery_title"),
             tr("notify.recovery_body", ip=ip or "-"),
             opener=self._opener,
         )
-        self.log(tr("notify.recovery_sent"))
+        self.log(tr("notify.recovery_sent") if ok else tr("notify.failed", msg=msg))
 
     def _auto_kick_and_retry(self, client: SrunClient, current_ip: str) -> bool:
         """设备超限时自动踢掉最旧的其他在线设备并重登一次。
@@ -469,9 +502,13 @@ class MonitorWorker(QObject):
             self._maybe_push("notify.limit_title", tr("notify.limit_body", msg=msg))
             return False
         if err_code in ("vcode_error", "E2801", "captcha_error"):
-            # 验证码: 需要人工输入图片码(GUI 弹窗), 不锁存——用户输入后重试
-            self.log(tr("log.captcha_needed"))
-            self.captchaRequired.emit()
+            # 验证码: 需要人工输入图片码(GUI 弹窗)。只在上升沿发信号——
+            # 每轮都发会让弹窗在用户还没输完时叠成一摞。
+            self.log(tr("log.captcha_needed") if not self._captcha_pending
+                     else tr("log.captcha_waiting"))
+            if not self._captcha_pending:
+                self._captcha_pending = True
+                self.captchaRequired.emit()
             self._emit("login_fail", username=result["username"], detail=msg)
             return False
         if err_code in _AUTH_ERRORS or tr("err.password_error") in msg or tr("err.username_error") in msg:
@@ -493,10 +530,13 @@ class MonitorWorker(QObject):
         """IP 变化或登录成功后更新 DDNS 解析(静默, 失败仅记日志)。"""
         if not ip or not ddns_enabled(self._config):
             return
-        if ip == getattr(self, "_ddns_last_ip", ""):
+        if ip == self._ddns_last_ip:
             return  # IP 未变
-        self._ddns_last_ip = ip
-        ok, detail = push_ddns(self._config, ip)
+        ok, detail = push_ddns(self._config, ip, opener=self._opener)
+        # 成功才记账: 失败还记下来的话, 换 IP 后第一次推送失败就再也不会重试,
+        # 域名会一直指向旧地址(这个功能存在的意义就是防止这种情况)
+        if ok:
+            self._ddns_last_ip = ip
         self.log(tr("log.ddns_result", domain=self._config.ddns_domain, detail=detail))
 
     def _run_hooks(self, event: str) -> None:
@@ -524,21 +564,32 @@ class MonitorWorker(QObject):
             self._maybe_push("notify.boot_title", tr("notify.boot_body", ip=ip))
 
     def _maybe_monthly_report(self) -> None:
-        """每月首日推送上月网络统计。"""
+        """每月首日推送上月网络统计。
+
+        以前只在启动后 5 秒跑一次: 常驻数月的机器(保活的主要用法)永远收不到
+        月报, 而在 20 号重启一次就会补发。现在每个在线检测周期都看一眼,
+        用 last_month_report 记住本月已发。
+        """
         if not self._config.monthly_report:
             return
-        today = time.strftime("%Y-%m")
-        if self._config.data.get("last_month_report") == today:
+        now = time.localtime()
+        if now.tm_mday != 1:
+            return  # 只在每月 1 日发
+        this_month = time.strftime("%Y-%m", now)
+        if self._report_month == this_month or self._config.data.get("last_month_report") == this_month:
             return
+        prev = time.localtime(time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, -1)) - 86400)
+        prev_month = time.strftime("%Y-%m", prev)
         from .config import read_events
         events = read_events(2000)
         month_events = [e for e in events
-                        if time.strftime("%Y-%m", time.localtime(e.get("ts") or 0)) != today]
+                        if time.strftime("%Y-%m", time.localtime(e.get("ts") or 0)) == prev_month]
         drops = sum(1 for e in month_events if e.get("event") in ("offline", "no_campus"))
-        self._config.data["last_month_report"] = today
+        self._report_month = this_month
+        self._config.data["last_month_report"] = this_month
         self._config.save()
-        if drops == 0 and not month_events:
-            return
+        if not month_events:
+            return  # 上月一条事件都没有 → 无需打扰
         self.log(tr("log.monthly", n=drops))
         if self._config.notify_provider != "none":
             self._maybe_push("notify.monthly_title", tr("notify.monthly_body", n=drops))
@@ -562,11 +613,36 @@ class MonitorWorker(QObject):
         self._maybe_push("notify.traffic_title",
                          tr("notify.traffic_body", used=used, limit=f"{limit_gb:g} GB"))
 
+    # 在线族 / 掉线族: 钩子触发与「掉线次数」统计只看族间跃迁,
+    # checking 这类轮内中间态既不算在线也不算掉线
+    _ONLINE_FAMILY = frozenset({"online", "authed_no_internet"})
+    _DOWN_FAMILY = frozenset({"offline", "no_campus", "need_config",
+                              "auth_error", "login_fail"})
+
+    def _family(self, state: str) -> str:
+        if state in self._ONLINE_FAMILY:
+            return "online"
+        if state in self._DOWN_FAMILY:
+            return "down"
+        return ""
+
     def _emit(self, state: str, username: str = "", ip: str = "",
               login_time: str = "", detail: str = "", ecode: str = "",
               billing: str = "", all_bytes: int = 0) -> None:
         if state != self._prev_state:
-            append_event(state, detail, self._log_dir)
+            # 只把「在线族 ↔ 掉线族」的真实跃迁落盘: checking/login_fail 是轮内
+            # 中间态, 一次掉线会重试几十次, 逐态记录会让「掉线次数」虚高数十倍,
+            # 也会把 events.jsonl 冲掉; 钩子同理, 只在族间跃迁时触发一次。
+            family = self._family(state)
+            if family and family != self._hook_family:
+                self._hook_family = family
+                self._run_hooks("online" if family == "online" else "offline")
+            if family and family != self._logged_family:
+                self._logged_family = family
+                # login_fail 是"掉线族"的入口态(第一次失败时还来不及走到 offline),
+                # 落盘时统一记成 offline: 统计面板与月报都按 offline/no_campus 计数
+                append_event("offline" if state == "login_fail" else state,
+                             detail, self._log_dir)
             self._prev_state = state
         self.statusChanged.emit({
             "state": state,

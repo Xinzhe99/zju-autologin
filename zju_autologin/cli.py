@@ -88,7 +88,7 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
         except OSError:
             pass
 
-    seconds = interval or cfg.interval
+    seconds = max(10, min(600, int(interval))) if interval else cfg.interval
     print(tr("cli.watching", n=seconds))
     append_file_log(tr("cli.watching", n=seconds))
     touch_heartbeat()
@@ -241,14 +241,15 @@ def cmd_disable() -> int:
 
 def cmd_status() -> int:
     import subprocess
-    from pathlib import Path
 
+    from zju_autologin import service
     from zju_autologin.config import service_config_dir
 
-    unit = Path("/etc/systemd/system/zju-autologin.service")
-    if not unit.exists():
+    i18n.set_lang(Config().language)  # 别让 status 的输出语言和 check 不一致
+    installed = service.is_installed(max_age=0)
+    if not installed:
         print("系统级保活: 未安装（sudo zju-autologin enable -u 学号 -p 密码 启用）")
-    else:
+    elif sys.platform.startswith("linux"):
         try:
             r = subprocess.run(["systemctl", "is-active", "zju-autologin"],
                                capture_output=True, text=True, timeout=10)
@@ -264,8 +265,12 @@ def cmd_status() -> int:
             except (OSError, ValueError):
                 pass
         print(f"系统级保活: 已安装 | systemd 状态: {state} | 心跳: {beat}")
+    else:
+        # macOS LaunchDaemon / Windows 计划任务: 之前一律报"未安装"
+        where = "LaunchDaemon" if sys.platform == "darwin" else "计划任务 ZJUAutoLogin"
+        print(f"系统级保活: 已安装（{where}）")
     # 网络状态（不需要 root）
-    cfg = Config(str(service_config_dir() / "config.json")) if unit.exists() else Config()
+    cfg = Config(str(service_config_dir() / "config.json")) if installed else Config()
     return cmd_check(cfg)
 
 
@@ -273,6 +278,7 @@ def main() -> int:
     argv = sys.argv[1:]
     action = argv[0] if argv else "check"
     rest = argv[1:]
+    i18n.set_lang(Config().language)  # 所有子命令统一语言(含 enable/status/diagnose)
 
     # enable/disable/status 不走 --config 解析（enable 自带参数体系）
     if action == "enable":
@@ -289,14 +295,15 @@ def main() -> int:
                     port = int(rest[i + 1])
                 except ValueError:
                     pass
+        if not (1 <= port <= 65535):
+            print(f"端口不合法: {port}（应为 1-65535）")
+            return 2
         from zju_autologin.webui import cmd_serve
         cfg = Config()
-        i18n.set_lang(cfg.language)
         return cmd_serve(cfg, port)
     if action == "diagnose":
         from zju_autologin.diag import format_report
         cfg = Config()
-        i18n.set_lang(cfg.language)
         print(format_report(cfg))
         return 0
     if action in ("version", "--version", "-V"):
@@ -305,16 +312,20 @@ def main() -> int:
         return 0
 
     action, interval, cfg_path = _parse_args(argv)
+    if cfg_path and not os.path.isfile(cfg_path):
+        # 手滑写错路径时以前会静默用默认配置跑, 用户看不出"根本没读你的文件"
+        print(f"配置文件不存在: {cfg_path}")
+        return 2
     cfg = Config(path=cfg_path)
-    i18n.set_lang(cfg.language)
     if action == "check":
         return cmd_check(cfg)
     if action == "login":
         return cmd_login(cfg)
     if action == "watch":
         return cmd_watch(cfg, interval)
+    # 未知子命令必须给非零退出码: 以前打印用法后 return 0, 脚本/CI 以为执行成功
     print(__doc__ or "usage: zju-autologin check|login|watch|enable|disable|status")
-    return 0
+    return 2
 
 
 if __name__ == "__main__":

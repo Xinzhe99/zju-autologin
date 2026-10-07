@@ -13,7 +13,12 @@ if [ "$1" = "--" ]; then
   shift 2
 fi
 [ -n "$PASS" ] || PASS="$PASS_ENV"
-[ -n "$PASS" ] || [ -t 0 ] && { printf '校园网密码: '; stty -echo; read PASS; stty echo; printf '\n'; }
+# 摘要: `[ -n "$PASS" ] || [ -t 0 ] && { ...read... }` 会被解析成
+# ([ -n "$PASS" ] || [ -t 0 ]) && {...} —— 已经给了密码也会去读, 把 PASS 清空,
+# 于是"命令行给了密码"反而必然失败。必须写成显式 if。
+if [ -z "$PASS" ] && [ -t 0 ]; then
+  printf '校园网密码: '; stty -echo; read PASS; stty echo; printf '\n'
+fi
 [ -n "$PASS" ] || { echo "未提供密码"; exit 1; }
 
 [ "$(id -u)" = 0 ] || { echo "需要 root: 请用 sudo/opkg 终端执行"; exit 1; }
