@@ -6,7 +6,7 @@
 # Linux 版本指向 PyPI sdist（协议层零依赖, 无需打包二进制）
 
 pkgname=zju-autologin
-pkgver=1.25.7
+pkgver=1.25.8
 pkgrel=1
 pkgdesc="浙江大学校园网（深澜 Srun）自动登录保活工具"
 arch=('any')

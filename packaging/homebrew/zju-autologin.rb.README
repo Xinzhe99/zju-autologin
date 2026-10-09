@@ -5,7 +5,7 @@
 # 备选: 自建 tap 仓库 Xinzhe99/homebrew-zju，放入此文件即可 brew tap 使用。
 
 cask "zju-autologin" do
-  version "1.25.7"
+  version "1.25.8"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"  # 发版时计算替换
 
   url "https://github.com/Xinzhe99/zju-autologin/releases/download/v#{version}/ZJUAutoLogin-#{version}-macos.dmg"
