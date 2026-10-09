@@ -26,8 +26,8 @@ def _stat_js() -> str:
         return ""
 
 
-def _page(cfg: Config, msg: str = "") -> str:
-    safe_user = html.escape(cfg.username)
+def _page(cfg: Config, msg: str = "", username: str | None = None) -> str:
+    safe_user = html.escape(cfg.username if username is None else username)
     safe_domain = html.escape(cfg.domain)
     safe_portal = html.escape(cfg.base_url)
     note = f"<p class='msg'>{html.escape(msg)}</p>" if msg else ""
@@ -156,10 +156,23 @@ def make_handler(cfg: Config) -> type:
                 self.send_error(413, "too large")
                 return
             data = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
-            cfg.username = (data.get("username", [""])[0] or "").strip()
+            new_user = (data.get("username", [""])[0] or "").strip()
+            pwd = (data.get("password", [""])[0] or "")
+            if (not pwd and cfg.get_password()
+                    and new_user and new_user != cfg.username.strip()):
+                # 改了学号却沿用旧密码: 旧密码属于旧账号, 门户会一直报认证被拒。
+                # 只回显不落盘: 同一个 Config 对象正被监控线程使用,
+                # 若在此处改内存里的学号, 下一轮就会拿旧密码配新学号去撞门户
+                body = _page(cfg, tr("web.account_pwd_needed"), username=new_user).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            cfg.username = new_user
             cfg.domain = (data.get("domain", [""])[0] or "").strip()
             cfg.base_url = (data.get("base_url", [""])[0] or "").strip() or cfg.base_url
-            pwd = (data.get("password", [""])[0] or "")
             if pwd:
                 cfg.set_password(pwd)
             cfg.save()

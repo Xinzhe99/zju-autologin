@@ -356,6 +356,14 @@ class SetupWizard(QDialog):
             self._account_error.setText(tr("wiz.error_need"))
             self._account_error.show()
             return
+        # 改了学号却沿用旧保存密码: 旧密码几乎必然属于旧账号, 门户会一直报
+        # 认证被拒(E2901 ldap_bind error) —— 真实事故, 必须要求重输。
+        # 注意也要挂在账号页: 完成页的 _finish 兜底在这里之前根本不会被经过。
+        if (idx == 2 and not self._edit_pwd.text() and self._has_saved_password
+                and self._edit_user.text().strip() != self._config.username.strip()):
+            self._account_error.setText(tr("wiz.error_pwd_for_new_account"))
+            self._account_error.show()
+            return
         self._apply_school_url()
         if idx < self._stack.count() - 1:
             self._stack.setCurrentIndex(idx + 1)
@@ -391,6 +399,15 @@ class SetupWizard(QDialog):
             return
         cfg = self._config
         self._apply_school_url()
+        # 改了学号却沿用旧保存密码: 旧密码几乎必然属于旧账号, 门户会一直报
+        # 认证被拒(E2901 ldap_bind error) —— 真实事故, 必须要求重输。
+        if (not self._edit_pwd.text() and self._has_saved_password
+                and self._edit_user.text().strip() != cfg.username.strip()):
+            self._stack.setCurrentIndex(2)
+            self._account_error.setText(tr("wiz.error_pwd_for_new_account"))
+            self._account_error.show()
+            self._update_nav()
+            return
         cfg.username = self._edit_user.text()
         cfg.domain = self._edit_domain.text()
         cfg.language = self._lang.currentData() or "auto"

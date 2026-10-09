@@ -36,8 +36,12 @@ from .srun import SrunClient, SrunError
 #   auth_error          认证被拒（密码错误/设备数超限），不再自动重试
 #   login_fail          自动登录失败（临时性错误，退避后重试）
 
+# 这些错误码是"认证被拒"而非临时故障: 置入锁存(auth_error)后不再自动重试,
+# 等用户改好密码(保存设置会清除锁存)再试。E2901(ZJU 报 ldap_bind error,
+# 基本就是密码不对)必须入列 —— 拿着错误密码反复 bind, 门户侧的账号锁定
+# 策略可能直接把账号锁死, 比暂时停止重试严重得多。
 _AUTH_ERRORS = {"password_error", "username_error", "E1002", "access_denied",
-                "user_must_modify_password"}
+                "user_must_modify_password", "E2901"}
 _UPDATE_INTERVAL = 24 * 3600
 _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
 
@@ -278,6 +282,8 @@ class MonitorWorker(QObject):
     def _maybe_push(self, title_key: str, body: str) -> None:
         if self._notify_sent:
             return
+        if (self._config.data.get("notify_provider") or "none") == "none":
+            return  # 用户没配通知渠道: 这是正常状态, 不该刷"推送失败: notify disabled"
         ok, msg = send_notification(self._config, tr(title_key), body, opener=self._opener)
         if ok:
             self._notify_sent = True

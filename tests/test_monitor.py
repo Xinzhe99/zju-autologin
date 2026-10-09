@@ -168,7 +168,7 @@ def test_login_success_resets_fail_count(tmp_path):
 
 
 def test_notify_pushes_after_threshold_and_resets(tmp_path):
-    worker, cfg = make_worker(tmp_path, notify_threshold=2)
+    worker, cfg = make_worker(tmp_path, notify_threshold=2, notify_provider="bark")
     sent = []
     with patch.object(MonitorWorker, "_client") as mc, \
          patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b, **kw: sent.append(t) or (True, "")):
@@ -188,7 +188,9 @@ def test_notify_pushes_after_threshold_and_resets(tmp_path):
 
 
 def test_traffic_alert_monthly_once(tmp_path):
-    worker, cfg = make_worker(tmp_path, traffic_limit_gb=10)
+    # 必须配置了通知渠道才会真正调用推送(未配置渠道时 _maybe_push 静默跳过,
+    # 不再出现旧行为的「通知推送失败: notify disabled」刷屏)
+    worker, cfg = make_worker(tmp_path, traffic_limit_gb=10, notify_provider="bark")
     sent = []
     with patch.object(MonitorWorker, "_client"), \
          patch("zju_autologin.monitor.send_notification", side_effect=lambda c, t, b, **kw: sent.append(t) or (True, "")):

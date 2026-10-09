@@ -1173,6 +1173,11 @@ class SettingsWindow(QDialog):
         if not pwd and not cfg.get_password() and self._edit_user.text():
             self._save_hint.setText(tr("hint.need_password"))
             return
+        if (not pwd and cfg.get_password()
+                and self._edit_user.text().strip() != cfg.username.strip()):
+            # 改了学号却沿用旧密码: 旧密码属于旧账号, 门户会一直报认证被拒
+            self._save_hint.setText(tr("hint.need_password_for_new_account"))
+            return
         cfg.username = self._edit_user.text()
         cfg.domain = self._edit_domain.text()
         cfg.interval = self._spin_interval.value()
