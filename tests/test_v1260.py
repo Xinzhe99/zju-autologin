@@ -129,11 +129,13 @@ def test_monitor_wires_campus_ensure(tmp_path, monkeypatch):
     logs = []
     worker.logLine.connect(logs.append)
     worker._ensure_campus_direct()
-    assert any("系统代理例外" in line for line in logs), logs
+    # 断言条目本身而不是界面语言文案(Windows 中文/Linux 英文都要过)
+    assert any("*.zju.edu.cn" in line for line in logs), logs
     assert cfg.data["campus_bypass_applied"]
 
     # 关掉开关 → 下一轮自动撤销
     cfg.data["campus_direct"] = False
     worker._ensure_campus_direct()
     assert fake.values["ProxyOverride"] == "localhost"
-    assert any("移除" in line for line in logs)
+    assert len(logs) >= 2          # 撤销也记了一条日志
+    assert cfg.data["campus_bypass_applied"] == []
