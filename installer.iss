@@ -96,6 +96,14 @@ begin
     MarkerPath := ExpandConstant('{app}\.install-session');
     Content := GetDateTimeString('yyyymmddhhnnss', #0, #0);
     SaveStringToFile(MarkerPath, Content, False);
+    if WizardSilent then
+    begin
+      { 静默更新(应用内更新)装完就立刻启动新程序: 40+ MB 的 exe 刚落盘,
+        杀软实时扫描/磁盘落盘还没结束, 首次启动会报
+        「Failed to load Python DLL ... python312.dll」(2026-10-14 事故)。
+        等扫描窗口过去再由 [Run] 拉起。可见安装不受影响(用户点按钮需要时间)。 }
+      Sleep(3000);
+    end;
   end;
 end;
 

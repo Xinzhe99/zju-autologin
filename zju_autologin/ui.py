@@ -2255,6 +2255,9 @@ class MainWindow(QMainWindow):
             shutil.rmtree(staging, ignore_errors=True)
         # 保持更新前的窗口状态: 原本开着窗就别重启进托盘
         cmd = [str(cur)] if self.isVisible() else [str(cur), "--minimized"]
+        # 新 exe 刚写完盘: 稍等落盘/杀软扫描结束再启动, 否则首次启动可能报
+        # 「Failed to load Python DLL ... python312.dll」而必须手动重开
+        time.sleep(1.0)
         subprocess.Popen(cmd,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self._cleanup_update_files()
