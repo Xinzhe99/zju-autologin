@@ -17,6 +17,16 @@ import urllib.request
 
 PROXY_MODES = ("system", "direct", "custom")
 
+# Clash/mihomo/sing-box 的 fake-ip 与 TUN 默认地址段
+FAKE_IP_POOL = ipaddress.ip_network("198.18.0.0/15")
+
+
+def is_fake_ip(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip) in FAKE_IP_POOL
+    except ValueError:
+        return False
+
 
 def build_opener(proxy_mode: str = "system", proxy_url: str = "") -> urllib.request.OpenerDirector:
     if proxy_mode == "direct":
@@ -57,7 +67,7 @@ def candidate_source_ips() -> list[str]:
     except OSError:
         infos = []
     ips.extend(info[4][0] for info in infos)
-    fake_pool = ipaddress.ip_network("198.18.0.0/15")
+    fake_pool = FAKE_IP_POOL
     campus_pool = ipaddress.ip_network("10.0.0.0/8")
     seen: set[str] = set()
     pools: dict[str, list[str]] = {"campus": [], "private": [], "other": []}
@@ -137,7 +147,9 @@ def bound_opener(source_ip: str) -> urllib.request.OpenerDirector:
                 source_address=(source_ip, 0), context=self._context)
             return self.do_open(cls, req)
 
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _H(), _HS())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _H(), _HS())
+    opener.zju_source_ip = source_ip  # 门户 IP 钉死兜底路径据此同样绑定源地址
+    return opener
 
 
 # ---------------------------------------------------------------- 外网探测

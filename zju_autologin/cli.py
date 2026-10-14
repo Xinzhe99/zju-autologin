@@ -24,7 +24,7 @@ from zju_autologin import i18n
 from zju_autologin.config import Config
 from zju_autologin.i18n import tr
 from zju_autologin.net import probe_internet
-from zju_autologin.srun import SrunClient, SrunError
+from zju_autologin.srun import AUTH_ERROR_CODES, SrunClient, SrunError
 
 
 def _parse_args(argv: list[str]) -> tuple[str, int | None, str | None]:
@@ -75,6 +75,91 @@ def cmd_login(cfg: Config) -> int:
     return 0 if result["ok"] else 1
 
 
+class _WatchState:
+    """watch 守护的跨轮状态(退避 / 认证锁存 / 配置热加载)。"""
+
+    def __init__(self) -> None:
+        self.fail_count = 0
+        self.last_attempt = 0.0
+        self.latch_msg = ""        # 认证被拒的原因; 非空即锁存
+        self.latch_until = 0.0
+        self.cfg_mtime = 0.0
+        self.last_note = ""        # 上一条写进 app.log 的提示(去重, 不刷屏)
+
+
+# 认证被拒后的冷静期: 无界面守护没人点"保存设置"来解除锁存, 所以不能像 GUI 那样
+# 永久停手 —— 每小时试一次(远低于任何门户的锁号阈值), 配置文件一改立即解除
+_WATCH_LATCH_SECS = 3600
+
+
+def _watch_reload(cfg: Config, st: _WatchState) -> None:
+    """配置文件变化(GUI 同步了新密码 / 手工编辑)时热加载并解除锁存。
+
+    以前 watch 一直用启动时读到的凭据: 改密码后服务进程拿着旧密码每分钟 bind
+    一次, 直到重启 —— 门户的账号锁定策略可能因此把账号锁死。
+    """
+    try:
+        mtime = os.path.getmtime(cfg.path)
+    except OSError:
+        return
+    if st.cfg_mtime and mtime != st.cfg_mtime:
+        cfg.load()
+        st.latch_msg = ""
+        st.fail_count = 0
+        st.last_attempt = 0.0
+    st.cfg_mtime = mtime
+
+
+def _watch_tick(cfg: Config, st: _WatchState, note) -> str:
+    """执行一轮检测/登录, 返回状态: online / offline / no_campus / auth_error。"""
+    client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
+    try:
+        status = client.get_status()
+    except SrunError as exc:
+        # 门户不可达(不在校园网/网线没插): 登录必然失败, 不再每轮空打一次
+        print(f"[x] {exc}")
+        return "no_campus"
+    if status.get("online"):
+        st.fail_count = 0
+        st.latch_msg = ""
+        ok = probe_internet()
+        print(tr("cli.ok_line",
+                 username=status.get("username", ""), ip=status.get("ip", ""),
+                 since=status.get("login_time") or "-",
+                 internet=tr("cli.internet_ok") if ok else tr("cli.internet_bad")))
+        return "online"
+    print(tr("cli.offline_line", state=tr("cli.offline"), url=cfg.base_url))
+    if not cfg.username or not cfg.get_password():
+        note(tr("cli.config_missing") + f" {cfg.path}")
+        return "offline"
+    now = time.time()
+    if st.latch_msg and now < st.latch_until:
+        return "auth_error"
+    # 连续失败指数退避(60s 起步, 封顶 10 分钟), 与 GUI 监控一致
+    backoff = min(60 * (2 ** min(st.fail_count, 4)), 600)
+    if st.fail_count and now - st.last_attempt < backoff:
+        return "offline"
+    st.last_attempt = now
+    result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
+    line = (tr("cli.login_ok_prefix") if result["ok"]
+            else tr("cli.login_fail_prefix")) + tr("cli.auto_relogin", msg=result["msg"])
+    print(line)
+    note(line, dedupe=False)
+    if result["ok"]:
+        st.fail_count = 0
+        st.latch_msg = ""
+        return "online"
+    err = str((result.get("resp") or {}).get("error", ""))
+    if err in AUTH_ERROR_CODES:
+        st.latch_msg = str(result.get("msg") or err)
+        st.latch_until = now + _WATCH_LATCH_SECS
+        st.fail_count = 0
+        note(tr("cli.auth_latched", msg=st.latch_msg, mins=_WATCH_LATCH_SECS // 60))
+        return "auth_error"
+    st.fail_count += 1
+    return "offline"
+
+
 def cmd_watch(cfg: Config, interval: int | None) -> int:
     from pathlib import Path
 
@@ -86,12 +171,19 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
     # /root/.config 或系统配置目录, 用户永远看不到, 排障时等于没有日志。
     log_dir = Path(cfg.path).parent
     heartbeat_file = log_dir / "service.heartbeat"
+    st = _WatchState()
 
     def touch_heartbeat() -> None:
         try:
             heartbeat_file.write_text(str(time.time()), encoding="ascii")
         except OSError:
             pass
+
+    def note(line: str, dedupe: bool = True) -> None:
+        if dedupe and line == st.last_note:
+            return
+        st.last_note = line
+        append_file_log(line, log_dir)
 
     seconds = max(10, min(600, int(interval))) if interval else cfg.interval
     print(tr("cli.watching", n=seconds))
@@ -100,18 +192,15 @@ def cmd_watch(cfg: Config, interval: int | None) -> int:
     prev_state = ""
     while True:
         try:
-            code = cmd_check(cfg)
-            state = "online" if code == 0 else "offline"
+            _watch_reload(cfg, st)
+            state = _watch_tick(cfg, st, note)
             if state != prev_state:
-                append_event(state, "cli watch", log_dir)
+                # 事件按 online/offline/no_campus 记录(统计面板与月报按此计数)
+                append_event("offline" if state == "auth_error" else state,
+                             "cli watch", log_dir)
+                if state == "online" and prev_state:
+                    st.last_note = ""
                 prev_state = state
-            if code != 0:
-                result = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id).login(
-                    cfg.username, cfg.get_password(), domain=cfg.domain)
-                line = (tr("cli.login_ok_prefix") if result["ok"]
-                        else tr("cli.login_fail_prefix")) + tr("cli.auto_relogin", msg=result["msg"])
-                print(line)
-                append_file_log(line, log_dir)
         except KeyboardInterrupt:
             print(tr("cli.exited"))
             return 0

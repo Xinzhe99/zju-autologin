@@ -12,6 +12,7 @@ UI 与 worker 之间全部通过信号-槽（跨线程排队调用）交互，�
 
 from __future__ import annotations
 
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -26,7 +27,7 @@ from .net import build_opener, probe_internet
 from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
-from .srun import SrunClient, SrunError
+from .srun import AUTH_ERROR_CODES, SrunClient, SrunError
 
 # 状态含义（UI 据此着色）：
 #   online              已认证，外网可用
@@ -41,10 +42,13 @@ from .srun import SrunClient, SrunError
 # 等用户改好密码(保存设置会清除锁存)再试。E2901(ZJU 报 ldap_bind error,
 # 基本就是密码不对)必须入列 —— 拿着错误密码反复 bind, 门户侧的账号锁定
 # 策略可能直接把账号锁死, 比暂时停止重试严重得多。
-_AUTH_ERRORS = {"password_error", "username_error", "E1002", "access_denied",
-                "user_must_modify_password", "E2901"}
+_AUTH_ERRORS = AUTH_ERROR_CODES
 _UPDATE_INTERVAL = 24 * 3600
+_UPDATE_RETRY_MS = 3600 * 1000  # 更新检查失败后的重试间隔
 _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
+_CAMPUS_TICK_MS = 3000     # 校内直连自愈节拍: 只读注册表, 开销可忽略
+_CAMPUS_LOG_GAP = 600      # 「已补回例外」日志的最小间隔(秒), Clash 反复重写时不刷屏
+_CAMPUS_GUARD_HEALS = 5    # 10 分钟内被重写这么多次 → 判定 Clash 开了「系统代理守卫」
 
 
 def _interface_signature() -> str:
@@ -77,6 +81,7 @@ class MonitorWorker(QObject):
     logLine = pyqtSignal(str)
     updateAvailable = pyqtSignal(str, str)  # 最新版本号, 下载页
     captchaRequired = pyqtSignal()          # 需要人工输入验证码(GUI 弹窗)
+    campusState = pyqtSignal(str)           # 校内直连状态(campus.status 的取值)
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -103,8 +108,14 @@ class MonitorWorker(QObject):
         self._logged_family = ""
         self._ddns_last_ip = ""
         self._report_month = ""
-        self._campus_hinted = ""
         self._update_fail_logged = False
+        self._update_retry_pending = False
+        self._campus_timer: QTimer | None = None
+        self._campus_state = ""
+        self._campus_tun = False
+        self._campus_last_log = 0.0
+        self._campus_heals: list[float] = []
+        self._campus_guard_hinted = False
 
     # ------------------------------------------------------------- 线程入口
 
@@ -137,11 +148,19 @@ class MonitorWorker(QObject):
         # 月报: 启动后择机看一眼(真正的触发条件在方法内部), 之后每个在线检测周期
         # 都会再看一次, 因此常驻数月的机器也能在每月 1 日发出月报
         QTimer.singleShot(5000, self._maybe_monthly_report)
+        # 校内直连自愈: Clash 一开关系统代理就整段重写例外列表, 以前要等一整个
+        # 检测间隔(默认 60s)才补回, 这段时间校内站点全打不开。改为 3 秒一拍。
+        if sys.platform == "win32":
+            self._campus_timer = QTimer()
+            self._campus_timer.setInterval(_CAMPUS_TICK_MS)
+            self._campus_timer.timeout.connect(self._campus_tick)
+            self._campus_timer.start()
 
     @pyqtSlot()
     def stop(self) -> None:
         self._running = False
-        for timer in (self._timer, self._update_timer, getattr(self, "_if_timer", None)):
+        for timer in (self._timer, self._update_timer, getattr(self, "_if_timer", None),
+                      self._campus_timer):
             if timer is not None:
                 timer.stop()
 
@@ -295,10 +314,20 @@ class MonitorWorker(QObject):
             if manual or not self._update_fail_logged:
                 self._update_fail_logged = True
                 self.log(tr("log.update_check_fail", msg=err))
-            QTimer.singleShot(3600 * 1000, self.check_updates)  # 1h 后重试
+            # 1h 后重试, 但同一时刻只挂一个: 以前每次失败都新挂一个 singleShot,
+            # 长期连不上 GitHub 的机器(校内机房)每天的定时检查都会再多出一条
+            # "每小时重试"链, 跑一个月就是每小时 30 次请求
+            if not self._update_retry_pending:
+                self._update_retry_pending = True
+                QTimer.singleShot(_UPDATE_RETRY_MS, self._retry_update_check)
         elif manual:
             self._update_fail_logged = False
             self.log(tr("log.update_latest", version=__version__))
+
+    def _retry_update_check(self) -> None:
+        self._update_retry_pending = False
+        if self._running:
+            self.check_updates()
 
     # --------------------------------------------------------------- 内部
 
@@ -338,30 +367,54 @@ class MonitorWorker(QObject):
         target_secs = target.tm_hour * 3600 + target.tm_min * 60
         return now_secs >= target_secs
 
-    def _ensure_campus_direct(self) -> None:
+    def _campus_tick(self) -> None:
+        if self._running:
+            self._ensure_campus_direct(detect_tun=False)
+
+    def _ensure_campus_direct(self, detect_tun: bool = True) -> None:
         """校内直连(Clash 系统代理兼容): 保持 Windows 代理例外里有校内条目。
 
         Clash 每次开关系统代理都会整段重写例外列表, 因此周期性检查、缺了就补
-        (默认一个检测间隔内恢复); 日志只在状态变化时记, 不刷屏。
+        (3 秒节拍 + 每轮检测); 日志按状态变化/时间间隔节流, 不刷屏。
+        detect_tun=False 时沿用上次 TUN 判定(枚举网卡比读注册表重, 只随检测周期做)。
         """
         from . import campus
+        cfg = self._config
+        before = list(cfg.data.get("campus_bypass_applied") or [])
         try:
-            event = campus.ensure(self._config)
+            event = campus.ensure(cfg, detect_tun=detect_tun)
+            if detect_tun:
+                self._campus_tun = event == "tun"
+            state = campus.status(cfg, tun=self._campus_tun)
         except Exception:  # noqa: BLE001 - 注册表/权限异常不影响保活主流程
             return
+        if list(cfg.data.get("campus_bypass_applied") or []) != before:
+            cfg.save()  # 记账落盘(撤销时只删自己的条目); 未变化不写盘
+        now = time.time()
         if event == "applied":
-            entries = ", ".join(self._config.data.get("campus_bypass_applied") or [])
-            self.log(tr("log.campus_bypass_applied", entries=entries))
-            self._config.save()      # 记账落盘(撤销时只删自己的条目)
+            self._campus_heals = [t for t in self._campus_heals if now - t < 600] + [now]
+            if now - self._campus_last_log >= _CAMPUS_LOG_GAP:
+                self._campus_last_log = now
+                entries = ", ".join(campus.desired_entries(cfg))
+                self.log(tr("log.campus_bypass_applied", entries=entries))
+            if (len(self._campus_heals) >= _CAMPUS_GUARD_HEALS
+                    and not self._campus_guard_hinted):
+                self._campus_guard_hinted = True
+                self.log(tr("log.campus_guard_hint",
+                            entries=";".join(campus.desired_entries(cfg))))
         elif event == "removed":
+            self._campus_last_log = 0.0
             self.log(tr("log.campus_bypass_removed"))
-            self._config.save()
-        elif event == "pac" and self._campus_hinted != "pac":
-            self._campus_hinted = "pac"
-            self.log(tr("log.campus_pac_hint"))
-        elif event == "tun" and self._campus_hinted != "tun":
-            self._campus_hinted = "tun"
-            self.log(tr("log.campus_tun_hint"))
+        if state != self._campus_state:
+            self._campus_state = state
+            if state == "pac":
+                self.log(tr("log.campus_pac_hint"))
+            elif state == "tun":
+                self.log(tr("log.campus_tun_hint"))
+            self.campusState.emit(state)
+
+    def campus_state(self) -> str:
+        return self._campus_state
 
     def _do_check(self, manual: bool) -> None:
         if self._busy or not self._running:
@@ -385,7 +438,7 @@ class MonitorWorker(QObject):
                     return
 
             if not status["online"]:
-                if not self._config.username or not self._config.get_password():
+                if not self._config.username or not self._config.refresh_password():
                     self._emit("need_config", detail=tr("detail.need_config"))
                     return
                 if not self._config.auto_login and not manual:
@@ -521,19 +574,13 @@ class MonitorWorker(QObject):
                 status = client.get_status()
             except SrunError:
                 status = {}
-            # 回读会话 domain: 运营商用户首次登录后自动补全后缀(下次免填)
-            if status.get("online") and status.get("domain", "") and                     not self._config.domain:
-                try:
-                    from .srun import SrunClient as _SC
-                    rich = _SC(base_url=self._config.base_url,
-                               ac_id=self._config.ac_id).get_status()
-                    sess_domain = rich.get("domain") if isinstance(rich, dict) else ""
-                except Exception:  # noqa: BLE001
-                    sess_domain = ""
-                if sess_domain:
-                    self._config.domain = sess_domain
-                    self._config.save()
-                    self.log(tr("log.domain_backfilled", domain=sess_domain))
+            # 回读会话 domain: 运营商用户首次登录后自动补全后缀(下次免填)。
+            # 刚查到的 status 已带 domain, 以前这里又整轮重查一次门户, 白白多一次请求
+            sess_domain = str(status.get("domain") or "") if status.get("online") else ""
+            if sess_domain and not self._config.domain:
+                self._config.domain = sess_domain
+                self._config.save()
+                self.log(tr("log.domain_backfilled", domain=sess_domain))
             self._emit(
                 "online",
                 username=status.get("username") or result["username"],
@@ -727,6 +774,7 @@ class Monitor(QObject):
     logLine = pyqtSignal(str)
     updateAvailable = pyqtSignal(str, str)
     captchaRequired = pyqtSignal()
+    campusState = pyqtSignal(str)
 
     checkRequested = pyqtSignal()
     loginRequested = pyqtSignal()
@@ -747,6 +795,8 @@ class Monitor(QObject):
         self._worker.logLine.connect(self.logLine)
         self._worker.updateAvailable.connect(self.updateAvailable)
         self._worker.captchaRequired.connect(self.captchaRequired)
+        self._worker.campusState.connect(self._on_campus_state)
+        self._campus_state = ""
 
         self.checkRequested.connect(self._worker.check_manual)
         self.loginRequested.connect(self._worker.login_now)
@@ -759,6 +809,13 @@ class Monitor(QObject):
 
     def start(self) -> None:
         self._thread.start()
+
+    def _on_campus_state(self, state: str) -> None:
+        self._campus_state = state  # 主线程缓存, 设置窗打开时直接读
+        self.campusState.emit(state)
+
+    def campus_state(self) -> str:
+        return self._campus_state
 
     def stop(self) -> None:
         # 异步请求停止: 绝不在主线程同步等待工作线程的长网络操作

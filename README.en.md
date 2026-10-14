@@ -62,7 +62,8 @@ Recommended for remote access: enable **System-level keep-alive** in Settings (a
 - **Heartbeat (dead man's switch)** — ping a healthchecks.io URL every 5 minutes; the external service alerts you when the machine goes completely silent
 - **Device manager & auto-kick** — list online devices when the E2620 limit is hit, kick the oldest with one click (local device protected); optional automatic kick
 - **Diagnostics** — one-click `zju-autologin diagnose`, outage replay timeline, copy-to-clipboard diagnostics, rolling `app.log`
-- **DNS-failure fallback** — connects via cached portal IP when campus DNS is down; **VPN bypass** (direct + NIC binding + optional admin route)
+- **Campus direct with Clash on** (Windows, on by default) — keeps campus domains and `10.*` in the system proxy bypass list, re-applied within 3 s whenever Clash rewrites it; live status on the main window
+- **DNS-failure fallback** — connects via cached portal IP when campus DNS is down or hijacked by Clash fake-ip; **VPN bypass** (direct + NIC binding + optional admin route)
 - **Self-update** — pre-downloaded, SHA256-verified, in-place swap and restart (no installer needed)
 - **Tiny headless footprint** — 8 MB CLI binary for Windows/servers; web config page (`zju-autologin serve`, localhost only) for NAS/Raspberry Pi
 - **i18n** — 简体中文 / English, follows the system language; dark mode follows the system

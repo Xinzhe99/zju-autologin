@@ -18,7 +18,7 @@ import urllib.request
 from .config import Config
 from .i18n import tr
 from .net import candidate_source_ips
-from .srun import SrunClient
+from .srun import AUTH_ERROR_CODES, SrunClient
 
 
 def _proxy_env() -> list[str]:
@@ -54,6 +54,18 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
     else:
         row(tr("diag.proxy"), tr("diag.none"))
 
+    # 1b) 校内直连(Windows): 开着 Clash 时校内站点打不开, 先看这一项
+    import sys
+
+    if sys.platform == "win32":
+        try:
+            from . import campus
+
+            state = campus.status(cfg)
+            row(tr("diag.campus"), tr(f"campus.state.{state}"))
+        except Exception:  # noqa: BLE001 - 诊断不能因为一个附加项崩掉
+            pass
+
     client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
 
     # 2) 门户可达性 (诊断工具绝不能因为一个意外异常而崩掉)
@@ -87,8 +99,7 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
             row(tr("diag.login_test"), tr("diag.login_test_limit"),
                 tr("diag.login_test_limit_advice"))
             return tr("diag.summary_limit"), rows
-        if err in ("password_error", "E1002", "username_error",
-                   "user_must_modify_password"):
+        if err in AUTH_ERROR_CODES:  # 与监控同一份名单(含 E2901 ldap_bind error)
             row(tr("diag.login_test"), result.get("msg", err),
                 tr("diag.login_test_cred_advice"))
             return tr("diag.summary_cred"), rows

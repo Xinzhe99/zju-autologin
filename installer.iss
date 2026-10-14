@@ -81,7 +81,8 @@ begin
   Sleep(800);  { 等文件句柄释放 }
 end;
 
-// 每次安装写一个安装会话标记: 应用靠它判断"这是新装/覆盖安装", 强制弹一次引导向导。
+// 每次安装写一个安装会话标记: 应用靠它判断"这是新装/覆盖安装", 弹一次引导向导
+// (静默安装带 -silent 后缀, 已配置的用户不弹)。
 // v1.24.0 起 gui.py 就在读 {app}\.install-session, 但安装器曾长期没写过它,
 // "新装必见引导"一度从未生效。
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -95,6 +96,10 @@ begin
   begin
     MarkerPath := ExpandConstant('{app}\.install-session');
     Content := GetDateTimeString('yyyymmddhhnnss', #0, #0);
+    { 静默安装(应用内更新/winget)打上 silent 标记: 已配置好的用户升级后不再被
+      引导向导拦住(向导是模态的, 不点掉保活就不启动); 手动重装仍会弹引导 }
+    if WizardSilent then
+      Content := Content + '-silent';
     SaveStringToFile(MarkerPath, Content, False);
     if WizardSilent then
     begin

@@ -388,6 +388,23 @@ class Config:
     def get_password(self) -> str:
         return self._plain_password
 
+    def refresh_password(self) -> bool:
+        """内存里没有密码时重读系统凭据管理器; 返回是否拿到了密码。
+
+        开机自启时凭据服务偶尔比本程序晚就绪, 启动那一刻读到的是空 ——
+        以前会一直停在「未配置账号」直到手动重启程序。
+        """
+        if self._plain_password:
+            return True
+        if self.password_backend == "file" or not self.data.get("username"):
+            return False
+        pwd = self._load_password_keyring()
+        if pwd:
+            self._plain_password = pwd
+            if self.password_backend == "none":
+                self.password_backend = "keyring"
+        return bool(pwd)
+
     def set_password(self, password: str) -> None:
         self._plain_password = password
         try:

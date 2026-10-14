@@ -455,11 +455,15 @@ class StatsDialog(QDialog):
         # 每日流量增量
         usage = read_usage(40)
         deltas: list[float] = []
-        for i, row in enumerate(usage):
-            prev = usage[i - 1]["bytes"] if i > 0 else 0
-            delta = row["bytes"] - prev
-            if delta < 0:  # 计费周期重置
-                delta = row["bytes"]
+        # 第一条读数没有前一天作基准: 以前拿它和 0 相减, 把整个计费周期的累计
+        # 流量画成"第一天"的一根巨柱, 其余柱子全被压扁看不出差异
+        for prev_row, row in zip(usage, usage[1:]):
+            try:
+                delta = int(row["bytes"]) - int(prev_row["bytes"])
+                if delta < 0:  # 计费周期重置
+                    delta = int(row["bytes"])
+            except (KeyError, TypeError, ValueError):
+                continue
             deltas.append(delta / 1024 ** 3)
         if deltas:
             usage_title = QLabel(tr("stats.usage_title"))
@@ -486,7 +490,7 @@ class StatsDialog(QDialog):
         drops_title.setObjectName("cardTitle")
         lay.addWidget(drops_title)
         table = QTableWidget(0, 3)
-        table.setHorizontalHeaderLabels(["#", tr("field.last_check"), tr("status.offline")])
+        table.setHorizontalHeaderLabels(["#", tr("stats.col_time"), tr("stats.col_event")])
         table.horizontalHeader().setStretchLastSection(True)
         table.setColumnWidth(0, 40)
         table.setColumnWidth(1, 150)
@@ -498,7 +502,12 @@ class StatsDialog(QDialog):
             table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             table.setItem(row, 1, QTableWidgetItem(time.strftime(
                 "%m-%d %H:%M:%S", time.localtime(e.get("ts") or 0))))
-            table.setItem(row, 2, QTableWidgetItem(str(e.get("detail") or e.get("event") or "")))
+            kind = str(e.get("event") or "")
+            text = tr(f"status.{kind}") if kind in STATUS_KEYS else kind
+            detail = str(e.get("detail") or "")
+            if detail and detail != text:
+                text = f"{text} · {detail}" if text else detail
+            table.setItem(row, 2, QTableWidgetItem(text))
         if table.rowCount() == 0:
             table.insertRow(0)
             table.setItem(0, 0, QTableWidgetItem("-"))
@@ -602,7 +611,14 @@ class PortalWizardDialog(QDialog):
 
 
 class SettingsWindow(QDialog):
-    """独立设置窗口：账号 / 选项 / 掉线通知 / 高级选项。"""
+    """独立设置窗口: 账号 / 常规 / 代理与校内直连 / 掉线通知 / 高级(折叠)。
+
+    布局原则(v1.27 重排): 常用在上、小众折叠; 每节一张卡片、标签列等宽对齐;
+    「保存设置」固定在窗口底栏, 不必滚到底才能保存。核心功能「校内直连」从
+    「高级选项」里挪到独立一节 —— 以前它被折叠藏着, 反而 DDNS/钩子常驻展开。
+    """
+
+    _LABEL_W = 132  # 各节标签列统一宽度(中英文最长标签都放得下)
 
     def __init__(self, config: Config, monitor: Monitor, main: "MainWindow") -> None:
         super().__init__(main)
@@ -611,46 +627,31 @@ class SettingsWindow(QDialog):
         self._main = main
         self._route_thread: _FnThread | None = None
         self._service_thread: _FnThread | None = None
+        self._service_sync_thread: _FnThread | None = None
+        self._i18n_labels: list[tuple[QLabel, str]] = []  # (控件, 词条) 统一重译
         self.setWindowTitle(tr("card.settings"))
         self.setWindowModality(Qt.WindowModality.NonModal)
-        self.resize(760, 780)
-        self.setMinimumSize(700, 560)
+        self.resize(720, 760)
+        self.setMinimumSize(620, 520)
+        self.setStyleSheet(theme.get_qss(config.theme))
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        outer.addWidget(scroll)
+        outer.addWidget(scroll, 1)
         content = QWidget()
         scroll.setWidget(content)
         root = QVBoxLayout(content)
         root.setContentsMargins(20, 16, 20, 16)
         root.setSpacing(12)
-        self.setStyleSheet(theme.get_qss(config.theme))
+        win = sys.platform == "win32"
 
-        card = QFrame()
-        card.setObjectName("card")
-        glay = QVBoxLayout(card)
-        glay.setContentsMargins(20, 16, 20, 16)
-        glay.setSpacing(10)
-        self._settings_title = QLabel()
-        self._settings_title.setObjectName("cardTitle")
-        glay.addWidget(self._settings_title)
-
-        form = QGridLayout()
-        form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(10)
-        self._form_labels: dict[str, QLabel] = {}
-
-        def add_row(row: int, key: str, widget: QWidget) -> None:
-            label = QLabel()
-            label.setObjectName("fieldKey")
-            label.setFixedWidth(110)
-            form.addWidget(label, row, 0)
-            form.addWidget(widget, row, 1)
-            self._form_labels[key] = label
-
+        # ================================================================ 账号
+        _card, _v, grid = self._section(root, "settings.sec_account")
+        self._settings_title = _v.itemAt(0).widget()  # 兼容旧引用: 首节标题
         self._edit_user = QLineEdit()
         self._edit_domain = QLineEdit()
         pwd_host = QFrame()
@@ -674,13 +675,31 @@ class SettingsWindow(QDialog):
                 QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
         pwd_lay.addWidget(self._edit_pwd, 1)
         pwd_lay.addWidget(self._eye)
+        self._form_labels: dict[str, QLabel] = {}
+        self._form_labels["username"] = self._row(grid, "field.username", self._edit_user)
+        self._form_labels["domain"] = self._row(grid, "field.domain", self._edit_domain)
+        self._form_labels["password"] = self._row(grid, "field.password", pwd_host)
+        self._btn_reconfig = QPushButton()
+        self._btn_reconfig.setObjectName("secondary")
+        self._btn_reconfig.clicked.connect(lambda: self._main._start_reconfig())
+        self._reconfig_hint = QLabel()
+        self._reconfig_hint.setObjectName("statusDetail")
+        self._reconfig_hint.setWordWrap(True)
+        self._i18n_labels.append((self._reconfig_hint, "settings.reconfig_hint"))
+        rc_row = QHBoxLayout()
+        rc_row.addWidget(self._reconfig_hint, 1)
+        rc_row.addWidget(self._btn_reconfig)
+        self._span(grid, rc_row)
 
+        # ================================================================ 常规
+        _card, _v, grid = self._section(root, "settings.sec_general")
         self._spin_interval = QSpinBox()
         self._spin_interval.setRange(10, 600)
+        self._spin_interval.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self._spin_interval.setMinimumWidth(120)
         self._combo_lang = QComboBox()
         for lang in ("auto", "zh-CN", "en-US"):
             self._combo_lang.addItem(self._lang_label(lang), lang)
-
         # 主题：分段胶囊（点击即时生效）
         seg_host = QFrame()
         seg_host.setObjectName("segHost")
@@ -701,98 +720,136 @@ class SettingsWindow(QDialog):
             self._seg_buttons[mode] = btn
             seg_lay.addWidget(btn)
         self._seg_buttons["auto"].setChecked(True)
-
-        add_row(0, "username", self._edit_user)
-        add_row(1, "domain", self._edit_domain)
-        add_row(2, "password", pwd_host)
-        add_row(3, "interval", self._spin_interval)
-        add_row(4, "language", self._combo_lang)
-        add_row(5, "theme", seg_host)
-        glay.addLayout(form)
+        self._form_labels["interval"] = self._row(grid, "field.interval", self._spin_interval)
+        self._form_labels["language"] = self._row(grid, "field.language", self._combo_lang)
+        self._form_labels["theme"] = self._row(grid, "settings.theme", seg_host)
 
         self._chk_auto = QCheckBox()
         self._chk_tray = QCheckBox()
         self._chk_updates = QCheckBox()
         self._chk_boot = QCheckBox()
+        opts = QGridLayout()
+        opts.setHorizontalSpacing(24)
+        opts.setVerticalSpacing(8)
+        # 两列网格: 以前四个复选框挤一行, 英文界面或窄窗口下互相截断
+        for idx, chk in enumerate((self._chk_auto, self._chk_boot,
+                                   self._chk_tray, self._chk_updates)):
+            opts.addWidget(chk, idx // 2, idx % 2)
+        opts.setColumnStretch(2, 1)
+        self._span(grid, opts)
         self._chk_service = QCheckBox()
         self._chk_service.toggled.connect(self._on_service_toggled)
         self._service_busy = False
-        opts = QHBoxLayout()
-        opts.setSpacing(16)
-        for chk in (self._chk_auto, self._chk_tray, self._chk_updates, self._chk_boot):
-            opts.addWidget(chk)
-        opts.addStretch(1)
-        glay.addLayout(opts)
-        glay.addWidget(self._chk_service)
+        self._span(grid, self._chk_service)
         self._service_hint = QLabel()
         self._service_hint.setObjectName("statusDetail")
         self._service_hint.setWordWrap(True)
-        glay.addWidget(self._service_hint)
+        self._span(grid, self._service_hint)
         self._service_heartbeat = QLabel()
         self._service_heartbeat.setObjectName("statusDetail")
-        glay.addWidget(self._service_heartbeat)
+        self._span(grid, self._service_heartbeat)
         self._hb_timer = QTimer(self)
         self._hb_timer.setInterval(60_000)
         self._hb_timer.timeout.connect(self._refresh_service_heartbeat)
         if sys.platform in ("win32", "darwin") or sys.platform.startswith("linux"):
             self._hb_timer.start()
 
-        self._notify_title = QLabel()
-        self._notify_title.setObjectName("cardTitle")
-        glay.addWidget(self._notify_title)
+        # ======================================================= 代理与校内直连
+        self._net_card, _v, grid = self._section(root, "settings.sec_network")
+        self._combo_proxy = QComboBox()
+        for pid in ("system", "direct", "custom"):
+            self._combo_proxy.addItem(tr(f"net.proxy.{pid}"), pid)
+        self._combo_proxy.currentIndexChanged.connect(self._on_proxy_mode_changed)
+        self._edit_proxy_url = QLineEdit()
+        self._edit_proxy_url.setPlaceholderText("http://127.0.0.1:7890")
+        self._edit_proxy_url.setEnabled(False)
+        self._row(grid, "net.proxy", self._combo_proxy)
+        self._lbl_proxy_url = self._row(grid, "net.proxy.url", self._edit_proxy_url)
+        self._proxy_hint = QLabel()
+        self._proxy_hint.setObjectName("statusDetail")
+        self._proxy_hint.setWordWrap(True)
+        self._i18n_labels.append((self._proxy_hint, "settings.proxy_hint"))
+        self._span(grid, self._proxy_hint)
+        # 校内直连(Clash 系统代理兼容): 开着代理也能访问校内站点
+        self._chk_campus = QCheckBox()
+        self._chk_campus.toggled.connect(self._on_campus_toggled)
+        self._span(grid, self._chk_campus)
+        self._edit_campus_extra = QLineEdit()
+        self._edit_campus_extra.setPlaceholderText(tr("settings.campus_extra_ph"))
+        self._lbl_campus_extra = self._row(grid, "settings.campus_extra", self._edit_campus_extra)
+        self._campus_status = QLabel()
+        self._campus_status.setObjectName("campusLine")
+        self._campus_status.setWordWrap(True)
+        self._span(grid, self._campus_status)
+        self._campus_hint = QLabel()
+        self._campus_hint.setObjectName("statusDetail")
+        self._campus_hint.setWordWrap(True)
+        self._span(grid, self._campus_hint)
+        if not win:  # Windows 系统代理例外机制才有意义
+            for w in (self._chk_campus, self._edit_campus_extra, self._lbl_campus_extra,
+                      self._campus_status, self._campus_hint):
+                w.setVisible(False)
+        # 门户直连路由(Windows, 需管理员): TUN/全局 VPN 下保活的最后手段
+        self._btn_route = QPushButton()
+        self._btn_route.setObjectName("secondary")
+        self._btn_route.clicked.connect(self._toggle_portal_route)
+        self._route_hint = QLabel()
+        self._route_hint.setObjectName("statusDetail")
+        self._route_hint.setWordWrap(True)
+        self._i18n_labels.append((self._route_hint, "route.hint"))
+        route_row = QHBoxLayout()
+        route_row.addWidget(self._route_hint, 1)
+        route_row.addWidget(self._btn_route)
+        self._span(grid, route_row)
+        if not win:
+            self._btn_route.setVisible(False)
+            self._route_hint.setVisible(False)
+
+        # ================================================================ 通知
+        _card, _v, grid = self._section(root, "settings.notify")
+        self._notify_title = _v.itemAt(0).widget()
         self._notify_hint = QLabel()
         self._notify_hint.setObjectName("statusDetail")
         self._notify_hint.setWordWrap(True)
-        glay.addWidget(self._notify_hint)
-        notify_grid = QGridLayout()
-        notify_grid.setHorizontalSpacing(10)
-        notify_grid.setVerticalSpacing(8)
+        self._span(grid, self._notify_hint)
         self._combo_provider = QComboBox()
         for pid in ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "webhook", "smtp"):
             self._combo_provider.addItem(self._provider_label(pid), pid)
-        self._edit_key = QLineEdit()
-        self._btn_notify_test = QPushButton()
-        self._btn_notify_test.setObjectName("secondary")
-        self._btn_notify_test.clicked.connect(self._monitor.notify_test)
         self._combo_provider.currentIndexChanged.connect(self._on_provider_changed)
+        self._edit_key = QLineEdit()
+        self._row(grid, "notify.provider", self._combo_provider)
+        self._row(grid, "notify.key", self._edit_key)
         self._spin_threshold = QSpinBox()
         self._spin_threshold.setRange(1, 10)
+        self._spin_threshold.setMinimumWidth(120)
         self._spin_traffic = QSpinBox()
         self._spin_traffic.setRange(0, 2048)
-        self._chk_recovery = QCheckBox()
-        self._notify_labels: list[QLabel] = []
-        for col, (label_key, widget) in enumerate((
-            ("notify.provider", self._combo_provider),
-            ("notify.key", self._edit_key),
-        )):
-            label = QLabel()
-            label.setObjectName("fieldKey")
-            notify_grid.addWidget(label, 0, col * 2)
-            notify_grid.addWidget(widget, 0, col * 2 + 1)
-            self._notify_labels.append(label)
-        actions = QHBoxLayout()
-        self._lbl_threshold = QLabel()
-        self._lbl_threshold.setObjectName("fieldKey")
-        actions.addWidget(self._lbl_threshold)
-        actions.addWidget(self._spin_threshold)
-        actions.addSpacing(14)
-        actions.addWidget(self._chk_recovery)
-        actions.addSpacing(14)
+        self._spin_traffic.setMinimumWidth(120)
+        num_row = QHBoxLayout()
+        num_row.setSpacing(10)
+        num_row.addWidget(self._spin_threshold)
+        num_row.addSpacing(18)
         self._lbl_traffic = QLabel()
         self._lbl_traffic.setObjectName("fieldKey")
-        actions.addWidget(self._lbl_traffic)
-        actions.addWidget(self._spin_traffic)
-        actions.addStretch(1)
-        actions.addWidget(self._btn_notify_test)
-        notify_grid.addLayout(actions, 1, 0, 1, 4)
-        glay.addLayout(notify_grid)
-
+        num_row.addWidget(self._lbl_traffic)
+        num_row.addWidget(self._spin_traffic)
+        num_row.addStretch(1)
+        self._lbl_threshold = self._row(grid, "notify.threshold", num_row)
+        self._chk_recovery = QCheckBox()
+        self._chk_monthly = QCheckBox()
+        chk_row = QHBoxLayout()
+        chk_row.setSpacing(24)
+        chk_row.addWidget(self._chk_recovery)
+        chk_row.addWidget(self._chk_monthly)
+        chk_row.addStretch(1)
+        self._span(grid, chk_row)
         # SMTP 表单（仅邮件渠道显示）
         self._smtp_frame = QFrame()
         smtp_grid = QGridLayout(self._smtp_frame)
         smtp_grid.setContentsMargins(0, 0, 0, 0)
-        smtp_grid.setHorizontalSpacing(10)
-        smtp_grid.setVerticalSpacing(8)
+        smtp_grid.setHorizontalSpacing(14)
+        smtp_grid.setVerticalSpacing(10)
+        smtp_grid.setColumnStretch(1, 1)
         self._edit_smtp_host = QLineEdit()
         self._edit_smtp_host.setPlaceholderText("smtp.qq.com")
         self._spin_smtp_port = QSpinBox()
@@ -806,183 +863,188 @@ class SettingsWindow(QDialog):
         self._edit_smtp_to = QLineEdit()
         self._edit_smtp_to.setPlaceholderText("you@qq.com")
         self._smtp_labels: list[QLabel] = []
-        smtp_rows = (
-            ("smtp.host", self._edit_smtp_host),
-            ("smtp.port", self._spin_smtp_port),
-            ("smtp.user", self._edit_smtp_user),
-            ("smtp.pass", self._edit_smtp_pass),
-            ("smtp.to", self._edit_smtp_to),
-        )
-        for row, (key, widget) in enumerate(smtp_rows):
-            label = QLabel()
-            label.setObjectName("fieldKey")
-            label.setFixedWidth(110)
-            smtp_grid.addWidget(label, row, 0)
-            smtp_grid.addWidget(widget, row, 1)
-            self._smtp_labels.append(label)
+        for key, widget in (("smtp.host", self._edit_smtp_host),
+                            ("smtp.port", self._spin_smtp_port),
+                            ("smtp.user", self._edit_smtp_user),
+                            ("smtp.pass", self._edit_smtp_pass),
+                            ("smtp.to", self._edit_smtp_to)):
+            self._smtp_labels.append(self._row(smtp_grid, key, widget))
         self._smtp_frame.setVisible(False)
-        glay.addWidget(self._smtp_frame)
-
-        # 渠道教程链接
+        self._span(grid, self._smtp_frame)
+        # 渠道教程链接 + 发送测试
         self._lbl_guide = QLabel()
         self._lbl_guide.setObjectName("statusDetail")
         self._lbl_guide.setOpenExternalLinks(True)
-        self._lbl_guide.setText(
-            f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
-        glay.addWidget(self._lbl_guide)
+        self._btn_notify_test = QPushButton()
+        self._btn_notify_test.setObjectName("secondary")
+        self._btn_notify_test.clicked.connect(self._monitor.notify_test)
+        test_row = QHBoxLayout()
+        test_row.addWidget(self._lbl_guide)
+        test_row.addStretch(1)
+        test_row.addWidget(self._btn_notify_test)
+        self._span(grid, test_row)
 
+        # ============================================================ 高级(折叠)
         self._btn_advanced = QToolButton()
-        self._btn_advanced.setObjectName("eye")
+        self._btn_advanced.setObjectName("disclosure")
         self._btn_advanced.setCheckable(True)
-        self._btn_advanced.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self._btn_advanced.setFixedHeight(24)
+        self._btn_advanced.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_advanced.setArrowType(Qt.ArrowType.RightArrow)
+        self._btn_advanced.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        root.addWidget(self._btn_advanced)
         self._advanced_host = QFrame()
-        adv_grid = QGridLayout(self._advanced_host)
-        adv_grid.setContentsMargins(0, 0, 0, 0)
-        adv_grid.setHorizontalSpacing(10)
-        adv_grid.setVerticalSpacing(8)
+        adv_lay = QVBoxLayout(self._advanced_host)
+        adv_lay.setContentsMargins(0, 0, 0, 0)
+        adv_lay.setSpacing(12)
+
+        _card, _v, grid = self._section(adv_lay, "settings.sec_portal")
         self._edit_base = QLineEdit()
         self._edit_acid = QLineEdit()
-        self._edit_heartbeat = QLineEdit()
-        self._edit_heartbeat.setToolTip(tr("hb.hint"))
-        self._combo_proxy = QComboBox()
-        for pid in ("system", "direct", "custom"):
-            self._combo_proxy.addItem(tr(f"net.proxy.{pid}"), pid)
-        self._combo_proxy.currentIndexChanged.connect(self._on_proxy_mode_changed)
+        self._btn_portal = QPushButton()
+        self._btn_portal.setObjectName("secondary")
+        self._btn_portal.clicked.connect(self._show_portal_wizard)
+        base_row = QHBoxLayout()
+        base_row.setSpacing(8)
+        base_row.addWidget(self._edit_base, 1)
+        base_row.addWidget(self._btn_portal)
+        self._row(grid, "field.base_url", base_row)
+        self._row(grid, "field.ac_id", self._edit_acid)
         self._chk_proactive = QCheckBox()
         self._time_proactive = QTimeEdit(QTime(3, 0))
         self._time_proactive.setDisplayFormat("HH:mm")
+        pro_row = QHBoxLayout()
+        pro_row.addWidget(self._chk_proactive)
+        pro_row.addWidget(self._time_proactive)
+        pro_row.addStretch(1)
+        self._span(grid, pro_row)
         self._chk_auto_kick = QCheckBox()
-        self._adv_labels: list[QLabel] = []
-        for row, (label_key, widget) in enumerate((
-            ("field.base_url", self._edit_base),
-            ("field.ac_id", self._edit_acid),
-            ("hb.url", self._edit_heartbeat),
-            ("net.proxy", self._combo_proxy),
-        )):
-            label = QLabel()
-            label.setObjectName("fieldKey")
-            adv_grid.addWidget(label, row, 0)
-            adv_grid.addWidget(widget, row, 1)
-            self._adv_labels.append(label)
-        self._edit_proxy_url = QLineEdit()
-        self._edit_proxy_url.setPlaceholderText("http://127.0.0.1:7890")
-        self._edit_proxy_url.setEnabled(False)
-        self._lbl_proxy_url = QLabel()
-        self._lbl_proxy_url.setObjectName("fieldKey")
-        adv_grid.addWidget(self._lbl_proxy_url, 4, 0)
-        adv_grid.addWidget(self._edit_proxy_url, 4, 1)
-        # 校内直连(Clash 系统代理兼容): 开着代理也能访问校内站点
-        self._chk_campus = QCheckBox()
-        self._edit_campus_extra = QLineEdit()
-        self._edit_campus_extra.setPlaceholderText(tr("settings.campus_extra_ph"))
-        campus_row = QHBoxLayout()
-        campus_row.addWidget(self._chk_campus)
-        campus_row.addSpacing(8)
-        campus_row.addWidget(self._edit_campus_extra, 1)
-        adv_grid.addLayout(campus_row, 5, 0, 1, 2)
-        self._campus_hint = QLabel()
-        self._campus_hint.setObjectName("statusDetail")
-        self._campus_hint.setWordWrap(True)
-        adv_grid.addWidget(self._campus_hint, 6, 0, 1, 2)
-        if sys.platform != "win32":  # Windows 系统代理例外机制才有意义
-            self._chk_campus.setVisible(False)
-            self._edit_campus_extra.setVisible(False)
-            self._campus_hint.setVisible(False)
+        self._span(grid, self._chk_auto_kick)
+        self._edit_heartbeat = QLineEdit()
+        self._edit_heartbeat.setToolTip(tr("hb.hint"))
+        self._row(grid, "hb.url", self._edit_heartbeat)
+
         # DDNS 区块
-        self._ddns_title = QLabel()
-        self._ddns_title.setObjectName("cardTitle")
-        glay.addWidget(self._ddns_title)
-        ddns_grid = QGridLayout()
-        ddns_grid.setHorizontalSpacing(10)
-        ddns_grid.setVerticalSpacing(8)
+        _card, _v, grid = self._section(adv_lay, "settings.ddns")
+        self._ddns_title = _v.itemAt(0).widget()
         self._combo_ddns = QComboBox()
-        for pid, name in (("off", tr("ddns.off")), ("duckdns", tr("ddns.duckdns")), ("cloudflare", tr("ddns.cloudflare")), ("aliyun", tr("ddns.aliyun"))):
-            self._combo_ddns.addItem(name, pid)
+        for pid in ("off", "duckdns", "cloudflare", "aliyun"):
+            self._combo_ddns.addItem(tr(f"ddns.{pid}"), pid)
         self._edit_ddns_domain = QLineEdit()
-        self._edit_ddns_domain.setPlaceholderText(tr("ddns.domain_ph") + " / " + tr("ddns.duckdns_ph_domain"))
         self._edit_ddns_token = QLineEdit()
-        self._edit_ddns_token.setPlaceholderText(tr("ddns.token_ph"))
         self._edit_ddns_secret = QLineEdit()
         self._edit_ddns_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self._edit_ddns_secret.setPlaceholderText(tr("ddns.secret_ph") + " / " + tr("ddns.duckdns_ph_secret"))
         self._ddns_labels = []
-        for row, (key, w) in enumerate((("ddns.provider_lbl", self._combo_ddns), ("field.domain", self._edit_ddns_domain), ("ddns.token_ph", self._edit_ddns_token), ("ddns.secret_ph", self._edit_ddns_secret))):
-            lbl = QLabel()
-            lbl.setObjectName("fieldKey")
-            ddns_grid.addWidget(lbl, row, 0)
-            ddns_grid.addWidget(w, row, 1)
-            self._ddns_labels.append((lbl, key))
-        self._chk_monthly = QCheckBox()
-        ddns_grid.addWidget(self._chk_monthly, 4, 0, 1, 2)
-        glay.addLayout(ddns_grid)
+        for key, w in (("ddns.provider_lbl", self._combo_ddns),
+                       ("ddns.domain_lbl", self._edit_ddns_domain),
+                       ("ddns.token_lbl", self._edit_ddns_token),
+                       ("ddns.secret_lbl", self._edit_ddns_secret)):
+            self._ddns_labels.append((self._row(grid, key, w), key))
 
         # 状态钩子
-        self._hooks_title = QLabel()
-        self._hooks_title.setObjectName("cardTitle")
-        glay.addWidget(self._hooks_title)
+        _card, _v, grid = self._section(adv_lay, "settings.hooks")
+        self._hooks_title = _v.itemAt(0).widget()
         self._edit_hook_on = QLineEdit()
-        self._edit_hook_on.setPlaceholderText(tr("hook.online_ph"))
         self._edit_hook_off = QLineEdit()
-        self._edit_hook_off.setPlaceholderText(tr("hook.offline_ph"))
-        hook_grid = QGridLayout()
-        hook_grid.setVerticalSpacing(8)
         self._hook_labels = []
-        for row, (w, key) in enumerate(((self._edit_hook_on, "hook.online_ph"), (self._edit_hook_off, "hook.offline_ph"))):
-            lbl = QLabel()
-            lbl.setObjectName("fieldKey")
-            hook_grid.addWidget(lbl, row, 0)
-            hook_grid.addWidget(w, row, 1)
-            self._hook_labels.append((lbl, key))
-        glay.addLayout(hook_grid)
+        for w, key in ((self._edit_hook_on, "hook.online_lbl"),
+                       (self._edit_hook_off, "hook.offline_lbl")):
+            self._hook_labels.append((self._row(grid, key, w), key))
 
-        prow = QHBoxLayout()
-        prow.addWidget(self._chk_proactive)
-        prow.addWidget(self._time_proactive)
-        prow.addSpacing(14)
-        prow.addWidget(self._chk_auto_kick)
-        prow.addStretch(1)
+        # 配置备份
+        _card, _v, grid = self._section(adv_lay, "settings.sec_backup")
         self._btn_export = QPushButton()
         self._btn_export.setObjectName("secondary")
         self._btn_export.clicked.connect(self._export_config)
         self._btn_import = QPushButton()
         self._btn_import.setObjectName("secondary")
         self._btn_import.clicked.connect(self._import_config)
-        self._btn_portal = QPushButton()
-        self._btn_portal.setObjectName("secondary")
-        self._btn_portal.clicked.connect(self._show_portal_wizard)
-        self._btn_route = QPushButton()
-        self._btn_route.setObjectName("secondary")
-        self._btn_route.clicked.connect(self._toggle_portal_route)
-        prow.addWidget(self._btn_export)
-        prow.addWidget(self._btn_import)
-        prow.addWidget(self._btn_portal)
-        prow.addWidget(self._btn_route)
-        adv_grid.addLayout(prow, 7, 0, 1, 2)
-        self._advanced_host.setVisible(False)
-        # 开关紧贴它控制的内容块: 以前按钮在「掉线通知」区下面,
-        # 而展开的内容在 DDNS/钩子两节之后, 用户点了开关根本找不到展开到哪去了
-        glay.addWidget(self._btn_advanced)
-        self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
-        glay.addWidget(self._advanced_host)
+        io_row = QHBoxLayout()
+        io_row.addWidget(self._btn_export)
+        io_row.addWidget(self._btn_import)
+        io_row.addStretch(1)
+        self._span(grid, io_row)
 
-        save_row = QHBoxLayout()
+        self._advanced_host.setVisible(False)
+        self._btn_advanced.toggled.connect(self._on_advanced_toggled)
+        root.addWidget(self._advanced_host)
+        root.addStretch(1)
+
+        # ============================================== 底栏(固定, 不随内容滚动)
+        footer = QFrame()
+        footer.setObjectName("footerBar")
+        save_row = QHBoxLayout(footer)
+        save_row.setContentsMargins(20, 10, 20, 12)
         self._save_hint = QLabel("")
         self._save_hint.setObjectName("statusDetail")
         self._save_hint.setWordWrap(True)
         self._btn_save = QPushButton()
         self._btn_save.setObjectName("primary")
+        self._btn_save.setDefault(True)
         self._btn_save.clicked.connect(self._save_settings)
-        save_row.addStretch(1)
-        save_row.addWidget(self._save_hint)
+        save_row.addWidget(self._save_hint, 1)
         save_row.addSpacing(10)
         save_row.addWidget(self._btn_save)
-        glay.addLayout(save_row)
-        root.addWidget(card)
-        root.addStretch(1)
+        outer.addWidget(footer)
 
+        monitor.campusState.connect(self._on_campus_state)
         self._load_settings_into_ui()
         self.retranslate_ui()
+
+    # ---------------- 布局工具 ----------------
+
+    def _section(self, parent_layout, title_key: str):
+        """一节 = 一张卡片: 标题 + 两列表格(标签列等宽)。返回 (卡片, 竖排, 表格)。"""
+        card = QFrame()
+        card.setObjectName("card")
+        vlay = QVBoxLayout(card)
+        vlay.setContentsMargins(20, 16, 20, 16)
+        vlay.setSpacing(10)
+        title = QLabel()
+        title.setObjectName("cardTitle")
+        vlay.addWidget(title)
+        self._i18n_labels.append((title, title_key))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(1, 1)
+        vlay.addLayout(grid)
+        parent_layout.addWidget(card)
+        return card, vlay, grid
+
+    def _row(self, grid: QGridLayout, key: str, widget) -> QLabel:
+        label = QLabel()
+        label.setObjectName("fieldKey")
+        label.setFixedWidth(self._LABEL_W)
+        label.setWordWrap(True)
+        row = grid.rowCount()
+        grid.addWidget(label, row, 0)
+        if isinstance(widget, QWidget) and widget.sizePolicy().horizontalPolicy() in (
+                QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed):
+            # 定宽控件(数字框/分段胶囊)单独占一列时, 该列没有可伸展的东西,
+            # 整张表格会被挤到卡片中间; 用尾随弹簧把剩余宽度吃掉
+            box = QHBoxLayout()
+            box.setContentsMargins(0, 0, 0, 0)
+            box.addWidget(widget)
+            box.addStretch(1)
+            grid.addLayout(box, row, 1)
+        elif isinstance(widget, QWidget):
+            grid.addWidget(widget, row, 1)
+        else:
+            grid.addLayout(widget, row, 1)
+        self._i18n_labels.append((label, key))
+        return label
+
+    @staticmethod
+    def _span(grid: QGridLayout, item) -> None:
+        row = grid.rowCount()
+        if isinstance(item, QWidget):
+            grid.addWidget(item, row, 0, 1, 2)
+        else:
+            grid.addLayout(item, row, 0, 1, 2)
+
+    def _on_advanced_toggled(self, on: bool) -> None:
+        self._advanced_host.setVisible(on)
+        self._btn_advanced.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
 
     # ---------------- 静态文案 ----------------
 
@@ -1010,12 +1072,10 @@ class SettingsWindow(QDialog):
 
     def retranslate_ui(self) -> None:
         self.setWindowTitle(tr("card.settings"))
-        self._settings_title.setText(tr("card.settings"))
+        for label, key in self._i18n_labels:
+            label.setText(tr(key))
         self._btn_save.setText(tr("btn.save"))
         self._save_hint.setText("")
-        for key, label in self._form_labels.items():
-            label.setText(tr(f"field.{key}"))
-        self._form_labels["theme"].setText(tr("settings.theme"))
         self._edit_user.setPlaceholderText(tr("ph.username"))
         self._edit_domain.setPlaceholderText(tr("ph.domain"))
         # 已存密码时保留"已保存到 X"的提示: 以前这里无条件盖成通用占位符,
@@ -1026,9 +1086,11 @@ class SettingsWindow(QDialog):
                 backend=tr(f"password.storage.{self._config.password_backend_key()}")))
         else:
             self._edit_pwd.setPlaceholderText(tr("ph.password"))
+        self._btn_reconfig.setText(tr("btn.reconfig"))
         self._edit_key.setPlaceholderText(tr("notify.key"))
         self._edit_base.setPlaceholderText("https://net.zju.edu.cn")
         self._edit_acid.setPlaceholderText("80 / auto")
+        self._edit_heartbeat.setPlaceholderText("https://hc-ping.com/…")
         self._edit_heartbeat.setToolTip(tr("hb.hint"))
         self._spin_interval.setSuffix(" " + tr("unit.seconds", n="").strip())
         self._chk_auto.setText(tr("chk.auto_login"))
@@ -1037,10 +1099,9 @@ class SettingsWindow(QDialog):
         self._chk_boot.setText(tr("chk.autostart"))
         self._chk_service.setText(tr("service.chk"))
         self._service_hint.setText(tr("service.hint"))
-        self._notify_title.setText(tr("settings.notify"))
         self._notify_hint.setText(tr("notify.keyword_hint"))
         self._chk_recovery.setText(tr("notify.recovery"))
-        self._lbl_threshold.setText(tr("notify.threshold"))
+        self._chk_monthly.setText(tr("chk.monthly"))
         self._lbl_traffic.setText(tr("settings.traffic_limit"))
         self._spin_traffic.setSuffix(" GB")
         self._btn_notify_test.setText(tr("btn.notify_test"))
@@ -1054,21 +1115,14 @@ class SettingsWindow(QDialog):
         for i in range(self._combo_provider.count()):
             pid = self._combo_provider.itemData(i)
             self._combo_provider.setItemText(i, self._provider_label(pid))
-        for label, key in zip(self._notify_labels, ("notify.provider", "notify.key")):
-            label.setText(tr(key))
-        for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id", "hb.url", "net.proxy")):
-            label.setText(tr(key))
-        self._lbl_proxy_url.setText(tr("net.proxy.url"))
         self._chk_campus.setText(tr("settings.campus_direct"))
         self._campus_hint.setText(tr("settings.campus_direct_hint"))
         self._edit_campus_extra.setPlaceholderText(tr("settings.campus_extra_ph"))
+        self._refresh_campus_status()
         for i in range(self._combo_proxy.count()):
             pid = self._combo_proxy.itemData(i)
             self._combo_proxy.setItemText(i, tr(f"net.proxy.{pid}"))
-        self._ddns_title.setText(tr("settings.ddns"))
-        self._hooks_title.setText(tr("settings.hooks"))
-        # DDNS 下拉与占位符也要跟着语言走(以前只在 __init__ 里设过一次,
-        # 切语言后这一块保持旧语言, 与旁边已刷新的控件混在一起)
+        # DDNS 下拉与占位符也要跟着语言走
         for i in range(self._combo_ddns.count()):
             pid = self._combo_ddns.itemData(i)
             self._combo_ddns.setItemText(i, tr(f"ddns.{pid}"))
@@ -1079,24 +1133,32 @@ class SettingsWindow(QDialog):
             tr("ddns.secret_ph") + " / " + tr("ddns.duckdns_ph_secret"))
         self._edit_hook_on.setPlaceholderText(tr("hook.online_ph"))
         self._edit_hook_off.setPlaceholderText(tr("hook.offline_ph"))
-        for lbl, key in self._ddns_labels:
-            lbl.setText(tr(key))
-        for lbl, key in self._hook_labels:
-            lbl.setText(tr(key))
-        self._chk_monthly.setText(tr("chk.monthly"))
         self._btn_export.setText(tr("btn.export_cfg"))
         self._btn_import.setText(tr("btn.import_cfg"))
         self._btn_portal.setText(tr("btn.portal_wizard"))
         self._btn_route.setText(tr("route.remove" if self._config.portal_route_added else "route.add"))
         self._btn_route.setToolTip(tr("route.hint"))
-        if sys.platform != "win32":
-            # 直连路由为 Windows 专属; 系统级保活在 macOS 由 LaunchDaemon 提供
-            self._btn_route.setVisible(False)
         self._lbl_guide.setText(
             f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
-        for label, key in zip(self._smtp_labels, ("smtp.host", "smtp.port", "smtp.user", "smtp.pass", "smtp.to")):
-            label.setText(tr(key))
         self._edit_smtp_pass.setPlaceholderText(tr("smtp.pass_ph"))
+
+    # ---------------- 校内直连状态 ----------------
+
+    def _on_campus_toggled(self, on: bool) -> None:
+        self._edit_campus_extra.setEnabled(on)
+        self._lbl_campus_extra.setEnabled(on)
+
+    def _on_campus_state(self, _state: str) -> None:
+        self._refresh_campus_status()
+
+    def _refresh_campus_status(self) -> None:
+        """「当前状态」一行: 让用户知道开关到底有没有生效、为什么没生效。"""
+        state = self._monitor.campus_state() if hasattr(self._monitor, "campus_state") else ""
+        if not state or sys.platform != "win32":
+            self._campus_status.setVisible(False)
+            return
+        self._campus_status.setVisible(True)
+        self._campus_status.setText(tr("campus.status_line", state=tr(f"campus.state.{state}")))
 
     def _apply_theme(self, mode: str) -> None:
         qss = theme.get_qss(mode)
@@ -1165,6 +1227,7 @@ class SettingsWindow(QDialog):
         self._edit_proxy_url.setText(cfg.proxy_url or "")
         self._edit_proxy_url.setEnabled(pm == "custom")
         self._chk_campus.setChecked(bool(cfg.campus_direct))
+        self._on_campus_toggled(bool(cfg.campus_direct))
         self._edit_campus_extra.setText(str(cfg.data.get("campus_bypass_extra") or ""))
         self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
         self._chk_auto_kick.setChecked(bool(cfg.auto_kick))
@@ -1202,6 +1265,7 @@ class SettingsWindow(QDialog):
             # 改了学号却沿用旧密码: 旧密码属于旧账号, 门户会一直报认证被拒
             self._save_hint.setText(tr("hint.need_password_for_new_account"))
             return
+        svc_before = self._service_fingerprint()
         cfg.username = self._edit_user.text()
         cfg.domain = self._edit_domain.text()
         cfg.interval = self._spin_interval.value()
@@ -1275,6 +1339,42 @@ class SettingsWindow(QDialog):
         self._main._append_log(tr("log.settings_saved",
                                   backend=tr(f"password.storage.{cfg.password_backend_key()}")))
         self._monitor.check_once()
+        if svc_before != self._service_fingerprint() and actual:
+            self._offer_service_sync()
+
+    def _service_fingerprint(self) -> tuple:
+        """系统级保活读的是独立的全局配置: 这些字段变了, 服务那份就过期了。"""
+        cfg = self._config
+        return (cfg.username, cfg.domain, cfg.get_password(), cfg.base_url,
+                str(cfg.ac_id), cfg.interval)
+
+    def _offer_service_sync(self) -> None:
+        """账号/密码/门户改了 → 同步到系统级保活(需管理员确认一次)。
+
+        以前改完密码, SYSTEM 服务仍拿旧密码每分钟登录一次, 直到用户想起来
+        关掉再打开「系统级保活」—— 期间门户可能因连续认证失败锁定账号。
+        """
+        answer = QMessageBox.question(
+            self, tr("service.sync_title"), tr("service.sync_confirm"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            self._main._append_log(tr("service.sync_skipped"))
+            return
+        cfg = self._config
+        self._chk_service.setEnabled(False)
+
+        def work():
+            return service.install(cfg)
+
+        def done(result):
+            self._chk_service.setEnabled(True)
+            ok = not isinstance(result, Exception) and bool(result and result[0])
+            self._main._append_log(tr("service.sync_ok") if ok else tr("service.sync_fail"))
+
+        self._service_sync_thread = _FnThread(work, self)
+        self._service_sync_thread.done.connect(done)
+        self._service_sync_thread.finished.connect(self._service_sync_thread.deleteLater)
+        self._service_sync_thread.start()
 
     def _on_service_toggled(self, on: bool) -> None:
         if self._service_busy:
@@ -1592,6 +1692,7 @@ class MainWindow(QMainWindow):
         monitor.logLine.connect(self._append_log)
         monitor.updateAvailable.connect(self._on_update_available)
         monitor.captchaRequired.connect(self._on_captcha_required)
+        monitor.campusState.connect(self._on_campus_state)
         crash.UiHolder.window = self
 
         # 关机/注销: 系统发起会话结束时必须放行关闭, 否则托盘常驻会拖住关机
@@ -1742,6 +1843,13 @@ class MainWindow(QMainWindow):
             self._field_labels[key] = klabel
         slay.addWidget(grid_host)
 
+        # 校内直连状态(仅 Windows): 核心功能之一, 生效与否要一眼看得到
+        self._campus_line = QLabel()
+        self._campus_line.setObjectName("campusLine")
+        self._campus_line.setWordWrap(True)
+        self._campus_line.setVisible(False)
+        slay.addWidget(self._campus_line)
+
         btn_row = QHBoxLayout()
         self._btn_settings = QPushButton()
         self._btn_settings.setObjectName("secondary")
@@ -1749,9 +1857,8 @@ class MainWindow(QMainWindow):
         self._btn_logs = QPushButton()
         self._btn_logs.setObjectName("secondary")
         self._btn_logs.clicked.connect(self._open_logs)
-        self._btn_reconfig = QPushButton()
-        self._btn_reconfig.setObjectName("secondary")
-        self._btn_reconfig.clicked.connect(self._start_reconfig)
+        # 「重新配置」会清掉已存密码, 不该和「设置」「日志」并排放在主窗最显眼处:
+        # 移到 设置 → 账号 与托盘菜单
         self._btn_openportal = QPushButton()
         self._btn_openportal.setObjectName("secondary")
         self._btn_openportal.clicked.connect(self._open_portal_page)
@@ -1760,7 +1867,6 @@ class MainWindow(QMainWindow):
         self._btn_diag.clicked.connect(self._run_diagnosis)
         btn_row.addWidget(self._btn_settings)
         btn_row.addWidget(self._btn_logs)
-        btn_row.addWidget(self._btn_reconfig)
         btn_row.addStretch(1)
         btn_row.addWidget(self._btn_diag)
         btn_row.addWidget(self._btn_openportal)
@@ -1788,7 +1894,6 @@ class MainWindow(QMainWindow):
         self._act_reconfig = QAction(menu)
         self._act_reconfig.triggered.connect(self._start_reconfig)
         self._act_check_updates = QAction(menu)
-        self._act_check_updates.triggered.connect(self._monitor.check_updates_now)
         self._act_auto = QAction(menu)
         self._act_auto.setCheckable(True)
         self._act_auto.toggled.connect(self._toggle_auto_login)
@@ -2317,6 +2422,19 @@ class MainWindow(QMainWindow):
                     tr("tray.msg_relogin_body", ip=info.get("ip") or ""),
                     QSystemTrayIcon.MessageIcon.Information, 5000)
 
+    def _on_campus_state(self, state: str) -> None:
+        self._campus_state = state
+        self._render_campus_line()
+
+    def _render_campus_line(self) -> None:
+        state = getattr(self, "_campus_state", "")
+        # off/unsupported 不占主窗空间; 其余状态都值得一眼看到
+        show = sys.platform == "win32" and state not in ("", "off", "unsupported")
+        self._campus_line.setVisible(show)
+        if show:
+            self._campus_line.setText(
+                tr("campus.status_line", state=tr(f"campus.state.{state}")))
+
     def _on_message_clicked(self) -> None:
         # 仅更新类气泡点击触发更新; 其他气泡点击只唤起主窗
         if self._tray_msg_kind == "update" and self._update_url:
@@ -2341,6 +2459,9 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def quit_app(self) -> None:
+        # 用户明确退出: 看护任务只救崩溃, 不该过一会儿又把程序拉起来
+        from . import watchdog
+        watchdog.mark_user_quit()
         self._force_quit = True
         self._save_geometry()
         self._shutdown_background()
@@ -2356,11 +2477,11 @@ class MainWindow(QMainWindow):
         self._btn_login.setText(tr("btn.login_now"))
         self._btn_openportal.setText(tr("btn.open_portal"))
         self._btn_diag.setText(tr("btn.diagnose"))
-        self._btn_reconfig.setText(tr("btn.reconfig"))
         self._btn_settings.setText(tr("btn.settings"))
         self._btn_logs.setText(tr("btn.logs"))
         self._btn_devices.setText(tr("btn.devices"))
         self._tip.setText(tr("tip.footer"))
+        self._render_campus_line()
 
         for key, label in self._field_labels.items():
             label.setText(tr(f"field.{key}"))

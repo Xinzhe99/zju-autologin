@@ -111,6 +111,12 @@ def test_pac_and_tun_modes_reported(reg, tmp_path):
     monkey_tun = pytest.MonkeyPatch()
     monkey_tun.setattr(campus, "tun_mode", lambda: True)
     try:
+        # v1.27: TUN 判定有误报(Teredo 隧道网卡), 系统代理开着就照样写例外 ——
+        # 写了无副作用, 不写则整个功能对误判机器失效; TUN 只作为提示返回
+        assert campus.ensure(cfg) == "applied"
+        assert "*.zju.edu.cn" in reg.values["ProxyOverride"]
+        assert campus.ensure(cfg) == "tun"
+        reg.values["ProxyEnable"] = False
         assert campus.ensure(cfg) == "tun"
     finally:
         monkey_tun.undo()

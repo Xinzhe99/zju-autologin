@@ -119,6 +119,17 @@ QToolButton#eye {
     background: transparent;
     padding: 4px 6px;
 }
+QToolButton#disclosure {
+    border: none;
+    background: transparent;
+    padding: 6px 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #3d3d3d;
+}
+QToolButton#disclosure:hover { color: #0d0d0d; }
+QFrame#footerBar { background: #f9f9f9; border-top: 1px solid #e4e4e4; }
+QLabel#campusLine { font-size: 12px; color: #5c5c5c; }
 
 QLineEdit, QSpinBox, QComboBox {
     background: #ffffff;
@@ -297,6 +308,17 @@ QToolButton#eye {
     background: transparent;
     padding: 4px 6px;
 }
+QToolButton#disclosure {
+    border: none;
+    background: transparent;
+    padding: 6px 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #c8c8c8;
+}
+QToolButton#disclosure:hover { color: #ffffff; }
+QFrame#footerBar { background: #191919; border-top: 1px solid #2c2c2c; }
+QLabel#campusLine { font-size: 12px; color: #a8a8a8; }
 
 QLineEdit, QSpinBox, QComboBox {
     background: #191919;

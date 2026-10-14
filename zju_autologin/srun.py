@@ -43,11 +43,12 @@ import urllib.parse
 import urllib.request
 
 from .i18n import tr
-from .net import bound_opener, candidate_source_ips
+from .net import bound_opener, candidate_source_ips, is_fake_ip
 
 __all__ = [
     "SrunClient",
     "SrunError",
+    "AUTH_ERROR_CODES",
     "DEFAULT_BASE_URL",
     "DEFAULT_AC_ID",
     "friendly_error",
@@ -146,14 +147,18 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     """把 https 请求钉到指定 IP, 证书仍按原始主机名校验。"""
 
-    def __init__(self, pinned_ip: str, hostname: str, context=None) -> None:
+    def __init__(self, pinned_ip: str, hostname: str, context=None,
+                 source_ip: str | None = None) -> None:
         super().__init__(context=context)
         self._pinned_ip = pinned_ip
         self._hostname = hostname
+        self._source_ip = source_ip
 
     def https_open(self, req):  # noqa: D102
         def factory(host, **kwargs):
             kwargs.pop("check_hostname", None)
+            if self._source_ip:  # 绑定物理网卡源地址(绕过 TUN 默认路由)
+                kwargs["source_address"] = (self._source_ip, 0)
             return _PinnedHTTPSConnection(host, self._pinned_ip,
                                           verify_hostname=self._hostname,
                                           context=self._context, **kwargs)
@@ -164,23 +169,74 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
 # 绕过系统代理的直连 opener（门户与认证 API 只应走校园网直连）
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-# 门户 IP 直连缓存（host -> [ip...]）: 校园 DNS 故障时按缓存 IP + Host 头直连
+# 门户 IP 直连缓存（host -> [ip...]）: 校园 DNS 故障时按缓存 IP + Host 头直连。
+# 只存真实地址, 并落盘(portal_ips.json): 开机时 Clash TUN 已在运行的话, 本进程
+# 从未见过真实解析结果, 只有上次运行记下的地址能用来绕开 fake-ip。
 _PORTAL_IP_CACHE: dict[str, list[str]] = {}
+_IP_CACHE_FILE = "portal_ips.json"
+_ip_cache_loaded = False
+# fake-ip 下钉 IP 直连失败的时间(host -> ts): 冷却期内直接走 TUN, 不每次白等超时
+_PINNED_FAIL: dict[str, float] = {}
+_PINNED_FAIL_TTL = 600.0
+
+
+def _ip_cache_path():
+    from .config import config_dir
+    return config_dir() / _IP_CACHE_FILE
+
+
+def _load_ip_cache() -> None:
+    global _ip_cache_loaded
+    if _ip_cache_loaded:
+        return
+    _ip_cache_loaded = True
+    try:
+        data = json.loads(_ip_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(data, dict):
+        for host, ips in data.items():
+            if isinstance(ips, list) and host not in _PORTAL_IP_CACHE:
+                real = [str(ip) for ip in ips if not is_fake_ip(str(ip))]
+                if real:
+                    _PORTAL_IP_CACHE[str(host)] = real
+
+
+def _save_ip_cache() -> None:
+    try:
+        _ip_cache_path().write_text(json.dumps(_PORTAL_IP_CACHE), encoding="utf-8")
+    except OSError:
+        pass  # 服务模式(ProtectHome 等)下配置目录可能不可写: 缓存只是锦上添花
+
+
+def _resolve(host: str) -> tuple[list[str], str]:
+    """解析门户 IPv4。返回 (IP 列表, 模式)。
+
+    模式: "ok"(DNS 正常, 返回真实地址) / "down"(DNS 故障, 返回缓存) /
+    "fake"(DNS 被 Clash/mihomo 的 fake-ip 接管, 只给出 198.18.x.x; 有缓存时
+    返回缓存的真实地址, 没有则原样返回 fake 地址, 让请求照常交给 TUN 处理)。
+    """
+    _load_ip_cache()
+    try:
+        infos = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return list(_PORTAL_IP_CACHE.get(host, [])), "down"
+    ips = sorted({info[4][0] for info in infos})
+    real = [ip for ip in ips if not is_fake_ip(ip)]
+    if real:
+        if _PORTAL_IP_CACHE.get(host) != real:
+            _PORTAL_IP_CACHE[host] = real
+            _save_ip_cache()
+        return real, "ok"
+    if ips and _PORTAL_IP_CACHE.get(host):
+        return list(_PORTAL_IP_CACHE[host]), "fake"
+    return ips, "ok"
 
 
 def _resolve_and_cache(host: str) -> tuple[list[str], bool]:
-    """解析门户 IP。返回 (IP 列表, DNS 是否存活)。
-
-    DNS 正常时刷新缓存; DNS 故障(gaierror)时返回缓存旧值供兜底直连。
-    """
-    try:
-        infos = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
-        ips = sorted({info[4][0] for info in infos})
-        if ips:
-            _PORTAL_IP_CACHE[host] = ips
-        return ips, True
-    except socket.gaierror:
-        return list(_PORTAL_IP_CACHE.get(host, [])), False
+    """兼容旧接口: 返回 (IP 列表, DNS 是否可直接使用)。"""
+    ips, mode = _resolve(host)
+    return ips, mode == "ok"
 
 
 # 门户连接策略缓存（host -> "策略|协议"）：命中后跳过全部失败尝试
@@ -193,6 +249,13 @@ _NEG_TTL = 300.0
 
 class SrunError(Exception):
     """门户请求失败（网络不通、响应异常等）。"""
+
+
+# "认证被拒"而非临时故障的错误码: 拿着错误密码反复 bind, 门户侧的账号锁定策略
+# 可能直接把账号锁死(E2901 = ZJU 的 ldap_bind error, 基本就是密码不对)。
+# GUI 监控与无界面 watch 守护共用这份名单, 命中后停止自动重试。
+AUTH_ERROR_CODES = frozenset({"password_error", "username_error", "E1002", "access_denied",
+                              "user_must_modify_password", "E2901"})
 
 
 def friendly_error(resp: dict) -> str:
@@ -340,41 +403,31 @@ class SrunClient:
         headers = {"User-Agent": "Mozilla/5.0 ZJU-AutoLogin"}
         headers.update(getattr(self, "_extra_headers", {}) or {})
         host = urllib.parse.urlsplit(url).netloc.split("@")[-1].split(":")[0]
-        ips, dns_alive = _resolve_and_cache(host)
+        ips, mode = _resolve(host)
         if not ips:
             raise SrunError(tr("srun.dns_down"))
-        if not dns_alive:
-            # DNS 故障兜底: 按缓存 IP 直连, Host 头保留虚拟主机。
+        if mode == "fake" and time.time() - _PINNED_FAIL.get(host, 0.0) < _PINNED_FAIL_TTL:
+            mode = "ok"  # 刚试过钉 IP 走不通: 冷却期内直接交给 TUN, 不再白等超时
+        if mode != "ok":
+            # DNS 故障 / fake-ip 兜底: 按缓存的真实 IP 直连, Host 头保留虚拟主机。
             # 关键: 证书校验不降级 —— 以前这里关掉校验(verify_mode=CERT_NONE),
             # 而登录查询串里就带着口令摘要与 XXTEA 密钥(密钥是同串里的明文
             # challenge), 等于把密码交给路上的任何人。现在改为把 TCP 钉到缓存
             # IP、TLS 仍按原主机名验证: 中间人拿不出有效证书, 直接失败。
-            import ssl
-
-            ctx = ssl.create_default_context()
-            parts = urllib.parse.urlsplit(url)
-            port = parts.port
-            host_header = host if port is None else f"{host}:{port}"
             last_exc: Exception | None = None
-            for ip in ips[:2]:
-                netloc = ip if port is None else f"{ip}:{port}"
-                fallback_url = urllib.parse.urlunsplit(parts._replace(netloc=netloc))
-                headers["Host"] = host_header
-                try:
-                    req = urllib.request.Request(fallback_url, headers=headers)
-                    if parts.scheme == "https":
-                        ip_opener = urllib.request.build_opener(
-                            urllib.request.ProxyHandler({}),
-                            _PinnedHTTPSHandler(ip, host, context=ctx))
-                    else:
-                        ip_opener = urllib.request.build_opener(
-                            urllib.request.ProxyHandler({}))
-                    with ip_opener.open(req, timeout=self.timeout) as resp:
-                        return resp.read().decode("utf-8", errors="replace")
-                except Exception as exc:  # noqa: BLE001
-                    last_exc = exc
-            raise SrunError(tr("srun.dns_down")) from last_exc
-        req = urllib.request.Request(url, headers=headers)
+            try:
+                body = self._request_pinned(url, host, ips, headers,
+                                            getattr(opener, "zju_source_ip", None))
+                _PINNED_FAIL.pop(host, None)
+                return body
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+            if mode == "down":
+                raise SrunError(tr("srun.dns_down")) from last_exc
+            # fake-ip: 缓存地址走不通(门户换了 IP / TUN 严格路由等), 退回常规路径
+            # 交给 TUN 处理, 并在冷却期内不再尝试
+            _PINNED_FAIL[host] = time.time()
+        req = urllib.request.Request(url, headers=dict(headers))
         opener = opener or _DIRECT_OPENER
         try:
             with opener.open(req, timeout=self.timeout) as resp:
@@ -392,6 +445,35 @@ class SrunClient:
             raise SrunError(tr("srun.request_failed", err=exc)) from exc
         except Exception as exc:  # noqa: BLE001 - 统一转成 SrunError
             raise SrunError(tr("srun.request_failed", err=exc)) from exc
+
+    def _request_pinned(self, url: str, host: str, ips: list[str], headers: dict,
+                        source_ip: str | None) -> str:
+        """把 TCP 钉到给定 IP(证书仍按原主机名校验); source_ip 时绑定源地址。"""
+        import ssl
+
+        ctx = ssl.create_default_context()
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+        headers = dict(headers, Host=host if port is None else f"{host}:{port}")
+        last_exc: Exception | None = None
+        for ip in ips[:2]:
+            netloc = ip if port is None else f"{ip}:{port}"
+            fallback_url = urllib.parse.urlunsplit(parts._replace(netloc=netloc))
+            try:
+                req = urllib.request.Request(fallback_url, headers=headers)
+                if parts.scheme == "https":
+                    ip_opener = urllib.request.build_opener(
+                        urllib.request.ProxyHandler({}),
+                        _PinnedHTTPSHandler(ip, host, context=ctx, source_ip=source_ip))
+                elif source_ip:
+                    ip_opener = bound_opener(source_ip)
+                else:
+                    ip_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with ip_opener.open(req, timeout=self.timeout) as resp:
+                    return resp.read().decode("utf-8", errors="replace")
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        raise last_exc or OSError("no ip")
 
     def _strategies(self) -> list[tuple[str, urllib.request.OpenerDirector, str]]:
         """门户连接策略候选（标识, opener, 协议），命中缓存的排最前。
@@ -566,11 +648,14 @@ class SrunClient:
                 ip = sock.getsockname()[0]
             finally:
                 sock.close()
-            if ip and not ip.startswith("0."):
+            # TUN 接管时路由出口是虚拟网卡(198.18.0.1): 拿它去登录门户必败,
+            # 改用物理网卡地址(校园网 10/8 优先)
+            if ip and not ip.startswith("0.") and not is_fake_ip(ip):
                 return ip
         except OSError:
             pass
-        return ""
+        ips = candidate_source_ips()
+        return ips[0] if ips else ""
 
     def parse_portal_config(self) -> dict:
         """解析门户的 acid 与服务端识别的本机 IP。

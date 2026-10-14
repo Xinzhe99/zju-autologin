@@ -35,6 +35,65 @@ def _install_session() -> str:
         return ""
 
 
+def need_wizard(config: Config, session: str, fresh_install: bool, argv: list[str]) -> bool:
+    """启动时是否弹引导向导。
+
+    - 首次使用 / 凭据不全 → 弹(开机自启且已有账号时除外: 向导是模态的, 开机后
+      没人点它保活就一直不启动; 凭据真缺失时主窗会显示「未配置」引导去设置)
+    - 新安装会话 → 手动安装弹一次; 静默安装(应用内更新/winget, 标记带 -silent)
+      且已配置好的用户不弹 —— 以前每次升级都被向导拦住
+    """
+    configured = bool(config.username and config.get_password())
+    if fresh_install and not (configured and session.endswith("silent")):
+        return True
+    quiet_boot = "--minimized" in argv and bool(config.username)
+    return not configured and not quiet_boot
+
+
+def _instance_key() -> str:
+    """单实例唤起通道名(按配置目录区分用户, 多用户机器互不串门)。"""
+    import hashlib
+
+    return "ZJUAutoLogin-" + hashlib.sha1(str(config_dir()).encode("utf-8")).hexdigest()[:12]
+
+
+def _activate_running_instance() -> None:
+    try:
+        from PyQt6.QtNetwork import QLocalSocket
+    except ImportError:
+        return
+    sock = QLocalSocket()
+    sock.connectToServer(_instance_key())
+    if sock.waitForConnected(1000):
+        sock.write(b"show\n")
+        sock.waitForBytesWritten(1000)
+        sock.disconnectFromServer()
+
+
+def _serve_activation(window) -> None:
+    """监听后来者的唤起请求: 第二次启动 = 把已运行的主窗口带到前台。"""
+    try:
+        from PyQt6.QtNetwork import QLocalServer
+    except ImportError:
+        return
+    name = _instance_key()
+    QLocalServer.removeServer(name)  # 已持有单实例锁: 残留的旧通道(崩溃遗留)可安全清掉
+    server = QLocalServer(window)
+    if not server.listen(name):
+        return
+
+    def on_connection() -> None:
+        while server.hasPendingConnections():
+            conn = server.nextPendingConnection()
+            if conn is not None:
+                conn.disconnected.connect(conn.deleteLater)
+                conn.close()
+        window.show_normal()
+
+    server.newConnection.connect(on_connection)
+    window._activation_server = server  # 持有引用
+
+
 def main() -> int:
     crash.install()  # 全局异常钩子：写日志 + 托盘提示，避免无声退出
     if len(sys.argv) > 1 and sys.argv[1] in ("watch", "--watch"):
@@ -55,6 +114,10 @@ def main() -> int:
             locked = True
             break
     if not locked:
+        # 已有实例: 用户双击图标却什么都没发生, 只会以为程序坏了 —— 唤起已在运行
+        # 的窗口(开机自启/看护任务带 --minimized 拉起时保持安静, 不打扰)
+        if "--minimized" not in sys.argv:
+            _activate_running_instance()
         print("已有实例在运行（托盘图标处查看）。")
         return 0
     runtime.app_lock = lock
@@ -71,16 +134,14 @@ def main() -> int:
     i18n.set_lang(config.language)
 
     # 新安装会话检测: 安装器每次安装写入 .install-session 标记,
-    # 首启发现未确认过的新会话 → 强制弹一次引导(覆盖升级也弹, 符合
-    # "新装必见引导"的设计; 便携/源码无标记, 行为不变)
+    # 首启发现未确认过的新会话 → 弹一次引导(规则见 need_wizard;
+    # 便携/源码无标记, 行为不变)
     session = _install_session()
     fresh_install = bool(session) and session != config.install_session
     if fresh_install:
         config.data["install_session"] = session  # 先记 seen, 取消也不纠缠
         config.save()
-
-    # 首次使用、凭据不全或新安装会话 → 引导向导（含在线账号自动检测）
-    if not config.username or not config.get_password() or fresh_install:
+    if need_wizard(config, session, fresh_install, sys.argv):
         wizard = SetupWizard(config)
         wizard.exec()
         i18n.set_lang(config.language)
@@ -88,6 +149,7 @@ def main() -> int:
     monitor = Monitor(config)
     window = MainWindow(config, monitor)
     monitor.start()
+    _serve_activation(window)
 
     if "--minimized" in sys.argv and config.username:
         window.hide()

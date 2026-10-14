@@ -319,6 +319,10 @@ class SetupWizard(QDialog):
         self._account_error.hide()
         lay.addWidget(self._account_error)
         self._chk_boot = QCheckBox()
+        # 默认勾选(保活工具不开机自启就等于没装); 重跑向导时沿用当前状态。
+        # 以前从不预勾选, 而完成时又按勾选状态写注册表 —— 已开自启的老用户
+        # 重走一遍向导(新装/重新配置)就被悄悄关掉了自启, 重启后保活失效
+        self._chk_boot.setChecked(autostart.is_enabled() or not self._config.username)
         lay.addWidget(self._chk_boot)
         self._boot_hint = QLabel()
         self._boot_hint.setObjectName("statusDetail")
@@ -353,16 +357,14 @@ class SetupWizard(QDialog):
         # (学校页), 于是"下一步"在还没见过账号输入框时就索要账号密码,
         # 全新安装的用户永远走不出向导。
         if idx == 2 and not self._account_ok():
-            self._account_error.setText(tr("wiz.error_need"))
-            self._account_error.show()
+            self._show_account_error("wiz.error_need")
             return
         # 改了学号却沿用旧保存密码: 旧密码几乎必然属于旧账号, 门户会一直报
         # 认证被拒(E2901 ldap_bind error) —— 真实事故, 必须要求重输。
         # 注意也要挂在账号页: 完成页的 _finish 兜底在这里之前根本不会被经过。
         if (idx == 2 and not self._edit_pwd.text() and self._has_saved_password
                 and self._edit_user.text().strip() != self._config.username.strip()):
-            self._account_error.setText(tr("wiz.error_pwd_for_new_account"))
-            self._account_error.show()
+            self._show_account_error("wiz.error_pwd_for_new_account")
             return
         self._apply_school_url()
         if idx < self._stack.count() - 1:
@@ -370,6 +372,11 @@ class SetupWizard(QDialog):
         else:
             self._finish()
         self._update_nav()
+
+    def _show_account_error(self, key: str) -> None:
+        self._account_error_key = key  # 切换语言时按原 key 重译, 不串成别的提示
+        self._account_error.setText(tr(key))
+        self._account_error.show()
 
     def _account_ok(self) -> bool:
         pwd_missing = not self._edit_pwd.text() and not self._has_saved_password
@@ -393,8 +400,7 @@ class SetupWizard(QDialog):
         if not self._account_ok():
             # 兜底: 任何路径(含回车/程序化调用)都必须过校验
             self._stack.setCurrentIndex(2)
-            self._account_error.setText(tr("wiz.error_need"))
-            self._account_error.show()
+            self._show_account_error("wiz.error_need")
             self._update_nav()
             return
         cfg = self._config
@@ -404,8 +410,7 @@ class SetupWizard(QDialog):
         if (not self._edit_pwd.text() and self._has_saved_password
                 and self._edit_user.text().strip() != cfg.username.strip()):
             self._stack.setCurrentIndex(2)
-            self._account_error.setText(tr("wiz.error_pwd_for_new_account"))
-            self._account_error.show()
+            self._show_account_error("wiz.error_pwd_for_new_account")
             self._update_nav()
             return
         cfg.username = self._edit_user.text()
@@ -489,7 +494,8 @@ class SetupWizard(QDialog):
         # 首项=默认门户(专名不译), 末项=自定义(需随语言刷新)
         if self._school_combo.count() > 0:
             self._school_combo.setItemText(self._school_combo.count() - 1, tr("school.custom"))
-        self._account_error.setText(self._account_error.text() and tr("wiz.error_need") or "")
+        key = getattr(self, "_account_error_key", "")
+        self._account_error.setText(tr(key) if key and self._account_error.text() else "")
         self._chk_boot.setText(tr("chk.autostart"))
         self._boot_hint.setText(tr("wiz.autostart_hint"))
         self._done_text.setText(tr("wiz.done_text", app=tr("app.name")))
