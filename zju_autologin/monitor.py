@@ -102,6 +102,7 @@ class MonitorWorker(QObject):
         self._logged_family = ""
         self._ddns_last_ip = ""
         self._report_month = ""
+        self._campus_hinted = ""
 
     # ------------------------------------------------------------- 线程入口
 
@@ -312,12 +313,38 @@ class MonitorWorker(QObject):
         target_secs = target.tm_hour * 3600 + target.tm_min * 60
         return now_secs >= target_secs
 
+    def _ensure_campus_direct(self) -> None:
+        """校内直连(Clash 系统代理兼容): 保持 Windows 代理例外里有校内条目。
+
+        Clash 每次开关系统代理都会整段重写例外列表, 因此周期性检查、缺了就补
+        (默认一个检测间隔内恢复); 日志只在状态变化时记, 不刷屏。
+        """
+        from . import campus
+        try:
+            event = campus.ensure(self._config)
+        except Exception:  # noqa: BLE001 - 注册表/权限异常不影响保活主流程
+            return
+        if event == "applied":
+            entries = ", ".join(self._config.data.get("campus_bypass_applied") or [])
+            self.log(tr("log.campus_bypass_applied", entries=entries))
+            self._config.save()      # 记账落盘(撤销时只删自己的条目)
+        elif event == "removed":
+            self.log(tr("log.campus_bypass_removed"))
+            self._config.save()
+        elif event == "pac" and self._campus_hinted != "pac":
+            self._campus_hinted = "pac"
+            self.log(tr("log.campus_pac_hint"))
+        elif event == "tun" and self._campus_hinted != "tun":
+            self._campus_hinted = "tun"
+            self.log(tr("log.campus_tun_hint"))
+
     def _do_check(self, manual: bool) -> None:
         if self._busy or not self._running:
             return
         self._busy = True
         try:
             self._adjust_interval_for_power()
+            self._ensure_campus_direct()
             self._opener = build_opener(self._config.proxy_mode, self._config.proxy_url)
             client = self._client()
             try:

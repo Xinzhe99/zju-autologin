@@ -873,6 +873,23 @@ class SettingsWindow(QDialog):
         self._lbl_proxy_url.setObjectName("fieldKey")
         adv_grid.addWidget(self._lbl_proxy_url, 4, 0)
         adv_grid.addWidget(self._edit_proxy_url, 4, 1)
+        # 校内直连(Clash 系统代理兼容): 开着代理也能访问校内站点
+        self._chk_campus = QCheckBox()
+        self._edit_campus_extra = QLineEdit()
+        self._edit_campus_extra.setPlaceholderText(tr("settings.campus_extra_ph"))
+        campus_row = QHBoxLayout()
+        campus_row.addWidget(self._chk_campus)
+        campus_row.addSpacing(8)
+        campus_row.addWidget(self._edit_campus_extra, 1)
+        adv_grid.addLayout(campus_row, 5, 0, 1, 2)
+        self._campus_hint = QLabel()
+        self._campus_hint.setObjectName("statusDetail")
+        self._campus_hint.setWordWrap(True)
+        adv_grid.addWidget(self._campus_hint, 6, 0, 1, 2)
+        if sys.platform != "win32":  # Windows 系统代理例外机制才有意义
+            self._chk_campus.setVisible(False)
+            self._edit_campus_extra.setVisible(False)
+            self._campus_hint.setVisible(False)
         # DDNS 区块
         self._ddns_title = QLabel()
         self._ddns_title.setObjectName("cardTitle")
@@ -942,7 +959,7 @@ class SettingsWindow(QDialog):
         prow.addWidget(self._btn_import)
         prow.addWidget(self._btn_portal)
         prow.addWidget(self._btn_route)
-        adv_grid.addLayout(prow, 5, 0, 1, 2)
+        adv_grid.addLayout(prow, 7, 0, 1, 2)
         self._advanced_host.setVisible(False)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
         glay.addWidget(self._advanced_host)
@@ -1040,6 +1057,9 @@ class SettingsWindow(QDialog):
         for label, key in zip(self._adv_labels, ("field.base_url", "field.ac_id", "hb.url", "net.proxy")):
             label.setText(tr(key))
         self._lbl_proxy_url.setText(tr("net.proxy.url"))
+        self._chk_campus.setText(tr("settings.campus_direct"))
+        self._campus_hint.setText(tr("settings.campus_direct_hint"))
+        self._edit_campus_extra.setPlaceholderText(tr("settings.campus_extra_ph"))
         for i in range(self._combo_proxy.count()):
             pid = self._combo_proxy.itemData(i)
             self._combo_proxy.setItemText(i, tr(f"net.proxy.{pid}"))
@@ -1142,6 +1162,8 @@ class SettingsWindow(QDialog):
         self._combo_proxy.setCurrentIndex(max(0, self._combo_proxy.findData(pm)))
         self._edit_proxy_url.setText(cfg.proxy_url or "")
         self._edit_proxy_url.setEnabled(pm == "custom")
+        self._chk_campus.setChecked(bool(cfg.campus_direct))
+        self._edit_campus_extra.setText(str(cfg.data.get("campus_bypass_extra") or ""))
         self._chk_proactive.setChecked(bool(cfg.proactive_relogin))
         self._chk_auto_kick.setChecked(bool(cfg.auto_kick))
         try:
@@ -1208,6 +1230,8 @@ class SettingsWindow(QDialog):
         cfg.data["hook_on_offline"] = self._edit_hook_off.text().strip()
         cfg.proxy_mode = self._combo_proxy.currentData() or "system"
         cfg.proxy_url = self._edit_proxy_url.text().strip()
+        cfg.campus_direct = self._chk_campus.isChecked()
+        cfg.data["campus_bypass_extra"] = self._edit_campus_extra.text().strip()
         cfg.proactive_relogin = self._chk_proactive.isChecked()
         cfg.auto_kick = self._chk_auto_kick.isChecked()
         cfg.proactive_time = self._time_proactive.time().toString("HH:mm")

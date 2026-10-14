@@ -55,7 +55,7 @@
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.8/ZJUAutoLogin-1.25.8-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.8/ZJUAutoLogin-1.25.8-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.25.8/ZJUAutoLogin-1.25.8-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.26.0/ZJUAutoLogin-1.26.0-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.26.0/ZJUAutoLogin-1.26.0-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.26.0/ZJUAutoLogin-1.26.0-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
@@ -107,6 +107,7 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 
 **可靠性**
 - ✅ **DNS 故障兜底**（缓存门户 IP 直连）、**VPN 四层绕过**（直连/降级/网卡绑定/路由级）、瞬断快速重试
+- ✅ **Clash 校内直连**：把校内域名/私网加入系统代理例外并自动维护，开着代理也能访问统一认证/校内论坛/邮箱
 - ✅ **验证码支持**：贵校开启验证码时弹窗输入即完成登录
 - ✅ **设备超限处理**：E2620 时应用内一键踢号，可选自动踢最旧设备（本机永不误踢）
 
@@ -216,6 +217,8 @@ zju-autologin serve     # 无头设备 Web 配置页（仅 127.0.0.1，浏览器
 
 若开启 **TUN/全局模式 VPN**（在路由层接管流量），程序会自动尝试**绑定校园网网卡直发**；仍不通时可点 高级选项 → 「门户直连路由(绕过VPN)」，以管理员权限为门户 IP 添加持久化直连路由（可一键移除）——这是 Windows 上确保级绕过手段。
 
+**开着 Clash 访问不了校内站点（统一认证/论坛/邮箱）？** 这是因为系统代理把校内流量也交给了远程节点，而节点到不了校园内网。勾选 设置 → 高级选项 → **「Clash 校内直连」**：程序会把校内域名（由门户地址自动推导，如 `*.zju.edu.cn`）与 `10.*` 加入 Windows 系统代理例外，校内站点即刻恢复直连。仅改本机设置、无需管理员；Clash 每次重开系统代理都会重写例外列表，程序会在一分钟内自动补回。TUN 模式下例外机制无效，请在 Clash 规则中把校内域名设为 `DIRECT`。
+
 **推送渠道**：设置 → 掉线通知，支持 Bark（iOS）、Server酱（微信）、企业微信、钉钉、飞书、邮件。钉钉/飞书机器人若启用关键词安全设置，关键词填「校园网」即可（所有推送标题均含此词）。配置后点"发送测试"验证。
 
 每个渠道如何获取 Key/Webhook、每项该填什么，见 **[通知渠道配置指南](docs/notifications.md)**。
@@ -279,6 +282,7 @@ zju-autologin/
 │   ├── notify.py              # 掉线推送（Bark/Server酱/企业微信/钉钉/飞书/SMTP）
 │   ├── net.py                 # 网络出口（代理路由/网卡绑定/外网探测）
 │   ├── routes.py              # 门户直连路由（绕过 TUN/VPN，Windows）
+│   ├── campus.py              # 校内直连（Clash 系统代理例外，Windows）
 │   ├── service.py             # 系统级保活（Win SYSTEM 任务/mac LaunchDaemon/Linux systemd）
 │   ├── autostart.py           # 开机自启（注册表/LaunchAgent/XDG autostart）
 │   ├── portals.py + portals.json  # 社区共建高校预设库（向导下拉）
