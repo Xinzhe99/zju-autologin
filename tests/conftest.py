@@ -27,6 +27,17 @@ def _isolate_config_dir(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _stub_campus_registry(monkeypatch):
+    """校内直连(v1.26.0)默认开启: 测试绝不读写真实系统代理例外(HKCU ProxyOverride)。"""
+    import zju_autologin.campus as campus_mod
+
+    fake = {"ProxyOverride": "", "ProxyEnable": False, "AutoConfigURL": ""}
+    monkeypatch.setattr(campus_mod, "_read_value", lambda name: fake.get(name))
+    monkeypatch.setattr(campus_mod, "_write_override",
+                        lambda value: (fake.__setitem__("ProxyOverride", value) or True))
+
+
+@pytest.fixture(autouse=True)
 def _stub_keyring(monkeypatch):
     store: dict[tuple[str, str], str] = {}
 

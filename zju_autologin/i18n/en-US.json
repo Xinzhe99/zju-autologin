@@ -233,7 +233,7 @@
   "net.proxy.custom": "Custom",
   "net.proxy.url": "Proxy URL",
   "settings.campus_extra_ph": "Extra campus domain suffixes (comma separated, optional)",
-  "settings.campus_direct_hint": "Adds your campus domains (derived from the portal URL) and 10.* to the Windows proxy bypass list so campus sites connect directly while Clash runs. User-level only, no admin needed; re-applied within a minute if Clash rewrites the list. In TUN mode this cannot work — add DIRECT rules for campus domains in Clash instead.",
+  "settings.campus_direct_hint": "When on, campus domains (derived from the portal URL — no manual input needed) and 10.* are added to the Windows proxy bypass list, so auth/forum/mail load directly in the browser. Local browser setting only; re-applied within a minute if Clash rewrites it; turning the switch off restores the previous list. In TUN mode this cannot work — add DIRECT rules in Clash instead. Note: WSL may ask to restart after proxy changes; it does not affect networking inside WSL.",
   "settings.campus_direct": "Campus direct (use campus sites with Clash on)",
   "btn.open_portal": "Open login page",
   "notify.keyword_hint": "DingTalk/Feishu bots with keyword security: all push titles contain the word 校园网 — add that keyword in the bot settings. Webhook keys stay on this machine.",

@@ -68,8 +68,9 @@ _DEFAULTS = {
     "proxy_mode": "system",
     "proxy_url": "",
     # 校内直连(Clash 系统代理兼容): 把校内域名/私网加入 Windows 代理例外,
-    # 开着 Clash 也能访问统一认证/校内论坛/邮箱; 被 Clash 重写后自动补回
-    "campus_direct": False,
+    # 开着 Clash 也能访问统一认证/校内论坛/邮箱; 被 Clash 重写后自动补回。
+    # 默认开启: 无 Clash 时例外条目静默闲置, 有 Clash 才起作用; 设置里可关闭。
+    "campus_direct": True,
     "campus_bypass_extra": "",    # 额外校内域名后缀, 逗号分隔(如 cc98.org)
     "campus_bypass_applied": [],  # 记账: 我们写入的例外条目(撤销时只删自己的)
     # 门户直连路由（Windows 管理员添加的持久化 /32 路由，绕过 TUN/VPN）

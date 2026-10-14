@@ -836,7 +836,6 @@ class SettingsWindow(QDialog):
         self._btn_advanced.setCheckable(True)
         self._btn_advanced.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self._btn_advanced.setFixedHeight(24)
-        glay.addWidget(self._btn_advanced)
         self._advanced_host = QFrame()
         adv_grid = QGridLayout(self._advanced_host)
         adv_grid.setContentsMargins(0, 0, 0, 0)
@@ -961,6 +960,9 @@ class SettingsWindow(QDialog):
         prow.addWidget(self._btn_route)
         adv_grid.addLayout(prow, 7, 0, 1, 2)
         self._advanced_host.setVisible(False)
+        # 开关紧贴它控制的内容块: 以前按钮在「掉线通知」区下面,
+        # 而展开的内容在 DDNS/钩子两节之后, 用户点了开关根本找不到展开到哪去了
+        glay.addWidget(self._btn_advanced)
         self._btn_advanced.toggled.connect(self._advanced_host.setVisible)
         glay.addWidget(self._advanced_host)
 

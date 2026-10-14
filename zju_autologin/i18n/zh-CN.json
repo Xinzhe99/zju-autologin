@@ -233,7 +233,7 @@
   "net.proxy.custom": "自定义",
   "net.proxy.url": "代理地址",
   "settings.campus_extra_ph": "额外校内域名后缀（逗号分隔，可空），如 cc98.org",
-  "settings.campus_direct_hint": "把校内域名（由门户地址自动推导）与 10.* 加入 Windows 系统代理例外，统一认证/校内论坛/邮箱将直连访问。仅改本机设置、无需管理员；条目被 Clash 重写后会在一分钟内自动补回。TUN 模式例外不生效，请在 Clash 规则中把校内域名设为 DIRECT。",
+  "settings.campus_direct_hint": "开启后，校内域名（由门户地址自动推导，无需手动输入）与 10.* 会加入 Windows 系统代理例外，统一认证/校内论坛/邮箱在浏览器中直连访问。仅改本机浏览器代理设置；被 Clash 重写后约一分钟内自动补回，关闭开关即恢复原状。TUN 模式例外无效，请在 Clash 规则中把校内域名设为 DIRECT。另外：代理设置变更时 WSL 可能提示重启，不影响 WSL 内正常使用",
   "settings.campus_direct": "Clash 校内直连（开着代理也能访问校内站点）",
   "btn.open_portal": "打开登录页",
   "notify.keyword_hint": "钉钉/飞书机器人若启用安全设置，请将关键词设为「校园网」（所有推送标题均含此词）；Key/Webhook 会随配置文件保存在本机。",

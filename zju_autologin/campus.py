@@ -59,24 +59,12 @@ def _write_override(value: str) -> bool:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _INTERNET_SETTINGS,
                             0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, "ProxyOverride", 0, winreg.REG_SZ, value)
-        _notify_wininet()
         return True
     except OSError:
         return False
-
-
-def _notify_wininet() -> None:
-    """让浏览器立即感知代理设置变化(否则要等它自己轮询注册表)。"""
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-
-        wininet = ctypes.windll.wininet
-        wininet.InternetSetOptionW(0, 39, 0, 0)  # INTERNET_OPTION_SETTINGS_CHANGED
-        wininet.InternetSetOptionW(0, 37, 0, 0)  # INTERNET_OPTION_REFRESH
-    except Exception:  # noqa: BLE001 - 通知失败只是晚一点生效
-        pass
+    # 刻意不调用 InternetSetOption(SETTINGS_CHANGED) 广播: 那是系统级的一次全量
+    # 通知, 新版 WSL 监听到会弹「网络配置更改, 请重启 WSL」(真实反馈)。现代浏览器
+    # (Edge/Chrome/Firefox)自己监听该注册表键, 写入后数秒内即自动生效。
 
 
 def proxy_enabled() -> bool:
