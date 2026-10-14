@@ -1785,6 +1785,8 @@ class MainWindow(QMainWindow):
         self._act_logs.triggered.connect(self._open_logs)
         self._act_reconfig = QAction(menu)
         self._act_reconfig.triggered.connect(self._start_reconfig)
+        self._act_check_updates = QAction(menu)
+        self._act_check_updates.triggered.connect(self._monitor.check_updates_now)
         self._act_auto = QAction(menu)
         self._act_auto.setCheckable(True)
         self._act_auto.toggled.connect(self._toggle_auto_login)
@@ -1795,6 +1797,7 @@ class MainWindow(QMainWindow):
         self._act_show.triggered.connect(self.show_normal)
         self._act_check.triggered.connect(self._monitor.check_once)
         self._act_login.triggered.connect(self._on_login_clicked)
+        self._act_check_updates.triggered.connect(self._monitor.check_updates_now)
         self._tray_boot.toggled.connect(self._toggle_autostart_from_tray)
         self._act_about.triggered.connect(self._show_about)
         self._act_quit.triggered.connect(self.quit_app)
@@ -1804,6 +1807,7 @@ class MainWindow(QMainWindow):
         menu.addAction(self._act_auto)
         menu.addSeparator()
         menu.addAction(self._tray_boot)
+        menu.addAction(self._act_check_updates)
         menu.addSeparator()
         menu.addAction(self._act_about)
         menu.addAction(self._act_quit)
@@ -2360,6 +2364,7 @@ class MainWindow(QMainWindow):
                          (self._act_login, "tray.login"), (self._act_openportal, "btn.open_portal"),
                          (self._act_settings, "btn.settings"), (self._act_logs, "btn.logs"),
                          (self._act_reconfig, "btn.reconfig"),
+                         (self._act_check_updates, "tray.check_updates"),
                          (self._act_about, "tray.about"), (self._act_quit, "tray.quit")):
             act.setText(tr(key))
         self._act_auto.setText(tr("chk.auto_login"))

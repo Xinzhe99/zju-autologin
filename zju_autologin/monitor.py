@@ -19,6 +19,7 @@ from pathlib import Path
 from PyQt6.QtCore import QMetaObject, QObject, QTimer, QThread, Qt, pyqtSignal, pyqtSlot
 
 from . import updates
+from . import __version__
 from .config import Config, append_event, append_usage_snapshot
 from .ddns import ddns_enabled, push_ddns
 from .net import build_opener, probe_internet
@@ -103,6 +104,7 @@ class MonitorWorker(QObject):
         self._ddns_last_ip = ""
         self._report_month = ""
         self._campus_hinted = ""
+        self._update_fail_logged = False
 
     # ------------------------------------------------------------- 线程入口
 
@@ -267,13 +269,36 @@ class MonitorWorker(QObject):
 
     @pyqtSlot()
     def check_updates(self) -> None:
-        if not self._config.check_updates:
+        self._check_updates(manual=False)
+
+    @pyqtSlot()
+    def check_updates_manual(self) -> None:
+        self._check_updates(manual=True)
+
+    def _check_updates(self, manual: bool) -> None:
+        """检查更新。自动: 启动 3s 后 + 每 24h; 手动: 托盘「检查更新」。
+
+        失败(无网/限流)不再静默吞掉等 24h —— 那会让人一直收不到新版本:
+        自动模式记一次日志并 1 小时后重试, 手动模式必定给出结果。
+        """
+        if not self._config.check_updates and not manual:
             return
         newer, version, url = updates.check_newer(
             opener=build_opener(self._config.proxy_mode, self._config.proxy_url))
         if newer:
             self.log(tr("log.update_found", version=version))
+            self._update_fail_logged = False
             self.updateAvailable.emit(version, url)
+            return
+        err = updates.LAST_CHECK_ERROR
+        if err:
+            if manual or not self._update_fail_logged:
+                self._update_fail_logged = True
+                self.log(tr("log.update_check_fail", msg=err))
+            QTimer.singleShot(3600 * 1000, self.check_updates)  # 1h 后重试
+        elif manual:
+            self._update_fail_logged = False
+            self.log(tr("log.update_latest", version=__version__))
 
     # --------------------------------------------------------------- 内部
 
@@ -709,6 +734,7 @@ class Monitor(QObject):
     intervalChanged = pyqtSignal(int)
     credentialsChanged = pyqtSignal()
     notifyTestRequested = pyqtSignal()
+    updateCheckRequested = pyqtSignal()
 
     def __init__(self, config: Config, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -728,6 +754,7 @@ class Monitor(QObject):
         self.intervalChanged.connect(self._worker.apply_interval)
         self.credentialsChanged.connect(self._worker.clear_auth_error)
         self.notifyTestRequested.connect(self._worker.notify_test)
+        self.updateCheckRequested.connect(self._worker.check_updates_manual)
         self._thread.started.connect(self._worker.start)
 
     def start(self) -> None:
@@ -753,6 +780,10 @@ class Monitor(QObject):
 
     def notify_test(self) -> None:
         self.notifyTestRequested.emit()
+
+    def check_updates_now(self) -> None:
+        """手动检查更新(托盘菜单): 结果一定写进日志。"""
+        self.updateCheckRequested.emit()
 
     def login_with_captcha(self, captcha: str, cookie: str) -> None:
         """GUI 验证码弹窗回调: 带码重登。"""
