@@ -27,6 +27,19 @@ def test_friendly_error_unknown():
     assert text == "weird_code"
 
 
+def test_bas_timeout_is_transient_not_credentials():
+    """issue #1: "INFO failed, BAS respond timeout." 是门户侧临时故障,
+    文案要说清是超时/重试, 不能原样甩英文报文, 更不能当密码错。"""
+    i18n_mod.set_lang("zh-CN")
+    resp = {"error": "INFO failed, BAS respond timeout.", "error_msg": ""}
+    assert S.is_transient_portal_error(resp)
+    text = S.friendly_error(resp)
+    assert "BAS" in text and "临时" in text
+    assert not S.is_transient_portal_error({"error": "password_error"})
+    assert not S.is_transient_portal_error({"error": "E2901"})
+    assert not S.is_transient_portal_error(None)
+
+
 def test_parse_jsonp():
     assert S._parse_jsonp('cb({"a": 1})') == {"a": 1}
     assert S._parse_jsonp('{"a": 2}') == {"a": 2}

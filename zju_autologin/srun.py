@@ -49,9 +49,11 @@ __all__ = [
     "SrunClient",
     "SrunError",
     "AUTH_ERROR_CODES",
+    "TRANSIENT_ERROR_HINTS",
     "DEFAULT_BASE_URL",
     "DEFAULT_AC_ID",
     "friendly_error",
+    "is_transient_portal_error",
 ]
 
 DEFAULT_BASE_URL = "https://net.zju.edu.cn"
@@ -257,6 +259,20 @@ class SrunError(Exception):
 AUTH_ERROR_CODES = frozenset({"password_error", "username_error", "E1002", "access_denied",
                               "user_must_modify_password", "E2901"})
 
+# 门户侧的临时故障（不是凭据问题）：典型是 "INFO failed, BAS respond timeout."
+# —— 门户把认证请求转给 BAS/RADIUS 后没在超时内收到应答（高峰期/瞬断常见）。
+# 这类错误等一会儿重试往往就成功，既不该锁存成认证失败，也不该原样把英文
+# 报文甩给用户（issue #1 的困惑来源）。
+TRANSIENT_ERROR_HINTS = ("bas respond timeout",)
+
+
+def is_transient_portal_error(resp: dict | None) -> bool:
+    """门户是否返回了"稍后重试即可"的临时错误（如 BAS 应答超时）。"""
+    if not resp:
+        return False
+    text = f"{resp.get('error', '')} {resp.get('error_msg', '')}".lower()
+    return any(hint in text for hint in TRANSIENT_ERROR_HINTS)
+
 
 def friendly_error(resp: dict) -> str:
     """把 srun 的错误响应翻译成本地化提示。"""
@@ -276,6 +292,8 @@ def friendly_error(resp: dict) -> str:
         "user_must_modify_password": "err.user_must_modify_password",
     }
     key = keys.get(err) or keys.get(msg)
+    if not key and is_transient_portal_error(resp):
+        return tr("err.portal_busy")
     text = tr(key) if key else ""
     if msg and msg != err:
         if text:

@@ -18,7 +18,7 @@ import urllib.request
 from .config import Config
 from .i18n import tr
 from .net import candidate_source_ips
-from .srun import AUTH_ERROR_CODES, SrunClient
+from .srun import AUTH_ERROR_CODES, SrunClient, is_transient_portal_error
 
 
 def _proxy_env() -> list[str]:
@@ -99,6 +99,11 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
             row(tr("diag.login_test"), tr("diag.login_test_limit"),
                 tr("diag.login_test_limit_advice"))
             return tr("diag.summary_limit"), rows
+        if is_transient_portal_error(result.get("resp")):
+            # BAS 应答超时是门户侧临时故障, 不是"门户拒绝了登录", 更不是密码错
+            row(tr("diag.login_test"), tr("diag.login_test_busy"),
+                tr("diag.login_test_busy_advice"))
+            return tr("diag.summary_busy"), rows
         if err in AUTH_ERROR_CODES:  # 与监控同一份名单(含 E2901 ldap_bind error)
             row(tr("diag.login_test"), result.get("msg", err),
                 tr("diag.login_test_cred_advice"))

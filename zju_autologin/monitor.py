@@ -27,7 +27,7 @@ from .net import build_opener, probe_internet
 from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
-from .srun import AUTH_ERROR_CODES, SrunClient, SrunError
+from .srun import AUTH_ERROR_CODES, SrunClient, SrunError, is_transient_portal_error
 
 # 状态含义（UI 据此着色）：
 #   online              已认证，外网可用
@@ -551,19 +551,29 @@ class MonitorWorker(QObject):
             return True
         return False
 
-    def _do_login(self, client: SrunClient | None = None) -> bool:
-        client = client or self._client()
-        self.log(tr("log.logging_in", username=self._config.username + self._config.domain))
+    def _login_request(self, client: SrunClient) -> dict:
+        """发一次登录请求, 异常也翻译成统一结果(防异常逸出 Qt slot)。"""
         try:
-            result = client.login(
+            return client.login(
                 self._config.username,
                 self._config.get_password(),
                 domain=self._config.domain,
             )
         except SrunError as exc:
-            result = {"ok": False, "msg": str(exc), "username": "", "ip": "", "resp": {}}
-        except Exception as exc:  # noqa: BLE001 - keyring/OSError 等兜底, 防异常逸出 slot
-            result = {"ok": False, "msg": str(exc), "username": "", "ip": "", "resp": {}}
+            return {"ok": False, "msg": str(exc), "username": "", "ip": "", "resp": {}}
+        except Exception as exc:  # noqa: BLE001 - keyring/OSError 等兜底
+            return {"ok": False, "msg": str(exc), "username": "", "ip": "", "resp": {}}
+
+    def _do_login(self, client: SrunClient | None = None) -> bool:
+        client = client or self._client()
+        self.log(tr("log.logging_in", username=self._config.username + self._config.domain))
+        result = self._login_request(client)
+        # BAS 应答超时(BAS respond timeout)是门户侧临时故障: 隔两秒重试一次通常
+        # 就恢复。落到 60s 起步的指数退避里, 一次偶发超时会让掉线恢复慢上一分钟。
+        if not result.get("ok") and is_transient_portal_error(result.get("resp")):
+            self.log(tr("log.portal_busy_retry"))
+            time.sleep(2.0)
+            result = self._login_request(client)
         self._last_login_attempt = time.time()
 
         if result["ok"]:

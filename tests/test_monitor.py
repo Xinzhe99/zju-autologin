@@ -167,6 +167,40 @@ def test_login_success_resets_fail_count(tmp_path):
         assert worker._auth_error == ""
 
 
+def test_bas_timeout_retries_once_then_succeeds(tmp_path):
+    """BAS 应答超时是临时故障: 2 秒后立刻再试一次, 不该掉进 60s 起步的退避。"""
+    worker, _ = make_worker(tmp_path)
+    with patch.object(MonitorWorker, "_client") as mc, \
+         patch("zju_autologin.monitor.time.sleep") as sleep:
+        client = mc.return_value
+        client.get_status.return_value = dict(ONLINE)
+        client.login.side_effect = [
+            {"ok": False, "msg": "busy", "username": "x", "ip": "",
+             "resp": {"error": "INFO failed, BAS respond timeout."}},
+            {"ok": True, "msg": "ok", "username": "x", "ip": "10.0.0.5", "resp": {"error": "ok"}},
+        ]
+        assert worker._do_login(client=client) is True
+    assert client.login.call_count == 2
+    sleep.assert_called_once_with(2.0)
+
+
+def test_bas_timeout_persistent_is_not_credential_failure(tmp_path):
+    """重试仍超时: 只累计失败计数(稍后自动重试), 不能锁存成密码错误。"""
+    worker, _ = make_worker(tmp_path)
+    with patch.object(MonitorWorker, "_client") as mc, \
+         patch("zju_autologin.monitor.time.sleep"):
+        client = mc.return_value
+        client.get_status.return_value = dict(OFFLINE)
+        client.login.return_value = {
+            "ok": False, "msg": "portal busy", "username": "x", "ip": "",
+            "resp": {"error": "INFO failed, BAS respond timeout."},
+        }
+        assert worker._do_login(client=client) is False
+    assert client.login.call_count == 2
+    assert worker._fail_count == 1
+    assert worker._auth_error == ""
+
+
 def test_notify_pushes_after_threshold_and_resets(tmp_path):
     worker, cfg = make_worker(tmp_path, notify_threshold=2, notify_provider="bark")
     sent = []
