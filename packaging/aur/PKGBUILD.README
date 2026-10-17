@@ -19,7 +19,7 @@ optdepends=(
   'python-keyring: system keyring credential storage'
 )
 source=("$pkgname-$pkgver.tar.gz::https://files.pythonhosted.org/packages/source/z/$pkgname/$pkgname-$pkgver.tar.gz")
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')  # 发版时计算替换
+sha256sums=('a93de7a721b9fe9905f0a30165eb5bfbaf288379ed8f910fea19ecf093bb4615')
 
 package() {
   cd "$srcdir/$pkgname-$pkgver"
