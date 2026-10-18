@@ -2,6 +2,14 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [1.27.4] - 2026-10-18
+
+### 修复
+- **CI 测试在 Linux 上误跑 Windows-only 的 relaunch helper 单测**
+  （`subprocess.CREATE_NO_WINDOW` 在 POSIX 不存在），导致 v1.27.3 标签构建虽然
+  成功、测试却标红。该用例现仅在 Windows 运行；另修掉一处测试字符串的
+  `SyntaxWarning`。运行时行为与 1.27.3 相同。
+
 ## [1.27.3] - 2026-10-18
 
 ### 修复

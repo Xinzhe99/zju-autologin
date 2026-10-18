@@ -22,6 +22,7 @@ def test_relaunch_script_waits_for_installer_then_delays():
     assert "Remove-Item -LiteralPath $PSCommandPath" in text
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows helper only")
 def test_schedule_relaunch_spawns_detached_helper(monkeypatch):
     from zju_autologin import ui
     calls = []

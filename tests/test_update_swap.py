@@ -73,7 +73,7 @@ def test_installer_delays_silent_relaunch():
     assert "update-relaunch.ps1" in run_section
     assert "skipifnotsilent" in run_section
     # 不能再用裸 exe 作为静默启动项
-    assert 'Filename: "{app}\ZJUAutoLogin.exe"; Flags: nowait runasoriginaluser skipifnotsilent' not in run_section
+    assert r'Filename: "{app}\ZJUAutoLogin.exe"; Flags: nowait runasoriginaluser skipifnotsilent' not in run_section
     assert "Start-Sleep -Seconds 12" in iss
     # Inno 的自动关闭/重启会与 helper 形成双开, 加剧 onefile 解包竞态
     assert "RestartApplications=no" in iss
