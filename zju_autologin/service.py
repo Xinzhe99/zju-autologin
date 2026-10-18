@@ -272,9 +272,14 @@ def uninstall() -> tuple[bool, str]:
         return _uninstall_linux()
     if sys.platform == "darwin":
         return _uninstall_darwin()
+    cfg_path = service_config_dir() / "config.json"
+    cfg_ps = str(cfg_path).replace("'", "''")
     script = (
         f"  Stop-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue" + chr(10)
         + f"  Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false -ErrorAction SilentlyContinue" + chr(10)
+        # 配置文件里是 base64 密码; 删除任务后必须由同一个提权进程删掉,
+        # 否则非管理员进程 unlink 会被 ACL 拒绝, 密码永久留在 ProgramData。
+        + f"  Remove-Item -LiteralPath '{cfg_ps}' -Force -ErrorAction SilentlyContinue" + chr(10)
     )
     ok, detail = _run_elevated_ps(script)
     if not ok:

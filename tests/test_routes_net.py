@@ -6,12 +6,14 @@ from unittest.mock import patch
 from zju_autologin import routes
 
 
-def test_portal_ips_filters_private():
+def test_portal_ips_keeps_private_but_drops_fake_and_loopback():
+    """校园门户常驻 10/8 (ZJU 实测 10.50.254.11); 私网必须保留才能加 /32 路由。"""
     fake = [(socket.AF_INET, None, None, None, ("210.32.1.1", 0)),
             (socket.AF_INET, None, None, None, ("10.92.1.1", 0)),
+            (socket.AF_INET, None, None, None, ("198.18.0.5", 0)),
             (socket.AF_INET, None, None, None, ("127.0.0.1", 0))]
     with patch.object(socket, "getaddrinfo", return_value=fake):
-        assert routes.portal_ips("https://net.zju.edu.cn") == ["210.32.1.1"]
+        assert routes.portal_ips("https://net.zju.edu.cn") == ["210.32.1.1", "10.92.1.1"]
 
 
 def test_portal_ips_dns_fail():

@@ -11,12 +11,19 @@ import ipaddress
 import socket
 import urllib.parse
 
+# Clash/mihomo 的 fake-ip 网段: 这些是 TUN 虚拟地址, 不能写进真实路由
+_FAKE_IP_NET = ipaddress.ip_network("198.18.0.0/15")
+
 # 常见虚拟网卡/代理 TUN 适配器名，寻找物理默认网关时排除
 _VIRTUAL_HINT = "Clash|TUN|WireGuard|utun|Meta|mihomo|sing-box|v2ray|tun|Virtual|VMware|Hyper-V|WSL"
 
 
 def portal_ips(base_url: str) -> list[str]:
-    """解析门户的公网 IPv4（内网/回环地址不需要直连路由）。"""
+    """解析门户 IPv4（保留校园私网地址; 只排除回环/链路本地/fake-ip）。
+
+    校园门户通常在 10/8 私网(ZJU 实测 10.50.254.11), TUN 仍然会劫持它,
+    因此私网 /32 路由是必要且有效的。
+    """
     host = urllib.parse.urlsplit(base_url).hostname or ""
     try:
         infos = socket.getaddrinfo(host, None, socket.AF_INET)
@@ -33,7 +40,12 @@ def portal_ips(base_url: str) -> list[str]:
             addr = ipaddress.ip_address(ip)
         except ValueError:
             continue
-        if addr.is_loopback or addr.is_private or addr.is_link_local:
+        # 只排除回环/链路本地/未指定/fake-ip。校园门户经常就在 10/8 私网
+        # (ZJU 的 net.zju.edu.cn 实测解析到 10.50.254.11), 以前把私网一并过滤,
+        # 导致"门户直连路由"在本校永远返回 no-portal-ip —— 恰恰是它要解决的
+        # TUN 场景。私网 IP 加 /32 路由经物理网关是有效且必要的。
+        if (addr.is_loopback or addr.is_link_local or addr.is_unspecified
+                or addr in _FAKE_IP_NET):
             continue
         out.append(ip)
     return out
@@ -102,7 +114,11 @@ def add_direct_routes(cfg) -> tuple[bool, str]:
         return False, "windows only"
     ips = portal_ips(cfg.base_url)
     if not ips:
-        return False, "no-portal-ip"
+        # fake-ip 接管时 DNS 只给 198.18.x: 用上次记下的真实门户 IP
+        from .srun import cached_portal_ips
+        ips = cached_portal_ips(cfg.base_url)
+    if not ips:
+        return False, "no-portal-ip (DNS 只返回 fake-ip 或门户不可解析)"
     from .service import _run_elevated_ps
 
     ok, detail = _run_elevated_ps(route_script(ips))

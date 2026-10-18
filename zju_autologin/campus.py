@@ -139,9 +139,16 @@ def campus_suffixes(cfg) -> list[str]:
         suffixes.append(".".join(parts[1:]))  # 去掉首标签 → zju.edu.cn
     for item in str(cfg.data.get("campus_bypass_extra") or "").replace(";", ",").split(","):
         item = item.strip()
+        if not item:
+            continue
         if "://" in item:  # 用户常直接粘贴网址(https://www.cc98.org/), 取主机名
             item = urllib.parse.urlsplit(item).hostname or ""
-        item = item.split("/")[0].strip().lstrip("*.").strip().lower()
+        else:
+            # 去掉端口/路径: "cc98.org:8080/forum" -> "cc98.org"。
+            # 以前只 split("/"), 端口会留在例外条目里, 生成永不匹配的
+            # "*.cc98.org:8080"。
+            item = urllib.parse.urlsplit("//" + item).hostname or item.split("/")[0]
+        item = item.strip().lstrip("*.").strip(".").lower()
         if item and " " not in item and item not in suffixes:
             suffixes.append(item)
     return suffixes
@@ -159,8 +166,12 @@ def desired_entries(cfg) -> list[str]:
     """要注入例外列表的完整条目(域名后缀 + 私网前缀), 去重且保序。"""
     entries: list[str] = []
     for suffix in campus_suffixes(cfg):
-        entries.append(f"*.{suffix}")
-        entries.append(suffix)
+        if _is_ip(suffix):
+            # IP 直接写原值; 生成 "*.10.1.2.3" 是永远匹配不到的主机名通配
+            entries.append(suffix)
+        else:
+            entries.append(f"*.{suffix}")
+            entries.append(suffix)
     for prefix in _PRIVATE_PREFIXES:
         entries.append(prefix)
     seen: set[str] = set()
@@ -232,8 +243,9 @@ def ensure(cfg, detect_tun: bool = True) -> str:
     enabled = bool(cfg.data.get("campus_direct"))
     if not enabled:
         if cfg.data.get("campus_bypass_applied"):
-            remove_bypass(cfg)
-            return "removed"
+            # 以前忽略 remove_bypass 的返回值: 写入被拒绝时仍返回 "removed",
+            # 监控每 3 秒记一条"已移除", 而条目其实还在, 日志被刷满。
+            return "removed" if remove_bypass(cfg) else "remove_failed"
         return ""
     if pac_mode():
         return "pac"
@@ -259,11 +271,15 @@ def status(cfg, tun: bool | None = None) -> str:
         return "off"
     if pac_mode():
         return "pac"
+    is_tun = tun_mode() if tun is None else tun
     if proxy_enabled():
         present = {e.lower() for e in _split(str(_read_value("ProxyOverride") or ""))}
         if all(e.lower() in present for e in desired_entries(cfg)):
-            return "active"
+            # TUN 下例外列表不生效, 即使条目齐全也不能报"已生效"。
+            # 以前先判 proxy_enabled 再判 TUN, 用户开着 Clash TUN + 系统代理时
+            # 看到"已生效", 校内站点却依然打不开 —— 比不显示更糟。
+            return "tun" if is_tun else "active"
         return "pending"
-    if tun_mode() if tun is None else tun:
+    if is_tun:
         return "tun"
     return "idle"

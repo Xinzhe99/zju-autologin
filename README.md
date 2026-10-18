@@ -55,7 +55,7 @@
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.1/ZJUAutoLogin-1.27.1-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.1/ZJUAutoLogin-1.27.1-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.1/ZJUAutoLogin-1.27.1-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.2/ZJUAutoLogin-1.27.2-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.2/ZJUAutoLogin-1.27.2-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.2/ZJUAutoLogin-1.27.2-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
@@ -103,15 +103,15 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 **核心保活**
 - ✅ **自动重登**：可配置间隔轮询（默认 60s）+ **事件驱动**（Wi-Fi 切换/插拔网线/VPN 起落 2s 内响应），失败指数退避
 - ✅ **系统级保活**：无需登录桌面即可认证——Windows SYSTEM 计划任务 / macOS LaunchDaemon / Linux systemd，停电重启后远程照样可达
-- ✅ **GUI 崩溃自愈**：看护任务在 GUI 静默消失后 10 分钟内自动拉回
+- ✅ **GUI 崩溃自愈**（需开启系统级保活）：看护任务在 GUI 静默消失后 10–15 分钟内自动拉回
 
 **可靠性**
 - ✅ **DNS 故障兜底**（缓存门户 IP 直连）、**VPN 四层绕过**（直连/降级/网卡绑定/路由级）、瞬断快速重试
 - ✅ **Clash 校内直连**：把校内域名/私网加入系统代理例外并自动维护，开着代理也能访问统一认证/校内论坛/邮箱
-- ✅ **验证码支持**：贵校开启验证码时弹窗输入即完成登录
+- ✅ **验证码支持（桌面版）**：贵校开启验证码时弹窗输入即完成登录；系统级保活/CLI 不支持验证码
 - ✅ **设备超限处理**：E2620 时应用内一键踢号，可选自动踢最旧设备（本机永不误踢）
 
-**通知与诊断**
+**通知与诊断**（以下由桌面版常驻进程执行；系统级保活 `watch` 只负责认证，不推送、不更新 DDNS）
 - ✅ **掉线推送**：Bark / Server酱 / 企业微信 / 钉钉 / 飞书 / 邮件（[配置指南](docs/notifications.md)）
 - ✅ **心跳死信开关**：机器彻底失联时由 healthchecks.io 等外部服务报警
 - ✅ **一键诊断** `diagnose`（区分五类断网原因并给建议）+ **掉线回放**（时间线人话化）
@@ -210,10 +210,10 @@ zju-autologin check     # 查询当前在线状态
 zju-autologin login     # 立即登录一次
 zju-autologin watch 30  # 常驻守护（每 30 秒检测）
 zju-autologin diagnose  # 一键网络自诊断
-zju-autologin serve     # 无头设备 Web 配置页（仅 127.0.0.1，浏览器改配置）
+zju-autologin serve     # 无头设备 Web 配置页（仅 127.0.0.1；打开终端打印的带 token 地址）
 ```
 
-**代理/VPN 用户**：门户认证始终直连（不走代理），不受 Clash 等工具影响；HTTPS 被掐断时自动降级 HTTP 重试，瞬断自动快速重试。外网探测 / 更新检查 / 消息推送的路由可在 设置 → 代理与校内直连 → 网络代理 中选择（跟随系统 / 强制直连 / 自定义地址）。
+**代理/VPN 用户**：门户认证始终直连（不走代理），不受 Clash 等工具影响；状态查询在 HTTPS 不通时会降级 HTTP 重试，登录/设备管理始终强制 HTTPS（不降级），瞬断自动快速重试。外网探测 / 更新检查 / 消息推送的路由可在 设置 → 代理与校内直连 → 网络代理 中选择（跟随系统 / 强制直连 / 自定义地址）。
 
 若开启 **TUN/全局模式 VPN**（在路由层接管流量），程序会自动尝试**绑定校园网网卡直发**；Clash 的 fake-ip 把门户解析成 `198.18.x.x` 时，会改用上次记下的门户真实 IP 直连（证书仍按域名校验）。仍不通时可点 设置 → 代理与校内直连 → 「门户直连路由(绕过VPN)」，以管理员权限为门户 IP 添加持久化直连路由（可一键移除）——这是 Windows 上确保级绕过手段。
 

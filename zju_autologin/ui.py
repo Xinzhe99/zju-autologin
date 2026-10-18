@@ -436,12 +436,12 @@ class StatsDialog(QDialog):
         self.setModal(True)
         self.resize(560, 500)
         lay = QVBoxLayout(self)
-        events = read_events(300)
+        events = read_events(300, self._main._config.log_dir)
 
         # 掉线回放: 把事件流讲成人话(这项功能此前只在 README 里存在, 没有调用点)
         try:
             from .narrative import build_narrative
-            story = build_narrative(12)
+            story = build_narrative(12, self._main._config.log_dir)
         except Exception:  # noqa: BLE001 - 叙事只是锦上添花, 不能拖垮统计窗
             story = ""
         if story:
@@ -453,11 +453,11 @@ class StatsDialog(QDialog):
             lay.addWidget(narrative_lbl)
 
         # 每日流量增量
-        usage = read_usage(40)
+        usage = read_usage(40, self._main._config.log_dir)
         deltas: list[float] = []
         # 第一条读数没有前一天作基准: 以前拿它和 0 相减, 把整个计费周期的累计
         # 流量画成"第一天"的一根巨柱, 其余柱子全被压扁看不出差异
-        for prev_row, row in zip(usage, usage[1:]):
+        for prev_row, row in zip(usage, usage[1:], strict=False):
             try:
                 delta = int(row["bytes"]) - int(prev_row["bytes"])
                 if delta < 0:  # 计费周期重置
@@ -629,6 +629,8 @@ class SettingsWindow(QDialog):
         self._service_thread: _FnThread | None = None
         self._service_sync_thread: _FnThread | None = None
         self._i18n_labels: list[tuple[QLabel, str]] = []  # (控件, 词条) 统一重译
+        self._hint_seq = 0
+        self._loading = False
         self.setWindowTitle(tr("card.settings"))
         self.setWindowModality(Qt.WindowModality.NonModal)
         self.resize(720, 760)
@@ -639,6 +641,7 @@ class SettingsWindow(QDialog):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         scroll = QScrollArea()
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         outer.addWidget(scroll, 1)
@@ -877,12 +880,18 @@ class SettingsWindow(QDialog):
         self._lbl_guide.setOpenExternalLinks(True)
         self._btn_notify_test = QPushButton()
         self._btn_notify_test.setObjectName("secondary")
-        self._btn_notify_test.clicked.connect(self._monitor.notify_test)
+        self._btn_notify_test.clicked.connect(self._notify_test_clicked)
         test_row = QHBoxLayout()
         test_row.addWidget(self._lbl_guide)
         test_row.addStretch(1)
         test_row.addWidget(self._btn_notify_test)
         self._span(grid, test_row)
+        self._notify_test_hint = QLabel()
+        self._notify_test_hint.setObjectName("statusDetail")
+        self._notify_test_hint.setWordWrap(True)
+        self._notify_test_hint.setVisible(False)
+        self._span(grid, self._notify_test_hint)
+        self._monitor.notifyTestResult.connect(self._on_notify_test_result)
 
         # ============================================================ 高级(折叠)
         self._btn_advanced = QToolButton()
@@ -989,6 +998,7 @@ class SettingsWindow(QDialog):
         monitor.campusState.connect(self._on_campus_state)
         self._load_settings_into_ui()
         self.retranslate_ui()
+        self._activate_default_button()
 
     # ---------------- 布局工具 ----------------
 
@@ -1142,11 +1152,40 @@ class SettingsWindow(QDialog):
             f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
         self._edit_smtp_pass.setPlaceholderText(tr("smtp.pass_ph"))
 
-    # ---------------- 校内直连状态 ----------------
+    # ---------------- 通知测试 / 校内直连状态 ----------------
+
+    def _notify_test_clicked(self) -> None:
+        """用当前输入框里的值测试（不要求先保存）。"""
+        self._notify_test_hint.setVisible(True)
+        self._notify_test_hint.setText(tr("notify.testing"))
+        self._btn_notify_test.setEnabled(False)
+        self._monitor.notify_test({
+            "notify_provider": self._combo_provider.currentData() or "none",
+            "notify_key": self._edit_key.text().strip(),
+            "smtp_host": self._edit_smtp_host.text().strip(),
+            "smtp_port": self._spin_smtp_port.value(),
+            "smtp_user": self._edit_smtp_user.text().strip(),
+            "smtp_pass": self._edit_smtp_pass.text(),
+            "smtp_to": self._edit_smtp_to.text().strip(),
+        })
+
+    def _on_notify_test_result(self, ok: bool, msg: str) -> None:
+        self._btn_notify_test.setEnabled(True)
+        self._notify_test_hint.setVisible(True)
+        self._notify_test_hint.setText(tr("notify.test_done", msg=msg))
 
     def _on_campus_toggled(self, on: bool) -> None:
         self._edit_campus_extra.setEnabled(on)
         self._lbl_campus_extra.setEnabled(on)
+        if self._loading:
+            return  # 程序化回填, 不是用户操作, 别标"未保存"
+        if sys.platform == "win32":
+            # 立即反映用户刚做的操作; 否则勾选后下一行仍写着"已关闭"
+            state = "pending" if on else "off"
+            self._campus_status.setVisible(True)
+            self._campus_status.setText(
+                tr("campus.status_line", state=tr(f"campus.state.{state}"))
+                + tr("campus.unsaved_suffix"))
 
     def _on_campus_state(self, _state: str) -> None:
         self._refresh_campus_status()
@@ -1180,6 +1219,13 @@ class SettingsWindow(QDialog):
 
     def _load_settings_into_ui(self) -> None:
         cfg = self._config
+        self._loading = True
+        try:
+            self._load_settings_into_ui_inner(cfg)
+        finally:
+            self._loading = False
+
+    def _load_settings_into_ui_inner(self, cfg) -> None:
         self._edit_user.setText(cfg.username)
         self._edit_domain.setText(cfg.domain)
         self._spin_interval.setValue(cfg.interval)
@@ -1253,12 +1299,53 @@ class SettingsWindow(QDialog):
 
     # ---------------- 动作 ----------------
 
+    def _activate_default_button(self) -> None:
+        """让 Enter 落在"保存设置"上, 而不是"重新配置"。
+
+        QDialog 会把焦点链里第一个 autoDefault 按钮当成默认按钮; 设置页里
+        「重新配置」排在保存之前, 于是密码框回车会弹出清空凭据的确认框。
+        """
+        self._btn_save.setAutoDefault(True)
+        self._btn_save.setDefault(True)
+        for btn in self.findChildren(QPushButton):
+            if btn is not self._btn_save:
+                btn.setAutoDefault(False)
+
+    def _flash_hint(self, text: str, timeout_ms: int = 2500) -> None:
+        """显示底栏提示, 超时只清除自己这一条。
+
+        以前每次保存都挂一个无条件的 singleShot 清空: 连续两次保存时, 上一
+        次的定时器会把这一次的错误提示提前抹掉。
+        """
+        self._hint_seq += 1
+        seq = self._hint_seq
+        self._save_hint.setText(text)
+
+        def clear() -> None:
+            if seq == self._hint_seq:
+                self._save_hint.setText("")
+
+        QTimer.singleShot(timeout_ms, clear)
+
+    def _scroll_to(self, widget) -> None:
+        try:
+            self._scroll.ensureWidgetVisible(widget)
+        except Exception:  # noqa: BLE001 - 只是定位辅助
+            pass
+
     def _save_settings(self) -> None:
         cfg = self._config
         pwd = self._edit_pwd.text()
         # 先校验再写内存配置: 避免校验失败时已赋值的字段不落盘却生效
-        if not pwd and not cfg.get_password() and self._edit_user.text():
+        if not self._edit_user.text().strip():
+            self._save_hint.setText(tr("hint.need_username"))
+            self._scroll_to(self._edit_user)
+            self._edit_user.setFocus()
+            return
+        if not pwd and not cfg.get_password():
             self._save_hint.setText(tr("hint.need_password"))
+            self._scroll_to(self._edit_pwd)
+            self._edit_pwd.setFocus()
             return
         if (not pwd and cfg.get_password()
                 and self._edit_user.text().strip() != cfg.username.strip()):
@@ -1334,8 +1421,7 @@ class SettingsWindow(QDialog):
 
         self._monitor.config_updated()
         # 落盘失败必须说清楚: 以前不管写没写成功都提示"已保存"
-        self._save_hint.setText(tr("hint.save_ok") if saved else tr("hint.save_fail"))
-        QTimer.singleShot(2500, lambda: self._save_hint.setText(""))
+        self._flash_hint(tr("hint.save_ok") if saved else tr("hint.save_fail"))
         self._main._append_log(tr("log.settings_saved",
                                   backend=tr(f"password.storage.{cfg.password_backend_key()}")))
         self._monitor.check_once()
@@ -1389,10 +1475,17 @@ class SettingsWindow(QDialog):
         def work():
             from . import watchdog
             result = service.install(cfg) if enable else service.uninstall()
-            if enable:
-                watchdog.install()   # GUI 看护任务随系统级保活一起装
-            else:
-                watchdog.uninstall()
+            ok = not isinstance(result, Exception) and bool(result and result[0])
+            # 只有保活真的装/卸成功才动看护任务。以前 UAC 取消也会装看护,
+            # 用户关掉程序后 5-15 分钟又被拉起来。
+            if ok:
+                try:
+                    if enable:
+                        watchdog.install()
+                    else:
+                        watchdog.uninstall()
+                except Exception:  # noqa: BLE001 - 看护失败不影响保活本身
+                    pass
             return result
 
         def done(result):
@@ -1425,11 +1518,17 @@ class SettingsWindow(QDialog):
         def done(result):
             ok = not isinstance(result, Exception) and bool(result and result[0])
             self._btn_route.setEnabled(True)
+            detail = ""
+            if isinstance(result, tuple) and len(result) > 1 and result[1]:
+                detail = str(result[1])
             if ok:
                 self._btn_route.setText(tr("route.remove" if want_add else "route.add"))
                 self._main._append_log(tr("route.add_ok") if want_add else tr("route.remove_ok"))
             else:
-                self._main._append_log(tr("route.add_fail") if want_add else tr("route.remove_fail"))
+                # 带上真实原因: 以前 no-portal-ip 也只显示"请在 UAC 弹窗中确认",
+                # 用户根本等不到 UAC, 无从排查。
+                msg = tr("route.add_fail") if want_add else tr("route.remove_fail")
+                self._main._append_log(f"{msg} [{detail}]" if detail else msg)
 
         self._route_thread = _FnThread(work, self)
         self._route_thread.done.connect(done)
@@ -1958,6 +2057,7 @@ class MainWindow(QMainWindow):
         self._settings_window.show()
         self._settings_window.raise_()
         self._settings_window.activateWindow()
+        self._settings_window._activate_default_button()
 
     def _open_logs(self) -> None:
         if self._logs_window is None:
@@ -2519,6 +2619,11 @@ class MainWindow(QMainWindow):
         self._save_geometry()
         # 关机/注销时必须放行: 隐藏到托盘会拖住系统会话结束
         if self._session_end or self._force_quit or not self._config.minimize_to_tray:
+            if not self._session_end:
+                # 用户主动关窗退出(不是关机/注销): 看护任务必须尊重, 否则
+                # 5-15 分钟后它会把刚关掉的程序又拉起来。
+                from . import watchdog
+                watchdog.mark_user_quit()
             # 关窗即退出: 只 accept() 而不 quit() 会留下一个僵尸托盘进程 ——
             # 事件循环还在, 但 monitor 线程已被 stop(), 保活静默失效, 界面
             # 重新打开也是死的(按钮全无反应)。托盘图标必须一并收掉。

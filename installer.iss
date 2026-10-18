@@ -112,8 +112,33 @@ begin
   end;
 end;
 
+procedure RemoveServiceDataElevated;
+var
+  Rc: Integer;
+begin
+  { 系统级保活的计划任务与 ProgramData 配置由 SYSTEM 创建并锁了 ACL,
+    普通权限卸载删不掉。这里显式弹一次 UAC, 由管理员进程删除任务与
+    含 base64 密码的配置文件; 用户取消则保留, 但至少给出提示。 }
+  if not DirExists(ExpandConstant('{commonappdata}\ZJUAutoLogin')) then
+    Exit;
+  if not ShellExec('runas', ExpandConstant('{sys}\cmd.exe'),
+       '/C schtasks /End /TN ZJUAutoLogin & schtasks /Delete /F /TN ZJUAutoLogin'
+       + ' & rmdir /S /Q "' + ExpandConstant('{commonappdata}\ZJUAutoLogin') + '"',
+       '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+    MsgBox('未能获取管理员权限: 系统级保活凭据仍保留在 '
+           + ExpandConstant('{commonappdata}\ZJUAutoLogin') + '。'
+           + #13#10 + '如需彻底清除, 请以管理员身份运行:'
+           + #13#10 + 'schtasks /Delete /F /TN ZJUAutoLogin'
+           + #13#10 + 'rmdir /S /Q "'
+           + ExpandConstant('{commonappdata}\ZJUAutoLogin') + '"',
+           mbInformation, MB_OK);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
     StopOurProcesses;  { 卸载同样要先关程序, 否则又留下"重启后删除"残留 }
+    RemoveServiceDataElevated;
+  end;
 end;

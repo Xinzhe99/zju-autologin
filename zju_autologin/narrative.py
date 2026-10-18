@@ -31,9 +31,9 @@ def _describe(event: str, detail: str) -> str:
     return base
 
 
-def build_narrative(limit: int = 40) -> str:
-    """把最近事件编译成可读故事。"""
-    events = read_events(limit * 2)
+def build_narrative(limit: int = 40, directory=None) -> str:
+    """把最近事件编译成可读故事。directory 为事件文件所在目录。"""
+    events = read_events(limit * 2, directory)
     if not events:
         return tr("nar.empty")
     lines = []

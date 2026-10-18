@@ -2,7 +2,8 @@
 <script>
 setInterval(async () => {
   try {
-    const s = await (await fetch('/api/status')).json();
+    const t = window.__ZJU_TOKEN ? ('?t=' + encodeURIComponent(window.__ZJU_TOKEN)) : '';
+    const s = await (await fetch('/api/status' + t)).json();
     const dot = s.online ? '\u{1F7E2}' : (s.ip === undefined ? '\u{26AA}' : '\u{1F534}');
     document.getElementById('stat').innerHTML =
       dot + ' <b>' + (s.online ? '在线' : '离线') + '</b>'

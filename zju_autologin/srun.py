@@ -177,9 +177,15 @@ _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _PORTAL_IP_CACHE: dict[str, list[str]] = {}
 _IP_CACHE_FILE = "portal_ips.json"
 _ip_cache_loaded = False
-# fake-ip 下钉 IP 直连失败的时间(host -> ts): 冷却期内直接走 TUN, 不每次白等超时
-_PINNED_FAIL: dict[str, float] = {}
+# fake-ip 下钉 IP 直连失败的时间((host, source_ip) -> ts): 冷却期内直接走 TUN,
+# 不每次白等超时。必须带 source_ip: 不绑源的 direct 策略失败后, 绑定物理网卡的
+# bind 策略仍应有机会尝试钉 IP(以前按 host 全局冷却, 第一条 direct 就把路堵死)。
+_PINNED_FAIL: dict[tuple[str, str], float] = {}
 _PINNED_FAIL_TTL = 600.0
+
+
+def _pinned_key(host: str, source_ip: str | None) -> tuple[str, str]:
+    return (host, source_ip or "")
 
 
 def _ip_cache_path():
@@ -221,7 +227,10 @@ def _resolve(host: str) -> tuple[list[str], str]:
     _load_ip_cache()
     try:
         infos = socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
-    except socket.gaierror:
+    except OSError:
+        # gaierror 只是 OSError 的一种; Windows 在 DHCP 续租/网卡切换时还会抛
+        # "getaddrinfo failed: transient" 之类的普通 OSError。只捕 gaierror 会让
+        # 它一路逸出 SrunError, 监控既不上报状态也不重试(旧版卡在上一帧)。
         return list(_PORTAL_IP_CACHE.get(host, [])), "down"
     ips = sorted({info[4][0] for info in infos})
     real = [ip for ip in ips if not is_fake_ip(ip)]
@@ -233,6 +242,13 @@ def _resolve(host: str) -> tuple[list[str], str]:
     if ips and _PORTAL_IP_CACHE.get(host):
         return list(_PORTAL_IP_CACHE[host]), "fake"
     return ips, "ok"
+
+
+def cached_portal_ips(base_url: str) -> list[str]:
+    """返回上次记下的门户真实 IP(供路由功能在 fake-ip 下使用)。"""
+    host = urllib.parse.urlsplit(base_url).hostname or ""
+    _load_ip_cache()
+    return list(_PORTAL_IP_CACHE.get(host, []))
 
 
 def _resolve_and_cache(host: str) -> tuple[list[str], bool]:
@@ -272,6 +288,22 @@ def is_transient_portal_error(resp: dict | None) -> bool:
         return False
     text = f"{resp.get('error', '')} {resp.get('error_msg', '')}".lower()
     return any(hint in text for hint in TRANSIENT_ERROR_HINTS)
+
+
+def is_auth_rejected(resp: dict | None, msg: str = "") -> bool:
+    """是否"认证被拒"(密码/账号错), GUI、watch、诊断共用同一判断。
+
+    不能只看 error 码: 部分深澜部署把密码错放在 error_msg 里, 错误码是自定义值。
+    这类响应必须锁存, 否则会拿着错误密码无限 bind, 触发门户锁号。
+    """
+    resp = resp or {}
+    err = str(resp.get("error", "") or "")
+    if err in AUTH_ERROR_CODES:
+        return True
+    text = f"{err} {resp.get('error_msg', '') or ''} {msg or ''}"
+    if "password_error" in text or "username_error" in text:
+        return True
+    return tr("err.password_error") in text or tr("err.username_error") in text
 
 
 def friendly_error(resp: dict) -> str:
@@ -424,8 +456,10 @@ class SrunClient:
         ips, mode = _resolve(host)
         if not ips:
             raise SrunError(tr("srun.dns_down"))
-        if mode == "fake" and time.time() - _PINNED_FAIL.get(host, 0.0) < _PINNED_FAIL_TTL:
-            mode = "ok"  # 刚试过钉 IP 走不通: 冷却期内直接交给 TUN, 不再白等超时
+        source_ip = getattr(opener, "zju_source_ip", None)
+        key = _pinned_key(host, source_ip)
+        if mode == "fake" and time.time() - _PINNED_FAIL.get(key, 0.0) < _PINNED_FAIL_TTL:
+            mode = "ok"  # 这一路(host+源地址)刚试过钉 IP 走不通: 冷却期内交给 TUN
         if mode != "ok":
             # DNS 故障 / fake-ip 兜底: 按缓存的真实 IP 直连, Host 头保留虚拟主机。
             # 关键: 证书校验不降级 —— 以前这里关掉校验(verify_mode=CERT_NONE),
@@ -434,17 +468,17 @@ class SrunClient:
             # IP、TLS 仍按原主机名验证: 中间人拿不出有效证书, 直接失败。
             last_exc: Exception | None = None
             try:
-                body = self._request_pinned(url, host, ips, headers,
-                                            getattr(opener, "zju_source_ip", None))
-                _PINNED_FAIL.pop(host, None)
+                body = self._request_pinned(url, host, ips, headers, source_ip)
+                _PINNED_FAIL.pop(key, None)
                 return body
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
             if mode == "down":
                 raise SrunError(tr("srun.dns_down")) from last_exc
             # fake-ip: 缓存地址走不通(门户换了 IP / TUN 严格路由等), 退回常规路径
-            # 交给 TUN 处理, 并在冷却期内不再尝试
-            _PINNED_FAIL[host] = time.time()
+            # 交给 TUN 处理, 并在冷却期内不再尝试。冷却只覆盖这一路源地址,
+            # 后面的 bind 策略仍可尝试"钉 IP + 绑物理网卡"。
+            _PINNED_FAIL[key] = time.time()
         req = urllib.request.Request(url, headers=dict(headers))
         opener = opener or _DIRECT_OPENER
         try:
@@ -489,7 +523,23 @@ class SrunClient:
                     ip_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 with ip_opener.open(req, timeout=self.timeout) as resp:
                     return resp.read().decode("utf-8", errors="replace")
-            except Exception as exc:  # noqa: BLE001
+            except urllib.error.HTTPError as exc:
+                # srun 的认证失败就是 HTTP 400 + JSON/JSONP 错误体。这里必须把
+                # 响应体读出来原样返回, 不能当网络异常丢弃:
+                # 1) 调用方才能拿到真实错误码(密码错/设备超限/临时繁忙);
+                # 2) 否则会记一次"钉 IP 不可达"冷却, 再回退常规路径把同一份
+                #    密码重新 bind 一次 —— 每轮两次 bind, 与防锁号目标相反。
+                try:
+                    with contextlib.closing(exc):
+                        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+                except OSError:
+                    body = ""
+                # 4xx 才是 srun 的业务错误(HTTP 400 + JSONP); 5xx 网关错误
+                # 属于传输层问题, 交给策略链回退, 不要把 HTML 错误页当响应。
+                if body and 400 <= exc.code < 500:
+                    return body
+                last_exc = exc
+            except Exception as exc:  # noqa: BLE001 - 只有真正的传输层异常才换 IP/冷却
                 last_exc = exc
         raise last_exc or OSError("no ip")
 

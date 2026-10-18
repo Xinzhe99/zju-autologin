@@ -21,36 +21,86 @@ import sys
 import time
 
 from zju_autologin import i18n
-from zju_autologin.config import Config
+from zju_autologin.config import Config, service_config_dir
 from zju_autologin.i18n import tr
 from zju_autologin.net import probe_internet
-from zju_autologin.srun import AUTH_ERROR_CODES, SrunClient, SrunError
+from zju_autologin.srun import (SrunClient, SrunError, is_auth_rejected,
+                                is_transient_portal_error)
 
 
-def _parse_args(argv: list[str]) -> tuple[str, int | None, str | None]:
+def _parse_args(argv: list[str]) -> tuple[str, int | None, str | None, str | None]:
+    """解析子命令后的参数, 返回 (action, interval, cfg_path, error)。
+
+    以前未知选项被静默忽略: `--confg x.json` 会不动声色地跑默认配置,
+    用户以为读了自己的文件。现在一律报错。
+    """
     action = argv[0] if argv else "check"
     interval = None
     cfg_path = None
     rest = argv[1:]
     i = 0
     while i < len(rest):
-        if rest[i] in ("--config", "-c") and i + 1 < len(rest):
+        arg = rest[i]
+        if arg in ("--config", "-c"):
+            if i + 1 >= len(rest):
+                return action, None, None, f"{arg} 需要一个文件路径"
             cfg_path = rest[i + 1]
             i += 2
             continue
+        if arg.startswith("-"):
+            return action, None, None, f"未知选项: {arg}"
         try:
-            interval = int(rest[i])
+            interval = int(arg)
         except ValueError:
-            pass
+            return action, None, None, f"无法识别的参数: {arg}"
         i += 1
-    return action, interval, cfg_path
+    return action, interval, cfg_path, None
+
+
+def _scan_config(argv: list[str]) -> tuple[str | None, str | None]:
+    """从子命令参数中取出 --config; 返回 (path, error)。"""
+    i = 0
+    while i < len(argv):
+        if argv[i] in ("--config", "-c"):
+            if i + 1 >= len(argv):
+                return None, f"{argv[i]} 需要一个文件路径"
+            return argv[i + 1], None
+        i += 1
+    return None, None
+
+
+def _load_cli_config(cfg_path: str | None = None, prefer_service: bool = True) -> Config:
+    """CLI 用哪份配置: 显式 --config > 已安装的系统级保活 > 用户配置。
+
+    serve/diagnose/check 以前固定读用户配置, 而 systemd/SYSTEM 服务读的是
+    /etc 或 ProgramData 下的服务配置 —— 无头设备上用户在网页里填的凭据
+    服务永远读不到, 诊断还会建议去填一份服务不读的配置。
+    """
+    import zju_autologin.service as service
+
+    if cfg_path:
+        return Config(path=cfg_path)
+    if prefer_service:
+        try:
+            if service.is_installed(max_age=60):
+                svc = service_config_dir() / "config.json"
+                if svc.is_file():
+                    cfg = Config(str(svc))
+                    if cfg._load_failed:
+                        print(f"[!] 无法读取服务配置 {svc}（权限不足?）；"
+                              "请用 sudo 运行或 --config 指定配置文件",
+                              file=sys.stderr)
+                    return cfg
+        except Exception:  # noqa: BLE001 - 查询服务状态不能拖垮 CLI
+            pass
+    return Config()
 
 
 def cmd_check(cfg: Config) -> int:
     client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
     try:
         status = client.get_status()
-    except SrunError as exc:
+    except (SrunError, OSError) as exc:
         print(f"[x] {exc}")
         return 2
     if not status["online"]:
@@ -65,7 +115,7 @@ def cmd_check(cfg: Config) -> int:
 
 
 def cmd_login(cfg: Config) -> int:
-    if not cfg.username or not cfg.get_password():
+    if not cfg.username or not cfg.refresh_password():
         print(tr("cli.config_missing"))
         print(f"    {cfg.path}")
         return 2
@@ -115,7 +165,7 @@ def _watch_tick(cfg: Config, st: _WatchState, note) -> str:
     client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
     try:
         status = client.get_status()
-    except SrunError as exc:
+    except (SrunError, OSError) as exc:
         # 门户不可达(不在校园网/网线没插): 登录必然失败, 不再每轮空打一次
         print(f"[x] {exc}")
         return "no_campus"
@@ -129,7 +179,8 @@ def _watch_tick(cfg: Config, st: _WatchState, note) -> str:
                  internet=tr("cli.internet_ok") if ok else tr("cli.internet_bad")))
         return "online"
     print(tr("cli.offline_line", state=tr("cli.offline"), url=cfg.base_url))
-    if not cfg.username or not cfg.get_password():
+    if not cfg.username or not cfg.refresh_password():
+        # keyring 可能比守护进程晚就绪: 每轮重试一次, 不能永久停在"未配置"
         note(tr("cli.config_missing") + f" {cfg.path}")
         return "offline"
     now = time.time()
@@ -141,6 +192,13 @@ def _watch_tick(cfg: Config, st: _WatchState, note) -> str:
         return "offline"
     st.last_attempt = now
     result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
+    if not result["ok"] and is_transient_portal_error(result.get("resp")):
+        # 与 GUI 一致: BAS 应答超时是门户侧临时故障, 2 秒后快速重试一次,
+        # 不要落进 60 秒起步的指数退避。系统级保活占保活流量的绝大多数,
+        # 1.27.1 只修了 GUI, 服务模式仍会白等一分钟。
+        note(tr("log.portal_busy_retry"), dedupe=False)
+        time.sleep(2.0)
+        result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
     line = (tr("cli.login_ok_prefix") if result["ok"]
             else tr("cli.login_fail_prefix")) + tr("cli.auto_relogin", msg=result["msg"])
     print(line)
@@ -149,8 +207,9 @@ def _watch_tick(cfg: Config, st: _WatchState, note) -> str:
         st.fail_count = 0
         st.latch_msg = ""
         return "online"
-    err = str((result.get("resp") or {}).get("error", ""))
-    if err in AUTH_ERROR_CODES:
+    resp = result.get("resp") or {}
+    err = str(resp.get("error", ""))
+    if is_auth_rejected(resp, str(result.get("msg") or "")):
         st.latch_msg = str(result.get("msg") or err)
         st.latch_until = now + _WATCH_LATCH_SECS
         st.fail_count = 0
@@ -365,6 +424,9 @@ def cmd_status() -> int:
         print(f"系统级保活: 已安装（{where}）")
     # 网络状态（不需要 root）
     cfg = Config(str(service_config_dir() / "config.json")) if installed else Config()
+    if installed and cfg._load_failed:
+        print(f"[!] 无法读取服务配置 {cfg.path}（权限不足?）；请用 sudo 运行 status",
+              file=sys.stderr)
     return cmd_check(cfg)
 
 
@@ -372,9 +434,22 @@ def main() -> int:
     argv = sys.argv[1:]
     action = argv[0] if argv else "check"
     rest = argv[1:]
+
+    if action in ("-h", "--help", "help"):
+        print(__doc__ or "usage: zju-autologin check|login|watch|enable|disable|status")
+        return 0
+    if action in ("version", "--version", "-V"):
+        from zju_autologin import __version__
+        print(f"zju-autologin {__version__}")
+        return 0
+
+    if action.startswith("-"):
+        print(f"未知选项: {action}")
+        print(__doc__ or "usage: zju-autologin check|login|watch|enable|disable|status")
+        return 2
     i18n.set_lang(Config().language)  # 所有子命令统一语言(含 enable/status/diagnose)
 
-    # enable/disable/status 不走 --config 解析（enable 自带参数体系）
+    # enable/disable/status 不走通用 --config 解析（enable 自带参数体系）
     if action == "enable":
         return cmd_enable(rest)
     if action == "disable":
@@ -383,34 +458,65 @@ def main() -> int:
         return cmd_status()
     if action == "serve":
         port = 8734
-        for i, a in enumerate(rest):
-            if a in ("--port", "-p") and i + 1 < len(rest):
+        cfg_path, err = _scan_config(rest)
+        i = 0
+        while i < len(rest):
+            arg = rest[i]
+            if arg in ("--config", "-c"):
+                i += 2
+                continue
+            if arg in ("--port", "-p"):
+                if i + 1 >= len(rest):
+                    err = f"{arg} 需要一个端口"
+                    break
                 try:
                     port = int(rest[i + 1])
                 except ValueError:
-                    pass
+                    err = f"端口不合法: {rest[i + 1]}"
+                    break
+                i += 2
+                continue
+            err = f"无法识别的参数: {arg}"
+            break
+        if err:
+            print(err)
+            return 2
         if not (1 <= port <= 65535):
             print(f"端口不合法: {port}（应为 1-65535）")
             return 2
         from zju_autologin.webui import cmd_serve
-        cfg = Config()
+        cfg = _load_cli_config(cfg_path)
         return cmd_serve(cfg, port)
     if action == "diagnose":
         from zju_autologin.diag import format_report
-        cfg = Config()
+        cfg_path, err = _scan_config(rest)
+        if err:
+            print(err)
+            return 2
+        i = 0
+        while i < len(rest):
+            if rest[i] in ("--config", "-c"):
+                i += 2
+                continue
+            err = f"无法识别的参数: {rest[i]}"
+            break
+        if err:
+            print(err)
+            return 2
+        cfg = _load_cli_config(cfg_path)
         print(format_report(cfg))
         return 0
-    if action in ("version", "--version", "-V"):
-        from zju_autologin import __version__
-        print(f"zju-autologin {__version__}")
-        return 0
 
-    action, interval, cfg_path = _parse_args(argv)
+    action, interval, cfg_path, err = _parse_args(argv)
+    if err:
+        print(err)
+        print(__doc__ or "usage: zju-autologin check|login|watch|enable|disable|status")
+        return 2
     if cfg_path and not os.path.isfile(cfg_path):
         # 手滑写错路径时以前会静默用默认配置跑, 用户看不出"根本没读你的文件"
         print(f"配置文件不存在: {cfg_path}")
         return 2
-    cfg = Config(path=cfg_path)
+    cfg = _load_cli_config(cfg_path)
     if action == "check":
         return cmd_check(cfg)
     if action == "login":

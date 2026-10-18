@@ -21,6 +21,16 @@ from .net import candidate_source_ips
 from .srun import AUTH_ERROR_CODES, SrunClient, is_transient_portal_error
 
 
+def _mask_account(name: str) -> str:
+    """诊断报告会被贴进 issue/群聊: 学号属半截凭据, 默认打码。"""
+    name = str(name or "")
+    if not name:
+        return "—"
+    if len(name) <= 2:
+        return "***"
+    return f"{name[:2]}{'*' * 3}{name[-1:]}"
+
+
 def _proxy_env() -> list[str]:
     """可见的系统/环境代理（仅报告, 不改变行为）。"""
     import os
@@ -114,7 +124,7 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
 
     # 5) 已认证 → 外网探测
     row(tr("diag.auth"), tr("diag.online"),
-        tr("diag.online_detail", user=status.get("username", ""),
+        tr("diag.online_detail", user=_mask_account(status.get("username", "")),
            ip=status.get("ip", "")))
     # 走 net.probe_internet: monitor 那份会连带 import PyQt6, 而无 GUI 依赖的
     # 瘦身包/服务器上根本没装 Qt, 早期 import 会让 diagnose 直接栈崩;

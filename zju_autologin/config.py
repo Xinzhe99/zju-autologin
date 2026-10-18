@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import os
 import sys
@@ -130,7 +131,8 @@ def append_file_log(line: str, directory: Path | None = None) -> None:
         pass
 
 
-_EVENTS_FILE_MAX = 256 * 1024  # events.jsonl 超限后仅保留尾部行
+_EVENTS_FILE_MAX = 1024 * 1024  # events.jsonl 超限后仅保留尾部 5000 行
+_EVENTS_KEEP_LINES = 5000
 
 
 def append_event(kind: str, detail: str = "", directory: Path | None = None) -> None:
@@ -143,7 +145,7 @@ def append_event(kind: str, detail: str = "", directory: Path | None = None) -> 
             fh.write(json.dumps({"ts": time.time(), "event": kind, "detail": detail},
                                 ensure_ascii=False) + "\n")
         if path.exists() and path.stat().st_size > _EVENTS_FILE_MAX:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-_EVENTS_KEEP_LINES:]
             tmp = path.with_suffix(".tmp")
             tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
             tmp.replace(path)
@@ -215,18 +217,27 @@ class Config:
     def __init__(self, path: str | None = None) -> None:
         self._lock = threading.Lock()  # UI 与 monitor 线程会并发读写
         self.path = path or config_path()
-        self.data: dict = dict(_DEFAULTS)
+        self.data: dict = copy.deepcopy(_DEFAULTS)
         self.password_backend = "none"
         self._plain_password = ""
+        self._load_failed = False
         self.load()
+
+    @property
+    def log_dir(self) -> Path:
+        """日志/事件/统计与配置文件同目录（服务模式下即 /etc 或 ProgramData）。"""
+        return Path(self.path).parent
 
     # ------------------------------------------------------------- 生命周期
 
     def load(self) -> None:
         with self._lock:
-            self.data = dict(_DEFAULTS)
-            self._plain_password = ""
-            if os.path.isfile(self.path):
+            self._load_failed = False
+            if not os.path.isfile(self.path):
+                self.data = copy.deepcopy(_DEFAULTS)
+                self.password_backend = "none"
+                self._plain_password = ""
+            else:
                 stored: dict | None = None
                 try:
                     # utf-8-sig: 记事本另存为"UTF-8 带 BOM"时 json.load 会直接抛错,
@@ -245,18 +256,23 @@ class Config:
                               file=sys.stderr)
                     except OSError:
                         pass
-                except OSError:
-                    stored = None
+                except OSError as exc:
+                    # 文件被占用/权限不足: 绝不能回退默认值。否则下一次 save 会把
+                    # 磁盘上完好的账号密码覆盖成空配置(真实数据丢失路径)。
+                    # 保留内存中的旧数据, 并禁止写入, 等下次读取成功再恢复。
+                    self._load_failed = True
+                    print(f"[ZJUAutoLogin] warning: cannot read config ({exc}); "
+                          "keeping in-memory values and refusing to overwrite it",
+                          file=sys.stderr)
+                    return
                 if stored is not None:
                     # 合并而非逐键覆盖: monitor 等模块会写 _DEFAULTS 之外的键
                     # (如 last_month_report), 逐键覆盖会让它们每次重启后消失
-                    self.data = {**dict(_DEFAULTS), **stored}
+                    self.data = copy.deepcopy(_DEFAULTS)
+                    self.data.update(stored)
                     for key, default in _DEFAULTS.items():
                         value = self.data.get(key)
-                        # 手改/跨版本写入的 null 与错类型必须回退默认值, 否则
-                        # username=null 会变成真值字符串 "None"(跳过引导向导)
-                        if value is None or not isinstance(value, type(default)):
-                            self.data[key] = default
+                        self.data[key] = self._coerce_default(key, value, default)
                     self.password_backend = str(stored.get("password_backend") or "none")
                     if self.password_backend == "file":
                         try:
@@ -270,9 +286,36 @@ class Config:
         if self.password_backend != "file":
             self._plain_password = self._load_password_keyring()
 
+    @staticmethod
+    def _coerce_default(key: str, value, default):
+        """类型校验: 只接受与默认值同类的值, 否则回退默认。
+
+        不用 isinstance(value, type(default)): bool 是 int 的子类, interval=true
+        会被放行; 而 traffic_limit_gb 允许用户写 0.5。
+        """
+        if isinstance(default, bool):
+            return value if isinstance(value, bool) else default
+        if isinstance(default, (int, float)):
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+        if isinstance(default, list):
+            return copy.deepcopy(value) if isinstance(value, list) else copy.deepcopy(default)
+        if isinstance(default, dict):
+            return copy.deepcopy(value) if isinstance(value, dict) else copy.deepcopy(default)
+        if isinstance(default, str):
+            return value if isinstance(value, str) else default
+        return default
+
     def save(self) -> bool:
         """原子落盘; 返回是否写成功(调用方据此提示用户, 别再无脑报"已保存")。"""
-        payload = dict(self.data)
+        if self._load_failed:
+            # 文件被临时占用后恢复: 先重试读取。仍失败才拒绝写入, 避免把好配置
+            # 覆盖成空; 成功则继续保存(用户不必重启程序)。
+            self.load()
+            if self._load_failed:
+                print("[ZJUAutoLogin] warning: config could not be read earlier; "
+                      "refusing to overwrite it", file=sys.stderr)
+                return False
+        payload = copy.deepcopy(self.data)
         payload["password_backend"] = self.password_backend
         payload.pop("password", None)
         payload.pop("password_b64", None)
@@ -437,6 +480,22 @@ class Config:
 
 
 def resource_path(relative: str) -> str:
-    """兼容 PyInstaller 打包后的资源定位。"""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(base, "resources", relative)
+    """资源定位: 包内 resources → PyInstaller 解包目录 → 仓库根 resources。
+
+    以前只看仓库根/PyInstaller 的 resources/，wheel 里没有这个目录
+    (pyproject 只打包 zju_autologin 包)，pip 安装的 GUI 因此没有图标。
+    """
+    package_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.join(sys._MEIPASS, "zju_autologin", "resources"))
+        candidates.append(os.path.join(sys._MEIPASS, "resources"))
+    candidates.append(package_base)
+    if not getattr(sys, "frozen", False):
+        candidates.append(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources"))
+    for base in candidates:
+        candidate = os.path.join(base, relative)
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(candidates[0], relative)

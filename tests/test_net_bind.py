@@ -37,6 +37,8 @@ def test_bound_connection_reaches_local_server():
         assert resp.read() == b"portal-ok"
         conn.close()
     finally:
+        srv.shutdown()
+        th.join(2)
         srv.server_close()
 
 

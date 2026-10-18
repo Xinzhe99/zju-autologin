@@ -27,7 +27,8 @@ from .net import build_opener, probe_internet
 from .power import on_battery
 from .i18n import tr
 from .notify import send_notification
-from .srun import AUTH_ERROR_CODES, SrunClient, SrunError, is_transient_portal_error
+from .srun import (SrunClient, SrunError, is_auth_rejected,
+                   is_transient_portal_error)
 
 # 状态含义（UI 据此着色）：
 #   online              已认证，外网可用
@@ -42,7 +43,6 @@ from .srun import AUTH_ERROR_CODES, SrunClient, SrunError, is_transient_portal_e
 # 等用户改好密码(保存设置会清除锁存)再试。E2901(ZJU 报 ldap_bind error,
 # 基本就是密码不对)必须入列 —— 拿着错误密码反复 bind, 门户侧的账号锁定
 # 策略可能直接把账号锁死, 比暂时停止重试严重得多。
-_AUTH_ERRORS = AUTH_ERROR_CODES
 _UPDATE_INTERVAL = 24 * 3600
 _UPDATE_RETRY_MS = 3600 * 1000  # 更新检查失败后的重试间隔
 _HEARTBEAT_INTERVAL = 300  # 死信开关 ping 间隔（秒）
@@ -82,6 +82,7 @@ class MonitorWorker(QObject):
     updateAvailable = pyqtSignal(str, str)  # 最新版本号, 下载页
     captchaRequired = pyqtSignal()          # 需要人工输入验证码(GUI 弹窗)
     campusState = pyqtSignal(str)           # 校内直连状态(campus.status 的取值)
+    notifyTestResult = pyqtSignal(bool, str)  # 测试通知结果(成功?, 说明)
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -91,6 +92,7 @@ class MonitorWorker(QObject):
         self._update_timer: QTimer | None = None
         self._busy = False
         self._auth_error = ""
+        self._auth_ecode = ""
         self._fail_count = 0
         self._fail_streak = 0
         self._notify_sent = False
@@ -237,12 +239,21 @@ class MonitorWorker(QObject):
         finally:
             self._busy = False
 
-    @pyqtSlot()
-    def notify_test(self) -> None:
+    @pyqtSlot(dict)
+    def notify_test(self, overrides: dict | None = None) -> None:
+        """发送测试通知。overrides 来自设置页当前输入(尚未保存也能测)。"""
+        cfg = self._config
+        if overrides:
+            from types import SimpleNamespace
+            data = {**cfg.data, **overrides}
+            cfg = SimpleNamespace(**{k: data.get(k) for k in (
+                "notify_provider", "notify_key", "smtp_host", "smtp_port",
+                "smtp_user", "smtp_pass", "smtp_to")})
         opener = self._opener or build_opener(self._config.proxy_mode, self._config.proxy_url)
-        _ok, msg = send_notification(self._config, tr("app.name"), tr("notify.test_body"),
-                                     opener=opener)
+        ok, msg = send_notification(cfg, tr("app.name"), tr("notify.test_body"),
+                                    opener=opener)
         self.log(tr("notify.test_done", msg=msg))
+        self.notifyTestResult.emit(bool(ok), str(msg))
 
     @pyqtSlot(int)
     def apply_interval(self, seconds: int) -> None:
@@ -254,6 +265,7 @@ class MonitorWorker(QObject):
     @pyqtSlot()
     def clear_auth_error(self) -> None:
         self._auth_error = ""
+        self._auth_ecode = ""
 
     def _ping_heartbeat(self) -> None:
         """死信开关：在线时定期 ping 外部 URL，机器失联由外部服务报警。"""
@@ -384,7 +396,9 @@ class MonitorWorker(QObject):
         try:
             event = campus.ensure(cfg, detect_tun=detect_tun)
             if detect_tun:
-                self._campus_tun = event == "tun"
+                # 不能由 ensure 的返回值推断 TUN: 写入例外成功时它会先返回
+                # "applied", 于是刚检测到的 TUN 会被清掉, 界面永远显示"已生效"。
+                self._campus_tun = campus.tun_mode()
             state = campus.status(cfg, tun=self._campus_tun)
         except Exception:  # noqa: BLE001 - 注册表/权限异常不影响保活主流程
             return
@@ -403,8 +417,13 @@ class MonitorWorker(QObject):
                 self.log(tr("log.campus_guard_hint",
                             entries=";".join(campus.desired_entries(cfg))))
         elif event == "removed":
-            self._campus_last_log = 0.0
+            self._campus_last_log = now
             self.log(tr("log.campus_bypass_removed"))
+        elif event == "remove_failed":
+            # 条目没删掉(权限/杀软拦截): 节流提示一次, 不要每 3 秒刷屏
+            if now - self._campus_last_log >= _CAMPUS_LOG_GAP:
+                self._campus_last_log = now
+                self.log(tr("log.campus_bypass_remove_failed"))
         if state != self._campus_state:
             self._campus_state = state
             if state == "pac":
@@ -427,13 +446,15 @@ class MonitorWorker(QObject):
             client = self._client()
             try:
                 status = client.get_status()
-            except SrunError as first_exc:
-                # VPN 切换线路等瞬断: 1.5s 后快速重试一次, 仍失败才判定无校园网
+            except (SrunError, OSError) as first_exc:
+                # 非 gaierror 的 DNS OSError、VPN 切换线路等瞬断: 1.5s 后快速
+                # 重试一次, 仍失败才判定无校园网。只捕 SrunError 会让状态机
+                # 静默停更(UI 停在上一帧的"在线"), 比误报更糟。
                 self.log(tr("log.portal_retry"))
                 time.sleep(1.5)
                 try:
                     status = client.get_status()
-                except SrunError:
+                except (SrunError, OSError):
                     self._emit("no_campus", detail=str(first_exc))
                     return
 
@@ -445,8 +466,14 @@ class MonitorWorker(QObject):
                     self._emit("offline", detail=tr("detail.offline_manual"))
                     return
                 if self._auth_error and not manual:
-                    self._emit("auth_error", detail=self._auth_error)
+                    self._emit("auth_error", detail=self._auth_error,
+                               ecode=self._auth_ecode)
                     return
+                if manual:
+                    # 用户主动"立即检测/登录"= 要求重试: 清掉旧锁存, 否则一次
+                    # 临时失败后下一轮又会拿旧的密码错状态盖回去。
+                    self._auth_error = ""
+                    self._auth_ecode = ""
                 # 连续失败后指数退避（60s 起步，封顶 10 分钟）
                 backoff = min(60 * (2 ** min(self._fail_count, 4)), 600)
                 if not manual and time.time() - self._last_login_attempt < backoff:
@@ -461,6 +488,7 @@ class MonitorWorker(QObject):
             if probe_internet(opener=self._opener):
                 self._fail_count = 0
                 self._auth_error = ""
+                self._auth_ecode = ""
                 self._ping_heartbeat()
                 self._push_ddns_if_changed(status.get("ip", ""))
                 self._run_hooks("online")
@@ -544,6 +572,7 @@ class MonitorWorker(QObject):
         if result.get("ok"):
             self._fail_count = 0
             self._auth_error = ""
+            self._auth_ecode = ""
             self.log(tr("log.login_ok"))
             self._emit("online", username=result.get("username") or self._config.username,
                        ip=result.get("ip") or current_ip,
@@ -614,6 +643,7 @@ class MonitorWorker(QObject):
                 if self._auto_kick_and_retry(client, result.get("ip", "")):
                     return True
             self._auth_error = msg
+            self._auth_ecode = "E2620"
             self._fail_count = 0
             self._emit("auth_error", username=result["username"], detail=msg, ecode="E2620")
             self._maybe_push("notify.limit_title", tr("notify.limit_body", msg=msg))
@@ -628,8 +658,9 @@ class MonitorWorker(QObject):
                 self.captchaRequired.emit()
             self._emit("login_fail", username=result["username"], detail=msg)
             return False
-        if err_code in _AUTH_ERRORS or tr("err.password_error") in msg or tr("err.username_error") in msg:
+        if is_auth_rejected(resp, msg):
             self._auth_error = msg
+            self._auth_ecode = err_code
             self._fail_count = 0
             self._emit("auth_error", username=result["username"], detail=msg)
             self._maybe_push("notify.fail_title", tr("notify.fail_body", msg=msg))
@@ -698,7 +729,7 @@ class MonitorWorker(QObject):
         prev = time.localtime(time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, -1)) - 86400)
         prev_month = time.strftime("%Y-%m", prev)
         from .config import read_events
-        events = read_events(2000)
+        events = read_events(5000, self._log_dir)
         month_events = [e for e in events
                         if time.strftime("%Y-%m", time.localtime(e.get("ts") or 0)) == prev_month]
         drops = sum(1 for e in month_events if e.get("event") in ("offline", "no_campus"))
@@ -785,13 +816,14 @@ class Monitor(QObject):
     updateAvailable = pyqtSignal(str, str)
     captchaRequired = pyqtSignal()
     campusState = pyqtSignal(str)
+    notifyTestResult = pyqtSignal(bool, str)
 
     checkRequested = pyqtSignal()
     loginRequested = pyqtSignal()
     captchaLoginRequested = pyqtSignal(str, str)
     intervalChanged = pyqtSignal(int)
     credentialsChanged = pyqtSignal()
-    notifyTestRequested = pyqtSignal()
+    notifyTestRequested = pyqtSignal(dict)
     updateCheckRequested = pyqtSignal()
 
     def __init__(self, config: Config, parent: QObject | None = None) -> None:
@@ -806,6 +838,7 @@ class Monitor(QObject):
         self._worker.updateAvailable.connect(self.updateAvailable)
         self._worker.captchaRequired.connect(self.captchaRequired)
         self._worker.campusState.connect(self._on_campus_state)
+        self._worker.notifyTestResult.connect(self.notifyTestResult)
         self._campus_state = ""
 
         self.checkRequested.connect(self._worker.check_manual)
@@ -845,8 +878,8 @@ class Monitor(QObject):
     def login_now(self) -> None:
         self.loginRequested.emit()
 
-    def notify_test(self) -> None:
-        self.notifyTestRequested.emit()
+    def notify_test(self, overrides: dict | None = None) -> None:
+        self.notifyTestRequested.emit(dict(overrides or {}))
 
     def check_updates_now(self) -> None:
         """手动检查更新(托盘菜单): 结果一定写进日志。"""
