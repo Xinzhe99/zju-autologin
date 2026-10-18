@@ -21,8 +21,19 @@
 | --- | --- |
 | ![主界面](docs/screenshot_online.png) | ![首次引导](docs/wizard_welcome.png) |
 
+## 两大核心功能
+
+**1. 校园网保活：不掉线、不失联**
+14 天强制重新认证、IP 变化、重连、重启都可能让远程桌面/SSH 突然断开。程序常驻托盘，掉线或过期后自动用本机保存的凭据重新登录；支持指数退避、网络切换 2 秒内响应、系统级保活（Windows SYSTEM / macOS LaunchDaemon / Linux systemd，未登录桌面也能认证），恢复后推送通知。**人不在学校，连接也一直在。**
+
+**2. 开着代理也能访问校园网：不用手动切换**
+Clash / v2ray 等开启系统代理或 TUN 后，统一认证、校内论坛（cc98）、邮箱、门户常被代理节点带出校外而打不开，只能反复开关代理。工具会把校内域名与 `10.*` 自动加入系统代理例外并持续维护（Clash 重写后 3 秒内补回）；遇到 fake-ip / TUN 时自动钉真实门户 IP、绑定物理网卡，必要时添加门户 /32 直连路由。**代理照常开，校园网照常访问，不需要手动切换。**
+
+两者相互独立，也可以同时开启：一边保活，一边让代理与校园网共存。
+
 ## 目录
 
+- [两大核心功能](#两大核心功能)
 - [为什么需要它](#为什么需要它)
 - [下载安装](#下载安装)
 - [快速上手](#快速上手)
@@ -55,7 +66,7 @@
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.2/ZJUAutoLogin-1.27.2-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.2/ZJUAutoLogin-1.27.2-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.2/ZJUAutoLogin-1.27.2-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.3/ZJUAutoLogin-1.27.3-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.3/ZJUAutoLogin-1.27.3-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.3/ZJUAutoLogin-1.27.3-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 

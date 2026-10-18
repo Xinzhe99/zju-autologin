@@ -65,20 +65,26 @@ def _iss_text() -> str:
         return f.read()
 
 
-def test_installer_runs_after_silent_update():
-    """静默更新装完必须拉起程序: 安装脚本需含 skipifnotsilent 启动项(回归守卫)。"""
+def test_installer_delays_silent_relaunch():
+    """静默更新由安装器侧的延迟 helper 拉起(兼容旧版本发起的更新), 不直接启动 exe。"""
     iss = _iss_text()
-    run_section = iss.split("[Run]")[1].split("[UninstallRun]")[0]
-    # 可见安装: 完成页复选框; 静默安装(应用内更新): 直接启动
+    run_section = iss.split("\n[Run]\n", 1)[1].split("\n[UninstallRun]\n", 1)[0]
     assert "postinstall skipifsilent" in run_section
+    assert "update-relaunch.ps1" in run_section
     assert "skipifnotsilent" in run_section
-    assert run_section.count("ZJUAutoLogin.exe") >= 2
+    # 不能再用裸 exe 作为静默启动项
+    assert 'Filename: "{app}\ZJUAutoLogin.exe"; Flags: nowait runasoriginaluser skipifnotsilent' not in run_section
+    assert "Start-Sleep -Seconds 12" in iss
+    # Inno 的自动关闭/重启会与 helper 形成双开, 加剧 onefile 解包竞态
+    assert "RestartApplications=no" in iss
+    assert "CloseApplications=no" in iss
 
 
-def test_updater_no_restartapplications_flag():
-    """应用是自退出的, /RESTARTAPPLICATIONS 无效; 静默拉起交给安装脚本。"""
+def test_updater_uses_relaunch_helper_for_portable_only():
     src = os.path.join(os.path.dirname(__file__), "..", "zju_autologin", "ui.py")
     with open(src, encoding="utf-8") as f:
         ui_src = f.read()
     assert "/RESTARTAPPLICATIONS" not in ui_src
-    assert '"/SILENT", "/CLOSEAPPLICATIONS"' in ui_src
+    assert '"/SILENT", "/CLOSEAPPLICATIONS"' not in ui_src
+    # 便携版原地替换后仍由应用侧 helper 延迟启动
+    assert "_schedule_relaunch_after(0, str(cur)" in ui_src

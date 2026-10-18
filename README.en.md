@@ -24,6 +24,16 @@ A tray application that runs in the background: it **watches the ZJU campus netw
 
 ZJU's campus network (wired + ZJUWLAN) uses a Srun portal that enforces a **mandatory manual re-login every 14 days** even with silent auth (MacAuth) enabled, and IP changes / reconnects / reboots drop the session too. If that happens while you are away, your remote connection is gone. This tool logs back in for you before you even notice.
 
+## Two core problems it solves
+
+**1. Keep the campus network alive (no more dead remote sessions).**
+The 14-day forced re-authentication, IP changes, reconnects and reboots can kill an RDP/SSH session with no warning. The app stays in the tray and automatically logs back in with your locally stored credentials; it also supports exponential backoff, event-driven checks within 2 seconds, and system-level keep-alive (Windows SYSTEM task / macOS LaunchDaemon / Linux systemd, working before anyone logs in), plus recovery notifications. **Your connection stays up even when you are away.**
+
+**2. Keep using the campus network while your proxy is on (no manual switching).**
+With Clash/v2ray system proxy or TUN enabled, the captive portal, CC98 forum, campus mail and intranet often break because proxy nodes cannot reach the campus network. The app keeps campus domains and `10.*` in the system proxy bypass list and re-adds them within 3 seconds after Clash rewrites it; under fake-ip/TUN it pins the real portal IP, binds the physical NIC and can add a persistent /32 route when needed. **Leave the proxy on; campus sites keep working without toggling it.**
+
+The two features are independent and can be used together.
+
 ## Install
 
 Grab a package from [Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) (built by GitHub Actions). Slow in mainland China? Prefix the URL with `https://gh-proxy.com/` to accelerate — e.g. `https://gh-proxy.com/https://github.com/.../ZJUAutoLogin-windows-setup.exe`.

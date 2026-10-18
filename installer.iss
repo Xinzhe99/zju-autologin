@@ -21,9 +21,11 @@ OutputBaseFilename=ZJUAutoLogin-{#AppVersion}-windows-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-CloseApplications=yes
-CloseApplicationsFilter=*.exe
-RestartApplications=yes
+; 应用更新流程自己 taskkill 并启动独立 relaunch helper。
+; 让 Inno 也关闭/重启会与 [Run] 或 helper 形成双开, 加剧 PyInstaller
+; onefile 解包竞态(Failed to load Python DLL)。
+CloseApplications=no
+RestartApplications=no
 SetupIconFile=resources\zju.ico
 UninstallDisplayIcon={app}\ZJUAutoLogin.exe
 
@@ -44,9 +46,13 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 ; 可见安装: 完成页「启动程序」复选框(默认勾选)
 Filename: "{app}\ZJUAutoLogin.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
-; 静默安装(应用内更新以 /SILENT 拉起): 完成后直接启动, 更新闭环的"最后一拉"
-; (RESTARTAPPLICATIONS 救不了自退出的进程, 必须由安装器主动拉起)
-Filename: "{app}\ZJUAutoLogin.exe"; Flags: nowait runasoriginaluser skipifnotsilent
+; 静默安装(应用内更新/winget): 不直接拉起 exe, 而是启动一个延迟 helper。
+; 安装器退出/杀软扫描结束后再启动, 规避 PyInstaller onefile 解包
+; python3xx.dll 的竞态。旧版本应用发起的更新也能自动重启。
+Filename: "{sys}\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\update-relaunch.ps1"""; Flags: nowait runasoriginaluser skipifnotsilent
+
+[UninstallDelete]
+Type: files; Name: "{app}\update-relaunch.ps1"
 
 [UninstallRun]
 Filename: "{sys}\reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ZJUAutoLogin /f"; Flags: runhidden; RunOnceId: "DelAutoStart"
@@ -94,6 +100,22 @@ begin
     StopOurProcesses
   else if CurStep = ssPostInstall then
   begin
+    { 静默更新的延迟启动 helper: 等安装器退出/杀软扫描结束后再拉起 exe。 }
+    SaveStringToFile(ExpandConstant('{app}\update-relaunch.ps1'),
+      '$ErrorActionPreference = "SilentlyContinue"' + #13#10
+      + 'Start-Sleep -Seconds 12' + #13#10
+      + '$exe = Join-Path (Split-Path -Parent $PSCommandPath) "ZJUAutoLogin.exe"' + #13#10
+      + 'if (Test-Path -LiteralPath $exe) {' + #13#10
+      + '  Start-Process -FilePath $exe | Out-Null' + #13#10
+      + '  Start-Sleep -Seconds 10' + #13#10
+      + '  if (-not (Get-Process -Name "ZJUAutoLogin" -ErrorAction SilentlyContinue)) {' + #13#10
+      + '    Start-Sleep -Seconds 10' + #13#10
+      + '    Start-Process -FilePath $exe | Out-Null' + #13#10
+      + '  }' + #13#10
+      + '}' + #13#10
+      + 'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue' + #13#10,
+      False);
+
     MarkerPath := ExpandConstant('{app}\.install-session');
     Content := GetDateTimeString('yyyymmddhhnnss', #0, #0);
     { 静默安装(应用内更新/winget)打上 silent 标记: 已配置好的用户升级后不再被
@@ -101,14 +123,6 @@ begin
     if WizardSilent then
       Content := Content + '-silent';
     SaveStringToFile(MarkerPath, Content, False);
-    if WizardSilent then
-    begin
-      { 静默更新(应用内更新)装完就立刻启动新程序: 40+ MB 的 exe 刚落盘,
-        杀软实时扫描/磁盘落盘还没结束, 首次启动会报
-        「Failed to load Python DLL ... python312.dll」(2026-10-14 事故)。
-        等扫描窗口过去再由 [Run] 拉起。可见安装不受影响(用户点按钮需要时间)。 }
-      Sleep(3000);
-    end;
   end;
 end;
 

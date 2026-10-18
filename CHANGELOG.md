@@ -2,6 +2,21 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [1.27.3] - 2026-10-18
+
+### 修复
+- **安装版每次更新后自动启动报 `Failed to load Python DLL ... python312.dll`**
+  （安装进度条满后弹出，手动重开又正常）：这是 PyInstaller onefile 在安装器
+  仍在收尾/杀软扫描刚落盘的 40+ MB exe 时解包 DLL 的竞态。现在：
+  - 安装器不再自动重启被 `CloseApplications` 关闭的应用
+    （`CloseApplications=no` / `RestartApplications=no`），避免与启动项双开；
+  - 静默更新改由安装器内置的延迟 helper 拉起：安装结束先等 12 秒，再启动
+    `update-relaunch.ps1`，进程未存活时再重试一次。旧版本应用（没有新
+    helper）发起的更新同样能自动重启；
+  - 便携版原地替换仍由应用侧 helper 延迟 8 秒启动；可见安装的完成页
+    「启动程序」保持不变。
+- 新增 v1.27.3 回归测试：helper 脚本语法/等待逻辑、安装器不再静默拉起或重启应用。
+
 ## [1.27.2] - 2026-10-18
 
 全面修复审查中确认的静默失败与数据安全问题。重点：配置读失败不再覆盖凭据、Web 配置页加令牌并校验输入、

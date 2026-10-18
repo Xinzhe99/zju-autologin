@@ -57,6 +57,60 @@ from .net import build_opener
 from .portals import load_portals
 from .srun import SrunClient
 
+def _relaunch_script() -> str:
+    """安装器退出后延迟拉起新版本的 PowerShell 脚本（静态文本, 参数走 argv）。
+
+    不能由安装器 [Run] 直接拉起: Inno 仍在收尾/杀软仍在扫描刚落盘的 40+ MB
+    exe, PyInstaller onefile 解包 python3xx.dll 会偶发 "Failed to load Python
+    DLL ... 找不到指定的模块"。脚本等安装器进程退出后再多等几秒, 并重试一次。
+    """
+    return r"""
+param([int]$InstallerPid, [string]$Exe, [string]$Mode)
+$deadline = (Get-Date).AddMinutes(15)
+while ((Get-Process -Id $InstallerPid -ErrorAction SilentlyContinue) -and
+       ((Get-Date) -lt $deadline)) {
+    Start-Sleep -Seconds 2
+}
+Start-Sleep -Seconds 8
+function Start-App {
+    try {
+        if ($Mode -eq 'min') {
+            Start-Process -FilePath $Exe -ArgumentList '--minimized' -ErrorAction Stop | Out-Null
+        } else {
+            Start-Process -FilePath $Exe -ErrorAction Stop | Out-Null
+        }
+        return $true
+    } catch { return $false }
+}
+if (Test-Path -LiteralPath $Exe) {
+    if (Start-App) {
+        Start-Sleep -Seconds 10
+        if (-not (Get-Process -Name 'ZJUAutoLogin' -ErrorAction SilentlyContinue)) {
+            Start-Sleep -Seconds 10
+            Start-App | Out-Null
+        }
+    }
+}
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+"""
+
+
+def _schedule_relaunch_after(installer_pid: int, exe: str, minimized: bool) -> str:
+    """启动一个脱离安装器的等待进程; 返回脚本路径(便于测试/清理)。"""
+    fd, script = tempfile.mkstemp(prefix="zju_aul_relaunch_", suffix=".ps1")
+    with os.fdopen(fd, "w", encoding="utf-8-sig") as fh:
+        fh.write(_relaunch_script())
+    flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
+             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-WindowStyle", "Hidden",
+         "-ExecutionPolicy", "Bypass", "-File", script,
+         str(int(installer_pid)), exe, "min" if minimized else "normal"],
+        creationflags=flags, close_fds=True,
+    )
+    return script
+
+
 STATUS_KEYS = (
     "online", "authed_no_internet", "offline", "need_config",
     "auth_error", "login_fail", "no_campus", "checking",
@@ -2335,9 +2389,10 @@ class MainWindow(QMainWindow):
                 return
         try:
             if sys.platform == "win32":
-                # 不带重启已关程序的安装器参数: 它只对被安装器强关的进程生效, 而本
-                # 应用是自退出的; 静默装完的拉起由 installer.iss 的 skipifnotsilent 项负责
-                subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS"])
+                # 安装版由安装器侧的延迟 helper 拉起(兼容旧版本发起的更新:
+                # 旧版本应用没有本 helper)。这里只启动安装器, 不再同时启动
+                # 第二个进程, 避免 PyInstaller onefile 双开解包竞态。
+                subprocess.Popen([path, "/SILENT"])
             elif not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
                 raise OSError(tr("update.open_fail"))
         except Exception as exc:  # noqa: BLE001 - 安装器被杀软拦截/文件被占用等
@@ -2460,13 +2515,10 @@ class MainWindow(QMainWindow):
         staging = Path(new_path).parent
         if staging.name.startswith("zju_aul_upd_"):
             shutil.rmtree(staging, ignore_errors=True)
-        # 保持更新前的窗口状态: 原本开着窗就别重启进托盘
-        cmd = [str(cur)] if self.isVisible() else [str(cur), "--minimized"]
-        # 新 exe 刚写完盘: 稍等落盘/杀软扫描结束再启动, 否则首次启动可能报
-        # 「Failed to load Python DLL ... python312.dll」而必须手动重开
-        time.sleep(1.0)
-        subprocess.Popen(cmd,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        # 保持更新前的窗口状态: 原本开着窗就正常启动, 否则最小化到托盘。
+        # 不在本进程直接 Popen: 新 exe 刚落盘, PyInstaller onefile 解包
+        # python3xx.dll 可能被杀软扫描/落盘竞态打断。交给独立 helper 等几秒。
+        _schedule_relaunch_after(0, str(cur), minimized=not self.isVisible())
         self._cleanup_update_files()
         QApplication.quit()
 
