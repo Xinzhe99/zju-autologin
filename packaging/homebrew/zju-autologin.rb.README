@@ -6,7 +6,7 @@
 
 cask "zju-autologin" do
   version "1.27.3"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"  # TODO: 发版后替换
+  sha256 "2da5e5b7d448ccbc1db4078451ed2905d7f0a32ba06156da116d20a867d09042"
 
   url "https://github.com/Xinzhe99/zju-autologin/releases/download/v#{version}/ZJUAutoLogin-#{version}-macos.dmg"
   name "ZJU AutoLogin"

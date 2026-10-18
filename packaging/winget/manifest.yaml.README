@@ -23,7 +23,7 @@ Installers:
   - Architecture: x64
     InstallerType: inno
     InstallerUrl: https://github.com/Xinzhe99/zju-autologin/releases/download/v1.27.3/ZJUAutoLogin-1.27.3-windows-setup.exe
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000  # TODO: 发版后替换
+    InstallerSha256: 8F8483A20B2E9BB12E2B88E0E834B74913BD77886724FFD06F4E822A2CDDC880
     Scope: user
     UpgradeBehavior: install
 ManifestType: merged
