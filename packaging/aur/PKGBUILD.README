@@ -21,7 +21,7 @@ optdepends=(
 # PyPI 的 sdist 文件名用下划线(zju_autologin-X.tar.gz); 写成 $pkgname-$pkgver
 # (zju-autologin-X.tar.gz) 会 404。
 source=("$pkgname-$pkgver.tar.gz::https://files.pythonhosted.org/packages/source/z/$pkgname/zju_autologin-$pkgver.tar.gz")
-sha256sums=('SKIP')  # 发版后替换为 sdist 的 sha256
+sha256sums=('e47fbc23e2f4213df537957b06306ce0cbf6208a890647a261e44307d05a2d05')
 
 package() {
   cd "$srcdir/$pkgname-$pkgver"
