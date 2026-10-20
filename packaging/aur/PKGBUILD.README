@@ -6,7 +6,7 @@
 # Linux 版本指向 PyPI sdist（协议层零依赖, 无需打包二进制）
 
 pkgname=zju-autologin
-pkgver=1.27.4
+pkgver=1.27.5
 pkgrel=1
 pkgdesc="浙江大学校园网（深澜 Srun）自动登录保活工具"
 arch=('any')
@@ -21,7 +21,7 @@ optdepends=(
 # PyPI 的 sdist 文件名用下划线(zju_autologin-X.tar.gz); 写成 $pkgname-$pkgver
 # (zju-autologin-X.tar.gz) 会 404。
 source=("$pkgname-$pkgver.tar.gz::https://files.pythonhosted.org/packages/source/z/$pkgname/zju_autologin-$pkgver.tar.gz")
-sha256sums=('e47fbc23e2f4213df537957b06306ce0cbf6208a890647a261e44307d05a2d05')
+sha256sums=('0533811b3f5d18438e2b8df2d153b05a2fcde7aff8d9af8f47c48c9b0623dac6')
 
 package() {
   cd "$srcdir/$pkgname-$pkgver"
