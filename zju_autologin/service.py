@@ -65,10 +65,21 @@ def _write_private(path: Path, text: str) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         if sys.platform == "win32":
-            _lockdown_windows_acl(tmp)
+            # 先 rename 再收紧 ACL: 若先给临时文件去掉继承 ACE, 当前非提权用户
+            # 就失去对源文件的 DELETE 权限, os.replace 会报 WinError 5,
+            # 系统级保活永远装不上(且 UI 只显示"请在 UAC 弹窗确认")。
+            os.replace(tmp, path)
+            try:
+                _lockdown_windows_acl(path)
+            except BaseException:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
         else:
             os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+            os.replace(tmp, path)
     except BaseException:
         try:
             tmp.unlink(missing_ok=True)

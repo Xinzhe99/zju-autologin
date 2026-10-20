@@ -182,7 +182,7 @@
   "service.chk": "系统级保活（无需登录桌面即可认证，推荐远程用户开启）",
   "service.hint": "勾选立即生效：将弹出管理员确认窗口（若当前账户已是管理员且关闭了 UAC 通知，则静默完成）。下方显示运行心跳。",
   "service.on_ok": "系统级保活已开启（计划任务 ZJUAutoLogin）",
-  "service.on_fail": "系统级保活开启失败：请在 UAC 弹窗中确认后重试",
+  "service.on_fail": "系统级保活开启失败",
   "service.off_ok": "系统级保活已关闭",
   "statuscard.never": "—",
   "btn.close": "关闭",

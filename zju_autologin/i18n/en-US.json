@@ -182,7 +182,7 @@
   "service.chk": "System-level keep-alive (authenticates before login; recommended for remote access)",
   "service.hint": "Takes effect on check: an admin consent prompt appears (silent if your account is an admin with UAC notifications off). Heartbeat shown below.",
   "service.on_ok": "System-level keep-alive enabled (scheduled task ZJUAutoLogin)",
-  "service.on_fail": "Failed to enable — confirm the UAC prompt and try again",
+  "service.on_fail": "Failed to enable system-level keep-alive",
   "service.off_ok": "System-level keep-alive disabled",
   "statuscard.never": "—",
   "btn.close": "Close",

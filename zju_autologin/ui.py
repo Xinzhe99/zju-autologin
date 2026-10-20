@@ -1550,10 +1550,18 @@ class SettingsWindow(QDialog):
             self._chk_service.setChecked(ok if enable else not ok)
             self._chk_service.blockSignals(False)
             self._refresh_service_heartbeat()
-            if enable:
-                self._main._append_log(tr("service.on_ok") if ok else tr("service.on_fail"))
-            else:
-                self._main._append_log(tr("service.off_ok") if ok else tr("service.on_fail"))
+            msg = tr("service.on_ok") if ok else tr("service.on_fail")
+            if not enable:
+                msg = tr("service.off_ok") if ok else tr("service.on_fail")
+            if not ok:
+                detail = ""
+                if isinstance(result, Exception):
+                    detail = str(result)
+                elif isinstance(result, tuple) and len(result) > 1 and result[1]:
+                    detail = str(result[1])
+                if detail:
+                    msg = f"{msg} [{detail}]"
+            self._main._append_log(msg)
 
         self._service_thread = _FnThread(work, self)
         self._service_thread.done.connect(done)
