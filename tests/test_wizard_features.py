@@ -36,7 +36,7 @@ def wizard(tmp_path, qapp, monkeypatch):
     wz.reject()
 
 
-def test_features_page_defaults_and_choices(wizard):
+def test_features_page_defaults_and_choices(wizard, monkeypatch):
     wz, cfg, calls = wizard
     assert wz._stack.count() == 5  # welcome / school / account / features / done
     assert wz._stack.currentIndex() == 0
@@ -55,16 +55,18 @@ def test_features_page_defaults_and_choices(wizard):
     assert "系统级保活" in text
     assert "代理下校内直连" not in text
 
+    monkeypatch.setattr(wz, "accept", lambda: None)  # 不真关窗, 避免 Qt 双 close
     wz._finish()
     assert cfg.auto_login is True
     assert cfg.campus_direct is False
     assert calls == ["install"]
 
 
-def test_features_page_service_not_requested(wizard):
+def test_features_page_service_not_requested(wizard, monkeypatch):
     wz, cfg, calls = wizard
     # 新用户不勾系统级：完成时不能弹 UAC/装任务
     wz._chk_service.setChecked(False)
+    monkeypatch.setattr(wz, "accept", lambda: None)
     wz._finish()
     assert cfg.auto_login is True
     assert cfg.campus_direct is True
