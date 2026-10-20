@@ -69,34 +69,39 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /F /TN ZJUAutoLogin"; Flags
 Filename: "{sys}\cmd.exe"; Parameters: "/C rmdir /S /Q ""C:\ProgramData\ZJUAutoLogin"""; Flags: runhidden; RunOnceId: "DelSvcData"
 
 [Code]
-// 关掉正在运行的 ZJU AutoLogin(托盘 GUI 与无界面 watch 进程同名)。
-// 文件被占用时 Inno 无法删除/替换, 只能登记"重启后删除"; 该记录会一直留在系统的
-// PendingFileRenameOperations 里, 之后每次安装都会被"上一次安装未完成, 请重启"
-// 挡住 —— 而它指向的正是 {app}\ZJUAutoLogin.exe, 只能清注册表才能解(2026-10-08 事故)。
+// 关闭正在运行的 ZJU AutoLogin（托盘 GUI 与 SYSTEM 保活同名）。
+//
+// SYSTEM 计划任务持有时，普通权限既杀不掉进程也没法 /End；而静默更新
+// 绝不能弹 UAC 或错误框（无人点击就永久卡住，1.29.1 的真实事故）。
+//
+// 做法：
+//   1) 尽力结束当前用户进程（托盘 GUI）；
+//   2) 仍被占用时，把 exe 重命名为 `.exe.old` —— Windows 允许重命名
+//      正在运行的可执行文件，新版随后落到原路径；
+//   3) SYSTEM 进程继续跑旧镜像，下次开机计划任务自然加载新版本。
+//
+// 绝不登记 PendingFileRenameOperations：那会让之后每次安装都被
+// 「上一次安装未完成, 请重启」挡住（2026-10-08 事故）。
 procedure StopOurProcesses;
 var
   Rc: Integer;
+  ExePath, OldPath: String;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'),
        '/IM ZJUAutoLogin.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Rc);
-  { 系统级保活由 SYSTEM 创建: 普通权限 schtasks /End 会拒绝访问,
-    进程仍在时会锁住 exe, 导致 DeleteFile code 5。检测到残留进程则提权停止。 }
-  Exec(ExpandConstant('{cmd}'),
-       '/C tasklist /FI "IMAGENAME eq ZJUAutoLogin.exe" | find /I "ZJUAutoLogin.exe" >NUL',
-       '', SW_HIDE, ewWaitUntilTerminated, Rc);
-  if Rc = 0 then
+  { 尽力停止计划任务；无管理员权限时会失败，属预期，不影响后续安装 }
+  Exec(ExpandConstant('{sys}\schtasks.exe'),
+       '/End /TN ZJUAutoLogin', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  Exec(ExpandConstant('{sys}\schtasks.exe'),
+       '/End /TN ZJUAutoLogin-Watchdog', '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  Sleep(800);  { 等文件句柄释放 }
+  ExePath := ExpandConstant('{app}\ZJUAutoLogin.exe');
+  OldPath := ExePath + '.old';
+  if FileExists(ExePath) then
   begin
-    if not ShellExec('runas',
-      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-      '-NoProfile -WindowStyle Hidden -Command "schtasks /End /TN ZJUAutoLogin; '
-      + 'schtasks /End /TN ZJUAutoLogin-Watchdog; taskkill /IM ZJUAutoLogin.exe /F /T"',
-      '', SW_HIDE, ewWaitUntilTerminated, Rc) then
-    begin
-      MsgBox('系统级保活正在以 SYSTEM 运行，需要管理员权限才能停止。' + #13#10 +
-             '请允许 UAC；或先在应用设置中关闭系统级保活后重试。', mbError, MB_OK);
-      Abort;
-    end;
-    Sleep(800);
+    DeleteFile(OldPath);  { 上次安装的残留，先清掉 }
+    if not RenameFile(ExePath, OldPath) then
+      Log('could not rename locked exe; overwrite may prompt');
   end;
 end;
 

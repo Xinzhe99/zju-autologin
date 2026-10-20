@@ -138,6 +138,16 @@ def main() -> int:
                 os._exit(0)
             # 换不回去就继续正常启动新版本, 不能把用户直接踢出程序
 
+    if getattr(sys, "frozen", False):
+        # 安装器在 SYSTEM 保活占用 exe 时会把它改名为 `.exe.old` 再落新版；
+        # 旧镜像已不再需要，启动时清掉（失败也无妨，下次再清）。
+        _exe = Path(sys.executable)
+        for _leftover in (Path(str(_exe) + ".old"), _exe.with_suffix(".failed.exe")):
+            try:
+                _leftover.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     config = Config()
     i18n.set_lang(config.language)
 
