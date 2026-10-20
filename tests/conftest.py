@@ -36,6 +36,13 @@ def _stub_campus_registry(monkeypatch):
     monkeypatch.setattr(campus_mod, "_write_override",
                         lambda value: (fake.__setitem__("ProxyOverride", value) or True))
 
+@pytest.fixture(autouse=True)
+def _stub_wizard_detect(monkeypatch):
+    """引导页的自动检测会访问真实门户/DNS；单测统一置空，避免后台线程在 Qt 退出时 Abort。"""
+    import zju_autologin.wizard as wizard_mod
+
+    monkeypatch.setattr(wizard_mod._DetectThread, "run", lambda self: None)
+
 
 @pytest.fixture(autouse=True)
 def _stub_keyring(monkeypatch):
