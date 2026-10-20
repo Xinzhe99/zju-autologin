@@ -125,8 +125,11 @@ def test_no_rollback_without_old_exe(fake_exe):
 # ---------------------------------------------------------------- 服务自检
 
 def test_ensure_running_starts_once_per_day(tmp_path, monkeypatch):
+    import sys as _sys
+
     from zju_autologin import service
 
+    monkeypatch.setattr(_sys, "platform", "win32")  # 该分支只在 Windows 生效
     monkeypatch.setattr(service, "service_config_dir", lambda: tmp_path)
     monkeypatch.setattr(service, "is_installed", lambda max_age=60.0: True)
     monkeypatch.setattr(service, "heartbeat_age", lambda: None)
@@ -145,8 +148,11 @@ def test_ensure_running_starts_once_per_day(tmp_path, monkeypatch):
 
 
 def test_ensure_running_noop_when_heartbeat_fresh(tmp_path, monkeypatch):
+    import sys as _sys
+
     from zju_autologin import service
 
+    monkeypatch.setattr(_sys, "platform", "win32")
     monkeypatch.setattr(service, "service_config_dir", lambda: tmp_path)
     monkeypatch.setattr(service, "is_installed", lambda max_age=60.0: True)
     monkeypatch.setattr(service, "heartbeat_age", lambda: 12.0)
