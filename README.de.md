@@ -70,6 +70,10 @@ Wenn dir das Tool hilft, hinterlasse gerne einen ⭐. Bugs und Vorschläge über
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Xinzhe99/zju-autologin&type=Date)](https://star-history.com/#Xinzhe99/zju-autologin&Date)
 
+## Haftungsausschluss
+
+Dieses Tool ändert die Ausnahmen des Systemproxys, kann eine persistente Route zum Portal hinzufügen und optional eine systemweite Keep-alive-Aufgabe installieren. Alle Auswirkungen der Nutzung oder von Änderungen Ihrer Netzwerkumgebung — Verbindungsverlust, Proxy- oder Authentifizierungsfehler, unterbrochene Remote-Sitzungen — liegen allein in der Verantwortung des Nutzers und nicht beim Projekt oder seinem Autor. Bei Netzwerkverlust versuchen Sie zuerst das „Netzwerk-Notfalltool“ von Huorong Security, um die Netzwerkeinstellungen zu reparieren, und suchen Sie danach nach anderen Ursachen.
+
 ## Lizenz
 
 [MIT](LICENSE). Das Universitätssiegel gehört der Zhejiang-Universität.

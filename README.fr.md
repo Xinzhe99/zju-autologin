@@ -70,6 +70,10 @@ Si cet outil vous a été utile, laissez une ⭐. Bugs et suggestions via [Issue
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Xinzhe99/zju-autologin&type=Date)](https://star-history.com/#Xinzhe99/zju-autologin&Date)
 
+## Avertissement
+
+Cet outil modifie les exceptions du proxy système, peut ajouter une route persistante vers le portail et installer facultativement une tâche de keep-alive au niveau système. Tout impact résultant de son utilisation ou d'un changement de votre environnement réseau — perte de connexion, échec du proxy ou de l'authentification, ou interruption de sessions distantes — relève de la seule responsabilité de l'utilisateur, et non du projet ou de son auteur. En cas de perte de réseau, essayez d'abord l'« outil de secours réseau » de Huorong Security pour réparer les paramètres réseau, puis cherchez d'autres causes.
+
 ## Licence
 
 [MIT](LICENSE). Le sceau universitaire appartient à l'Université du Zhejiang.

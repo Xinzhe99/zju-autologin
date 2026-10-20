@@ -70,6 +70,10 @@ Si te resulta útil, deja una ⭐. Reporta bugs o propone funciones en [Issues](
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Xinzhe99/zju-autologin&type=Date)](https://star-history.com/#Xinzhe99/zju-autologin&Date)
 
+## Descargo de responsabilidad
+
+Esta herramienta modifica las excepciones del proxy del sistema, puede añadir una ruta persistente al portal e instalar opcionalmente una tarea de keep-alive a nivel de sistema. Cualquier impacto derivado de su uso o de cambios en tu entorno de red —pérdida de conectividad, fallos de proxy o autenticación, o interrupciones de sesiones remotas— es responsabilidad exclusiva del usuario y no del proyecto ni de su autor. Si pierdes la conexión, prueba primero la «Herramienta de emergencia de red» de Huorong Security para reparar la configuración de red y después investiga otras causas.
+
 ## Licencia
 
 [MIT](LICENSE). El sello universitario pertenece a la Universidad de Zhejiang.

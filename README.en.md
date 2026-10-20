@@ -91,6 +91,10 @@ If this tool saved you from a dead remote session, consider leaving a ⭐ — it
 - 💡 Feature ideas are welcome via Issues
 - 🔧 PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) (includes how to add a new language or a new university)
 
+## Disclaimer
+
+This tool may modify system proxy bypass entries, add a persistent portal route, and optionally install a system-level keep-alive task. Any impact caused by using it or by changes in your network environment — including loss of connectivity, proxy or authentication failures, or interrupted remote sessions — is solely your responsibility and not that of the project or its author. If you lose network access, try the "Network First Aid" tool in Huorong Security to repair network settings before troubleshooting elsewhere.
+
 ## License
 
 [MIT](LICENSE). The university seal belongs to Zhejiang University and is only used as the founding-school identifier.
