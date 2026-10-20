@@ -90,7 +90,7 @@ def test_wizard_school_page_exists(tmp_path):
     from zju_autologin.wizard import SetupWizard
     cfg = Config(str(tmp_path / "c.json"))
     wz = SetupWizard(cfg)
-    assert wz._stack.count() == 4          # welcome / school / account / done
+    assert wz._stack.count() == 5          # welcome / school / account / features / done
     assert wz._school_combo.count() >= 2   # 自定义 + 浙大种子
     # 预设选择联动(屏蔽真实网络探测线程, 防阻塞解释器退出)
     wz._probe_school = lambda: None

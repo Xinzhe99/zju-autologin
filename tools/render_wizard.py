@@ -8,7 +8,6 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from zju_autologin.config import Config  # noqa: E402
@@ -27,9 +26,16 @@ def main() -> int:
     app.processEvents()
 
     if page == "account":
-        wizard._stack.setCurrentIndex(1)
+        wizard._stack.setCurrentIndex(2)
         wizard._update_nav()
         wizard._edit_user.setText("3230104321")
+    elif page == "features":
+        wizard._stack.setCurrentIndex(3)
+        wizard._update_nav()
+    elif page == "done":
+        wizard._stack.setCurrentIndex(4)
+        wizard._update_done_text()
+        wizard._update_nav()
     else:
         wizard._detect_label.setText(
             "检测到你当前已在线（账号 3230104321），已自动填入下方账号。请确认账号无误并设置密码。")

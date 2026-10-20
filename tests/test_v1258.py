@@ -108,7 +108,9 @@ def test_wizard_blocks_account_change_with_old_password(tmp_path, qapp):
         # 输了密码 → 放行
         wz._edit_pwd.setText("new-account-pass")
         wz._go_next()
-        assert wz._stack.currentIndex() == 3
+        assert wz._stack.currentIndex() == 3  # 功能确认页
+        wz._go_next()
+        assert wz._stack.currentIndex() == 4
     finally:
         wz.reject()
 
@@ -130,6 +132,8 @@ def test_wizard_allows_same_account_with_saved_password(tmp_path, qapp):
         wz._edit_user.setText("3230104321")  # 学号未变
         wz._edit_pwd.setText("")             # 留空 = 保持
         wz._go_next()
-        assert wz._stack.currentIndex() == 3
+        assert wz._stack.currentIndex() == 3  # 功能确认页
+        wz._go_next()
+        assert wz._stack.currentIndex() == 4
     finally:
         wz.reject()

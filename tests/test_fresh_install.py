@@ -55,7 +55,9 @@ def test_wizard_page_flow_and_blank_password(tmp_path, qapp):
         assert wz._stack.currentIndex() == 2  # 必须能进账号页(修复前卡在 1)
         wz._edit_pwd.setText("")
         wz._go_next()
-        assert wz._stack.currentIndex() == 3
+        assert wz._stack.currentIndex() == 3  # 功能确认页
+        wz._go_next()
+        assert wz._stack.currentIndex() == 4
     finally:
         wz.reject()
 
@@ -80,7 +82,9 @@ def test_wizard_page_flow_and_blank_password(tmp_path, qapp):
         assert wz2._stack.currentIndex() == 2   # 仍缺密码
         wz2._edit_pwd.setText("pw")
         wz2._go_next()
-        assert wz2._stack.currentIndex() == 3
+        assert wz2._stack.currentIndex() == 3  # 功能确认页
+        wz2._go_next()
+        assert wz2._stack.currentIndex() == 4
     finally:
         wz2.reject()
 

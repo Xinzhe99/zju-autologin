@@ -79,12 +79,25 @@ var
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'),
        '/IM ZJUAutoLogin.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Rc);
-  { 系统级保活计划任务(如有): 尽力停止, 无管理员权限时失败可忽略 }
-  Exec(ExpandConstant('{sys}\schtasks.exe'),
-       '/End /TN ZJUAutoLogin', '', SW_HIDE, ewWaitUntilTerminated, Rc);
-  Exec(ExpandConstant('{sys}\schtasks.exe'),
-       '/End /TN ZJUAutoLogin-Watchdog', '', SW_HIDE, ewWaitUntilTerminated, Rc);
-  Sleep(800);  { 等文件句柄释放 }
+  { 系统级保活由 SYSTEM 创建: 普通权限 schtasks /End 会拒绝访问,
+    进程仍在时会锁住 exe, 导致 DeleteFile code 5。检测到残留进程则提权停止。 }
+  Exec(ExpandConstant('{cmd}'),
+       '/C tasklist /FI "IMAGENAME eq ZJUAutoLogin.exe" | find /I "ZJUAutoLogin.exe" >NUL',
+       '', SW_HIDE, ewWaitUntilTerminated, Rc);
+  if Rc = 0 then
+  begin
+    if not ShellExec('runas',
+      ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -WindowStyle Hidden -Command "schtasks /End /TN ZJUAutoLogin; '
+      + 'schtasks /End /TN ZJUAutoLogin-Watchdog; taskkill /IM ZJUAutoLogin.exe /F /T"',
+      '', SW_HIDE, ewWaitUntilTerminated, Rc) then
+    begin
+      MsgBox('系统级保活正在以 SYSTEM 运行，需要管理员权限才能停止。' + #13#10 +
+             '请允许 UAC；或先在应用设置中关闭系统级保活后重试。', mbError, MB_OK);
+      Abort;
+    end;
+    Sleep(800);
+  end;
 end;
 
 // 每次安装写一个安装会话标记: 应用靠它判断"这是新装/覆盖安装", 弹一次引导向导

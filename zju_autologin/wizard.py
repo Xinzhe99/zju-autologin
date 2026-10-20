@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QToolButton,
@@ -24,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import autostart, i18n, theme
+from . import autostart, i18n, service, theme
 from .config import Config
 from .i18n import tr
 from .srun import SrunClient
@@ -69,6 +71,7 @@ class SetupWizard(QDialog):
         self._stack.addWidget(self._build_welcome_page())
         self._stack.addWidget(self._build_school_page())
         self._stack.addWidget(self._build_account_page())
+        self._stack.addWidget(self._build_features_page())
         self._stack.addWidget(self._build_done_page())
 
         # 底部导航
@@ -331,6 +334,52 @@ class SetupWizard(QDialog):
         lay.addStretch(1)
         return page
 
+    def _build_features_page(self) -> QWidget:
+        """首次引导的三大功能确认页: 保活 / 代理共存 / 系统级保活。"""
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setSpacing(10)
+        self._features_title = QLabel()
+        self._features_title.setObjectName("cardTitle")
+        lay.addWidget(self._features_title)
+        self._features_intro = QLabel()
+        self._features_intro.setObjectName("statusDetail")
+        self._features_intro.setWordWrap(True)
+        lay.addWidget(self._features_intro)
+
+        def hint() -> QLabel:
+            label = QLabel()
+            label.setObjectName("statusDetail")
+            label.setWordWrap(True)
+            label.setContentsMargins(24, 0, 0, 6)
+            return label
+
+        self._chk_keepalive = QCheckBox()
+        self._chk_keepalive.setChecked(bool(self._config.data.get("auto_login", True)))
+        lay.addWidget(self._chk_keepalive)
+        self._keepalive_hint = hint()
+        lay.addWidget(self._keepalive_hint)
+
+        self._chk_campus = QCheckBox()
+        self._chk_campus.setChecked(bool(self._config.data.get("campus_direct", True)))
+        lay.addWidget(self._chk_campus)
+        self._campus_hint = hint()
+        lay.addWidget(self._campus_hint)
+
+        if sys.platform != "win32":
+            # 系统代理例外是 Windows 专有机制; 其他平台不要给出无效承诺
+            self._chk_campus.hide()
+            self._campus_hint.hide()
+
+        self._chk_service = QCheckBox()
+        self._chk_service.setChecked(service.is_installed())
+        lay.addWidget(self._chk_service)
+        self._service_hint = hint()
+        lay.addWidget(self._service_hint)
+
+        lay.addStretch(1)
+        return page
+
     def _build_done_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -367,6 +416,9 @@ class SetupWizard(QDialog):
             self._show_account_error("wiz.error_pwd_for_new_account")
             return
         self._apply_school_url()
+        # 进入完成页前刷新"已开启"摘要
+        if idx == self._stack.count() - 2:
+            self._update_done_text()
         if idx < self._stack.count() - 1:
             self._stack.setCurrentIndex(idx + 1)
         else:
@@ -418,10 +470,32 @@ class SetupWizard(QDialog):
         cfg.language = self._lang.currentData() or "auto"
         if self._edit_pwd.text():
             cfg.set_password(self._edit_pwd.text())
+        cfg.auto_login = self._chk_keepalive.isChecked()
+        cfg.campus_direct = self._chk_campus.isChecked()
         boot_ok = autostart.set_enabled(self._chk_boot.isChecked())
         cfg.autostart = boot_ok
         cfg.save()
+        self._apply_service_choice(cfg)
         self.accept()
+
+    def _apply_service_choice(self, cfg: Config) -> None:
+        """按功能页勾选安装/卸载系统级保活；失败不阻断向导保存。"""
+        want = self._chk_service.isChecked()
+        try:
+            installed = service.is_installed()
+        except Exception:  # noqa: BLE001 - 查询失败按未安装处理
+            installed = False
+        if want == installed:
+            return
+        try:
+            ok, detail = service.install(cfg) if want else service.uninstall()
+        except Exception as exc:  # noqa: BLE001 - 写配置/提权异常
+            ok, detail = False, str(exc)
+        if not ok:
+            QMessageBox.warning(
+                self, tr("wiz.service_fail_title"),
+                tr("wiz.service_fail",
+                   detail=detail or tr("wiz.service_fail_unknown")))
 
     # ------------------------------------------------------------------ 检测
 
@@ -498,9 +572,31 @@ class SetupWizard(QDialog):
         self._account_error.setText(tr(key) if key and self._account_error.text() else "")
         self._chk_boot.setText(tr("chk.autostart"))
         self._boot_hint.setText(tr("wiz.autostart_hint"))
-        self._done_text.setText(tr("wiz.done_text", app=tr("app.name")))
+        self._features_title.setText(
+            tr("wiz.features_title" if sys.platform == "win32"
+               else "wiz.features_title_other"))
+        self._features_intro.setText(tr("wiz.features_intro"))
+        self._chk_keepalive.setText(tr("wiz.feat_keepalive"))
+        self._keepalive_hint.setText(tr("wiz.feat_keepalive_desc"))
+        self._chk_campus.setText(tr("wiz.feat_campus"))
+        self._campus_hint.setText(tr("wiz.feat_campus_desc"))
+        self._chk_service.setText(tr("wiz.feat_service"))
+        self._service_hint.setText(tr("wiz.feat_service_desc"))
+        self._update_done_text()
         self._btn_back.setText(tr("wiz.prev"))
         self._update_nav()
+
+    def _update_done_text(self) -> None:
+        enabled = []
+        if self._chk_keepalive.isChecked():
+            enabled.append(tr("wiz.feat_keepalive_short"))
+        if sys.platform == "win32" and self._chk_campus.isChecked():
+            enabled.append(tr("wiz.feat_campus_short"))
+        if self._chk_service.isChecked():
+            enabled.append(tr("wiz.feat_service_short"))
+        features = "、".join(enabled) if enabled else tr("wiz.done_none")
+        self._done_text.setText(
+            tr("wiz.done_text", app=tr("app.name"), features=features))
 
     def _wait_threads(self) -> None:
         for thread in (self._detect_thread, self._probe_thread):
