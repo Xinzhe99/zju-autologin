@@ -113,6 +113,14 @@ QPushButton#secondary {
 }
 QPushButton#secondary:hover { background-color: #f2f2f2; }
 QPushButton#secondary:pressed { background-color: #e8e8e8; }
+QPushButton#destructive {
+    background-color: #ffffff;
+    color: #dc2626;
+    border: 1px solid #fca5a5;
+}
+QPushButton#destructive:hover { background-color: #fef2f2; }
+QPushButton#destructive:pressed { background-color: #fee2e2; }
+QPushButton#destructive:disabled { color: #f3a3a3; border-color: #f3d0d0; }
 
 QToolButton#eye {
     border: none;
@@ -174,20 +182,10 @@ QSpinBox { padding-right: 10px; }
 QSpinBox::up-button, QSpinBox::down-button { width: 0; border: none; }
 QSpinBox::up-arrow, QSpinBox::down-arrow { image: none; width: 0; height: 0; }
 
-QCheckBox { spacing: 7px; }
-QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border: 1px solid #c9c9c9;
-    border-radius: 5px;
-    background: #ffffff;
-}
-QCheckBox::indicator:hover { border-color: #8f8f8f; }
-QCheckBox::indicator:checked {
-    background: #0d0d0d;
-    border-color: #0d0d0d;
-    image: url(__ICON_DIR__/icon_check.png);
-}
+QCheckBox { spacing: 8px; }
+/* 勾选框刻意不覆盖 ::indicator: 自绘图片在打包版里曾因路径/缩放失效,
+   只剩一块纯色方块, 完全看不出是否勾选。交给 Qt 原生样式绘制
+   (Windows 上是蓝底白勾), 深浅色主题下都清晰可辨。 */
 
 QPlainTextEdit#log {
     background: #1f1f1f;
@@ -302,6 +300,14 @@ QPushButton#secondary {
 }
 QPushButton#secondary:hover { background-color: #262626; }
 QPushButton#secondary:pressed { background-color: #303030; }
+QPushButton#destructive {
+    background-color: transparent;
+    color: #f87171;
+    border: 1px solid #7f1d1d;
+}
+QPushButton#destructive:hover { background-color: #2a1515; }
+QPushButton#destructive:pressed { background-color: #3a1a1a; }
+QPushButton#destructive:disabled { color: #7f3b3b; border-color: #4a2020; }
 
 QToolButton#eye {
     border: none;
@@ -363,20 +369,8 @@ QSpinBox { padding-right: 10px; }
 QSpinBox::up-button, QSpinBox::down-button { width: 0; border: none; }
 QSpinBox::up-arrow, QSpinBox::down-arrow { image: none; width: 0; height: 0; }
 
-QCheckBox { spacing: 7px; }
-QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border: 1px solid #4d4d4d;
-    border-radius: 5px;
-    background: #191919;
-}
-QCheckBox::indicator:hover { border-color: #8d8d8d; }
-QCheckBox::indicator:checked {
-    background: #f2f2f2;
-    border-color: #f2f2f2;
-    image: url(__ICON_DIR__/icon_check_dark.png);
-}
+QCheckBox { spacing: 8px; }
+/* 同浅色主题: 使用原生勾选指示器, 避免自绘图片失效后看不到勾 */
 
 QPlainTextEdit#log {
     background: #0c0c0c;

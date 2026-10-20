@@ -66,7 +66,7 @@ Clash / v2ray 等开启系统代理或 TUN 后，统一认证、校内论坛（c
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.28.0/ZJUAutoLogin-1.28.0-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.28.0/ZJUAutoLogin-1.28.0-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.28.0/ZJUAutoLogin-1.28.0-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.29.0/ZJUAutoLogin-1.29.0-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.29.0/ZJUAutoLogin-1.29.0-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.29.0/ZJUAutoLogin-1.29.0-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
@@ -131,6 +131,8 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 - ✅ **原地自更新**：预下载 + SHA256 校验 + 无感重启，无需再跑安装器
 - ✅ **多形态分发**：Windows 安装/便携/**8MB CLI 瘦身包**、macOS dmg、Linux pip/静态二进制（含 musl 路由器版）、Web 配置页（`serve`）
 - ✅ **首次引导向导**：在线时自动带出账号，只输一次密码；新装/覆盖安装必弹
+- ✅ **更新失败自动回滚**：新版本启动后 60 秒内不稳定则自动换回上一版并重新拉起
+- ✅ **一键清理系统改动**：设置页可移除代理例外、直连路由、保活/看护任务与开机自启
 
 **远程可达**
 - ✅ **DDNS 动态域名**：IP 变化自动更新解析——认证保住"网在"，DDNS 保住"找得到"。支持 **DuckDNS（免费）**/ Cloudflare / 阿里云；没有域名？[duckdns.org](https://www.duckdns.org) 用 GitHub 登录即得免费子域名

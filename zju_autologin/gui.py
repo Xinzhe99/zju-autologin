@@ -122,13 +122,21 @@ def main() -> int:
         return 0
     runtime.app_lock = lock
 
-    # 原地自更新的残留: 清理上一版本的 .old.exe（正在运行时无法删除, 此时必已退出）
-    if getattr(sys, "frozen", False):
-        old_exe = Path(sys.executable).with_suffix(".old.exe")
-        try:
-            old_exe.unlink(missing_ok=True)
-        except OSError:
-            pass
+    # 应用内原地更新的健康检查（普通安装包更新不参与，见 update_health）。
+    from zju_autologin import update_health
+    if getattr(sys, "frozen", False) and update_health.is_tracking():
+        update_health.begin_pending()
+        if update_health.needs_rollback():
+            ok, detail = update_health.rollback()
+            print(f"[ZJUAutoLogin] update rollback: {ok} {detail}")
+            if ok:
+                # 换回旧版后必须把它拉起来, 否则用户看到的仍是"程序没打开"
+                import subprocess
+                subprocess.Popen(
+                    [sys.executable],
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                os._exit(0)
+            # 换不回去就继续正常启动新版本, 不能把用户直接踢出程序
 
     config = Config()
     i18n.set_lang(config.language)

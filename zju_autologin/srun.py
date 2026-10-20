@@ -38,6 +38,7 @@ import http.client
 import json
 import re
 import socket
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -188,8 +189,35 @@ def _pinned_key(host: str, source_ip: str | None) -> tuple[str, str]:
     return (host, source_ip or "")
 
 
+_IP_CACHE_DIR = None  # 由调用方指定(服务模式与 GUI 共享同一份缓存)
+
+
+def set_cache_dir(directory) -> None:
+    """指定门户 IP 缓存目录; 传 None 恢复默认(用户配置目录)。
+
+    服务模式(--config /etc/... 或 ProgramData)必须与 GUI 共用一份缓存,
+    否则"开机时 TUN 已在跑, 用上次记下的真实 IP"在服务里永远读不到。
+    """
+    global _IP_CACHE_DIR, _ip_cache_loaded
+    _IP_CACHE_DIR = directory
+    _ip_cache_loaded = False
+
+
 def _ip_cache_path():
-    from .config import config_dir
+    """缓存放在 GUI 与服务都能读到的位置。
+
+    Windows: ProgramData\\ZJUAutoLogin（SYSTEM 服务可读, 普通用户可写）;
+    其他平台: 用户配置目录（systemd 的 ProtectHome 下服务读不到, 属已知限制）。
+    显式 set_cache_dir() 优先, 供 --config 指定服务配置时使用。
+    """
+    from .config import config_dir, service_config_dir
+
+    if _IP_CACHE_DIR is not None:
+        return _IP_CACHE_DIR / _IP_CACHE_FILE
+    if sys.platform == "win32":
+        global_dir = service_config_dir()
+        if global_dir.is_dir():
+            return global_dir / _IP_CACHE_FILE
     return config_dir() / _IP_CACHE_FILE
 
 
@@ -212,9 +240,17 @@ def _load_ip_cache() -> None:
 
 def _save_ip_cache() -> None:
     try:
-        _ip_cache_path().write_text(json.dumps(_PORTAL_IP_CACHE), encoding="utf-8")
-    except OSError:
-        pass  # 服务模式(ProtectHome 等)下配置目录可能不可写: 缓存只是锦上添花
+        path = _ip_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(_PORTAL_IP_CACHE), encoding="utf-8")
+    except OSError as exc:
+        # 以前静默 pass: 服务模式写不进去时用户毫无线索, 现在至少留一行
+        try:
+            from .config import append_file_log
+
+            append_file_log(f"portal IP cache not saved: {exc}")
+        except Exception:  # noqa: BLE001 - 日志失败不影响主流程
+            pass
 
 
 def _resolve(host: str) -> tuple[list[str], str]:

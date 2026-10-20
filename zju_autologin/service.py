@@ -276,6 +276,57 @@ def install(cfg) -> tuple[bool, str]:
         return False, detail
     return (True, "installed") if is_installed(max_age=0) else (False, "task not found")
 
+KICKSTART_MARKER = "service.kickstart"
+
+
+def heartbeat_age() -> float | None:
+    """服务心跳距今秒数；没有心跳文件返回 None。"""
+    try:
+        raw = (service_config_dir() / "service.heartbeat").read_text(encoding="ascii").strip()
+        return max(0.0, time.time() - float(raw))
+    except (OSError, ValueError):
+        return None
+
+
+def ensure_running(max_age: float = 300.0) -> tuple[bool, str]:
+    """启动时确认系统级保活真的在跑（任务存在 ≠ 进程在跑）。
+
+    安装器更新前会 schtasks /End 停掉 SYSTEM 任务，但不会重新启动；
+    用户看到"已开启"，实际保活已停，直到下次重启。
+
+    返回 (是否已运行/已拉起, 说明)。无法提权时只报告，不反复弹 UAC。
+    """
+    if not is_installed(max_age=0):
+        return False, "not-installed"
+    age = heartbeat_age()
+    if age is not None and age <= max_age:
+        return True, "running"
+    if sys.platform != "win32":
+        if sys.platform.startswith("linux"):
+            r = subprocess.run(["systemctl", "is-active", UNIT_NAME],
+                               capture_output=True, text=True, timeout=10)
+            return r.stdout.strip() == "active", r.stdout.strip() or "unknown"
+        return False, "manual"
+    marker = service_config_dir() / KICKSTART_MARKER
+    try:
+        # 一天内只提权一次: 用户明确拒绝/无管理员权限时不要每次启动都弹 UAC
+        if marker.exists() and time.time() - marker.stat().st_mtime < 86400:
+            return False, "needs-admin"
+    except OSError:
+        pass
+    script = (
+        f"  Start-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue\n"
+    )
+    ok, detail = _run_elevated_ps(script)
+    if not ok:
+        return False, detail or "needs-admin"
+    try:
+        service_config_dir().mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(time.time()), encoding="ascii")
+    except OSError:
+        pass
+    return True, "started"
+
 
 def uninstall() -> tuple[bool, str]:
     """停止并删除系统级保活（Linux systemd / Windows UAC / macOS 管理员密码）。"""

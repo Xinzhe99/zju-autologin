@@ -1040,12 +1040,18 @@ class SettingsWindow(QDialog):
         self._save_hint = QLabel("")
         self._save_hint.setObjectName("statusDetail")
         self._save_hint.setWordWrap(True)
+        # 一键清理放在常显底栏: 折在「高级选项」或页面最底部时用户找不到
+        self._btn_reset = QPushButton()
+        self._btn_reset.setObjectName("destructive")
+        self._btn_reset.clicked.connect(self._confirm_reset)
         self._btn_save = QPushButton()
         self._btn_save.setObjectName("primary")
         self._btn_save.setDefault(True)
         self._btn_save.clicked.connect(self._save_settings)
         save_row.addWidget(self._save_hint, 1)
         save_row.addSpacing(10)
+        save_row.addWidget(self._btn_reset)
+        save_row.addSpacing(8)
         save_row.addWidget(self._btn_save)
         outer.addWidget(footer)
 
@@ -1205,6 +1211,7 @@ class SettingsWindow(QDialog):
         self._lbl_guide.setText(
             f'<a href="{REPO_URL}/blob/main/docs/notifications.md" style="color:#5b8fd9;">{tr("notify.guide")}</a>')
         self._edit_smtp_pass.setPlaceholderText(tr("smtp.pass_ph"))
+        self._reset_labels()
 
     # ---------------- 通知测试 / 校内直连状态 ----------------
 
@@ -1374,6 +1381,8 @@ class SettingsWindow(QDialog):
         self._hint_seq += 1
         seq = self._hint_seq
         self._save_hint.setText(text)
+        if timeout_ms <= 0:
+            return  # 0 = 一直显示到下一次提示(清理进度/失败原因需要用户看清)
 
         def clear() -> None:
             if seq == self._hint_seq:
@@ -1678,6 +1687,46 @@ class SettingsWindow(QDialog):
         QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
         self._monitor.check_once()
 
+    def _confirm_reset(self) -> None:
+        answer = QMessageBox.question(
+            self, tr("reset.title"), tr("reset.confirm"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._btn_reset.setEnabled(False)
+        self._flash_hint(tr("reset.running"), 0)
+
+        def work():
+            from . import reset
+            return reset.cleanup(self._config)
+
+        def done(result):
+            self._btn_reset.setEnabled(True)
+            if isinstance(result, Exception):
+                self._flash_hint(tr("reset.fail", msg=result), 6000)
+                return
+            failed = [f"{tr(f'reset.step.{step}')}: {detail or '?'}"
+                      for step, ok, detail in result if not ok]
+            self._flash_hint(
+                tr("reset.partial", items="; ".join(failed)) if failed
+                else tr("reset.done"), 0 if failed else 4000)
+            self._load_settings_into_ui()
+            self._main._load_settings_into_ui()
+            self._refresh_service_heartbeat()
+            self._main._append_log(
+                tr("reset.done") if not failed else tr("reset.partial",
+                                                       items="; ".join(failed)))
+
+        self._reset_thread = _FnThread(work, self)
+        self._reset_thread.done.connect(done)
+        self._reset_thread.finished.connect(self._reset_thread.deleteLater)
+        self._reset_thread.start()
+
+    def _reset_labels(self) -> None:
+        self._btn_reset.setText(tr("reset.btn"))
+        self._btn_reset.setToolTip(tr("reset.hint"))
+
     def _refresh_service_heartbeat(self) -> None:
         """显示系统级保活服务的心跳状态（watch 进程每轮写入时间戳）。"""
         # 缓存 5 分钟: schtasks 子进程超时可达 15s, 每分钟查一次会周期性卡界面
@@ -1834,6 +1883,7 @@ class MainWindow(QMainWindow):
         self._banner_mode = ""              # available / downloading / ready
         self._watchdog_checked = False
         self._log_buffer: deque[str] = deque(maxlen=self._LOG_BUFFER)
+        self._health_marked = False
 
         self.setWindowTitle(tr("app.name"))
         icon_path = resource_path("zju.ico")
@@ -1860,6 +1910,8 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.commitDataRequest.connect(self._on_commit_data)
+            # 正常退出也算健康: 否则"打开看一眼就关"两次会被误判为启动失败
+            app.aboutToQuit.connect(self._mark_update_healthy)
 
         # 预创建设置/日志窗口(隐藏): 首次点击瞬时显示, 无一次性构建等待
         self._settings_window = SettingsWindow(self._config, self._monitor, self)
@@ -1873,6 +1925,7 @@ class MainWindow(QMainWindow):
         # schtasks/PowerShell 是同步子进程(超时合计可达 45s), 放在 __init__ 里会
         # 让窗口迟迟不出现(像卡死); 推迟到事件循环起来之后再做, 且一次运行只做一次
         QTimer.singleShot(0, self._ensure_watchdog_task)
+        QTimer.singleShot(1500, self._ensure_service_running)
         self._alive_timer = QTimer(self)
         self._alive_timer.timeout.connect(watchdog.touch_alive)
         self._alive_timer.start(5 * 60 * 1000)
@@ -1892,6 +1945,47 @@ class MainWindow(QMainWindow):
                 watchdog.install()
         except Exception as exc:  # noqa: BLE001 - 看护装不上不影响主功能
             self._append_log(f"watchdog: {exc}")
+
+    def _ensure_service_running(self) -> None:
+        """启动后确认系统级保活真的在跑（安装器更新会 /End 任务且不会重启）。"""
+        if not service.is_installed(max_age=0):
+            return
+        age = service.heartbeat_age()
+        if age is not None and age <= 300:
+            return  # 刚跑过, 无需干预
+
+        def work():
+            return service.ensure_running()
+
+        def done(result):
+            ok = not isinstance(result, Exception) and bool(result and result[0])
+            detail = ""
+            if isinstance(result, Exception):
+                detail = str(result)
+            elif isinstance(result, tuple) and len(result) > 1:
+                detail = str(result[1] or "")
+            if ok:
+                self._append_log(tr("service.restarted"))
+            elif detail == "needs-admin":
+                # 不反复弹 UAC: 一天一次, 其余时候明确告知用户手动处理
+                self._append_log(tr("service.stopped_manual"))
+                self._service_stopped_hint()
+            else:
+                self._append_log(tr("service.stopped_detail", detail=detail or "?"))
+            if self._settings_window is not None:
+                self._settings_window._refresh_service_heartbeat()
+
+        self._service_check_thread = _FnThread(work, self)
+        self._service_check_thread.done.connect(done)
+        self._service_check_thread.finished.connect(
+            self._service_check_thread.deleteLater)
+        self._service_check_thread.start()
+
+    def _service_stopped_hint(self) -> None:
+        self._tray_msg_kind = "service_stopped"
+        self._tray.showMessage(
+            tr("service.stopped_title"), tr("service.stopped_body"),
+            QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     # ------------------------------------------------------------------ UI
 
@@ -2503,6 +2597,10 @@ class MainWindow(QMainWindow):
         old = cur.with_suffix(".old.exe")
         if old.exists():
             old.unlink()
+        # 写回滚标记后再换 exe: 新版本连续两次未达到健康状态时, gui.py 会
+        # 自动把 .old.exe 换回来(远程机器更新后崩溃仍能恢复)
+        from . import update_health
+        update_health.prepare_update(__version__)
         os.rename(cur, old)  # Windows 允许重命名正在运行的 exe
         try:
             shutil.move(new_path, str(cur))
@@ -2559,6 +2657,11 @@ class MainWindow(QMainWindow):
         self._fields["login_time"].setText(info.get("login_time") or "—")
         self._fields["last_check"].setText(time.strftime("%H:%M:%S"))
         self._btn_devices.setVisible(state == "auth_error" and info.get("ecode") == "E2620")
+        if state and not self._health_marked:
+            # 首轮检测已回传 + 窗口已构建 ≠ 稳定: 再观察 60 秒。
+            # 立刻标记健康会在崩溃前就把 .old.exe 删掉, 回滚就无从谈起。
+            self._health_marked = True
+            QTimer.singleShot(60_000, self._mark_update_healthy)
 
         icon_state = state if state in DOT_COLORS else "checking"
         if icon_state != self._tray_state:
@@ -2581,6 +2684,11 @@ class MainWindow(QMainWindow):
                     tr("tray.msg_relogin_title"),
                     tr("tray.msg_relogin_body", ip=info.get("ip") or ""),
                     QSystemTrayIcon.MessageIcon.Information, 5000)
+
+    def _mark_update_healthy(self) -> None:
+        """窗口与首轮检测稳定 60 秒后, 才认为新版本健康并清理 .old.exe。"""
+        from . import update_health
+        update_health.mark_healthy()
 
     def _on_campus_state(self, state: str) -> None:
         self._campus_state = state

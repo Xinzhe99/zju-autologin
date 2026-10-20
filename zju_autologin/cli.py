@@ -69,6 +69,15 @@ def _scan_config(argv: list[str]) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _share_ip_cache(cfg: Config) -> None:
+    """让门户 IP 缓存跟随当前配置目录(GUI 与服务模式共用一份)。"""
+    from pathlib import Path
+
+    import zju_autologin.srun as srun
+
+    srun.set_cache_dir(Path(cfg.path).parent)
+
+
 def _load_cli_config(cfg_path: str | None = None, prefer_service: bool = True) -> Config:
     """CLI 用哪份配置: 显式 --config > 已安装的系统级保活 > 用户配置。
 
@@ -79,7 +88,9 @@ def _load_cli_config(cfg_path: str | None = None, prefer_service: bool = True) -
     import zju_autologin.service as service
 
     if cfg_path:
-        return Config(path=cfg_path)
+        cfg = Config(path=cfg_path)
+        _share_ip_cache(cfg)
+        return cfg
     if prefer_service:
         try:
             if service.is_installed(max_age=60):
@@ -90,10 +101,13 @@ def _load_cli_config(cfg_path: str | None = None, prefer_service: bool = True) -
                         print(f"[!] 无法读取服务配置 {svc}（权限不足?）；"
                               "请用 sudo 运行或 --config 指定配置文件",
                               file=sys.stderr)
+                    _share_ip_cache(cfg)
                     return cfg
         except Exception:  # noqa: BLE001 - 查询服务状态不能拖垮 CLI
             pass
-    return Config()
+    cfg = Config()
+    _share_ip_cache(cfg)
+    return cfg
 
 
 def cmd_check(cfg: Config) -> int:
