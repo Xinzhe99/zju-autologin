@@ -478,7 +478,6 @@ def test_settings_enter_saves_instead_of_reconfig(gui):
     win, cfg, mon, app = gui
     sw = win._settings_window
     saved, reconfig = [], []
-    orig_save = cfg.save
     cfg.save = lambda: saved.append(1) or True
     win._start_reconfig = lambda: reconfig.append(1)
     sw._edit_pwd.setFocus()

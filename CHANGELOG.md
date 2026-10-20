@@ -2,6 +2,15 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [1.27.5] - 2026-10-20
+
+### 修复
+- **静默更新安装完成后仍不会自动重启应用**：安装器 `[Run]` 里把 PowerShell
+  写成了 `{sys}\powershell.exe`，但 Windows 上该文件不存在（实际路径是
+  `{sys}\WindowsPowerShell\v1.0\powershell.exe`）。Inno 因此报
+  `CreateProcess failed; code 2`，延迟拉起 helper 从未执行，更新进度条走完
+  后应用不会自动回来。现已改用完整路径，并补了安装器回归断言。
+
 ## [1.27.4] - 2026-10-18
 
 ### 修复

@@ -72,6 +72,10 @@ def test_installer_delays_silent_relaunch():
     assert "postinstall skipifsilent" in run_section
     assert "update-relaunch.ps1" in run_section
     assert "skipifnotsilent" in run_section
+    # 必须用 PowerShell 的完整路径: {sys}\powershell.exe 在 Windows 上不存在,
+    # Inno 的 [Run] 会报 CreateProcess failed; code 2, 静默更新后不会自动重启。
+    assert r'Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"' in run_section
+    assert r'Filename: "{sys}\powershell.exe"' not in run_section
     # 不能再用裸 exe 作为静默启动项
     assert r'Filename: "{app}\ZJUAutoLogin.exe"; Flags: nowait runasoriginaluser skipifnotsilent' not in run_section
     assert "Start-Sleep -Seconds 12" in iss

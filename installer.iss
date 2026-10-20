@@ -49,7 +49,7 @@ Filename: "{app}\ZJUAutoLogin.exe"; Description: "{cm:LaunchProgram,{#MyAppName}
 ; 静默安装(应用内更新/winget): 不直接拉起 exe, 而是启动一个延迟 helper。
 ; 安装器退出/杀软扫描结束后再启动, 规避 PyInstaller onefile 解包
 ; python3xx.dll 的竞态。旧版本应用发起的更新也能自动重启。
-Filename: "{sys}\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\update-relaunch.ps1"""; Flags: nowait runasoriginaluser skipifnotsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\update-relaunch.ps1"""; Flags: nowait runasoriginaluser skipifnotsilent
 
 [UninstallDelete]
 Type: files; Name: "{app}\update-relaunch.ps1"
