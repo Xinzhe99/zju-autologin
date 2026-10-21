@@ -6,14 +6,14 @@
 from __future__ import annotations
 
 import json
+import re as _re
 import smtplib
-import ssl
 import urllib.parse
 import urllib.request
 
-PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "webhook", "smtp")
+from .net import default_ssl_context
 
-import re as _re
+PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "webhook", "smtp")
 
 _URL_RE = _re.compile(r"https?://\S+")
 
@@ -70,11 +70,11 @@ def _smtp_send(cfg, title: str, body: str) -> tuple[bool, str]:
         msg.set_content(body)
         if cfg.smtp_port == 465:
             server = smtplib.SMTP_SSL(cfg.smtp_host, 465, timeout=8,
-                                      context=ssl.create_default_context())
+                                      context=default_ssl_context())
         else:
             server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=8)
             try:
-                server.starttls(context=ssl.create_default_context())
+                server.starttls(context=default_ssl_context())
             except smtplib.SMTPNotSupportedError:
                 # 明文降级会把授权码暴露给链路窃听者, 拒绝而非静默继续
                 server.quit()

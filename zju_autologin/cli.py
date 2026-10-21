@@ -97,10 +97,9 @@ def _load_cli_config(cfg_path: str | None = None, prefer_service: bool = True) -
                 svc = service_config_dir() / "config.json"
                 if svc.is_file():
                     cfg = Config(str(svc))
-                    if cfg._load_failed:
-                        print(f"[!] 无法读取服务配置 {svc}（权限不足?）；"
-                              "请用 sudo 运行或 --config 指定配置文件",
-                              file=sys.stderr)
+                    # 读不出来时不在这里报错: 各子命令入口统一用
+                    # _refuse_if_unreadable() 拒绝并给出非零退出码, 避免同一条
+                    # 警告打印两遍、也避免拿空配置继续跑
                     _share_ip_cache(cfg)
                     return cfg
         except Exception:  # noqa: BLE001 - 查询服务状态不能拖垮 CLI
@@ -110,7 +109,25 @@ def _load_cli_config(cfg_path: str | None = None, prefer_service: bool = True) -
     return cfg
 
 
+def _refuse_if_unreadable(cfg: Config) -> bool:
+    """配置读不出来时明确失败, 不要拿空配置往下跑。
+
+    非提权用户读 SYSTEM 的 ProgramData 配置会 Permission denied; 以前
+    check/status 只打一行 stderr 警告就继续, 用空 base_url/无账号的配置去
+    探测, 最后还打印一行 [ok] 并 exit 0 —— 用户以为一切正常, 实际什么
+    都没查。serve 早就这么拒绝了, 这里对齐。
+    """
+    if not cfg._load_failed:
+        return False
+    print(f"[x] 无法读取配置文件 {cfg.path}（权限不足?）", file=sys.stderr)
+    print("    请用管理员权限运行，或: zju-autologin <命令> --config <可读路径>",
+          file=sys.stderr)
+    return True
+
+
 def cmd_check(cfg: Config) -> int:
+    if _refuse_if_unreadable(cfg):
+        return 2
     client = SrunClient(base_url=cfg.base_url, ac_id=cfg.ac_id)
     try:
         status = client.get_status()
@@ -118,6 +135,11 @@ def cmd_check(cfg: Config) -> int:
         print(f"[x] {exc}")
         return 2
     if not status["online"]:
+        if status.get("unknown"):
+            # 门户没给在线状态但外网通: 这台机器实际是在线的
+            if probe_internet():
+                print(tr("cli.portal_unknown"))
+                return 0
         print(tr("cli.offline_line", state=tr("cli.offline"), url=cfg.base_url))
         return 1
     ok = probe_internet()
@@ -129,6 +151,8 @@ def cmd_check(cfg: Config) -> int:
 
 
 def cmd_login(cfg: Config) -> int:
+    if _refuse_if_unreadable(cfg):
+        return 2
     if not cfg.username or not cfg.refresh_password():
         print(tr("cli.config_missing"))
         print(f"    {cfg.path}")
@@ -191,6 +215,12 @@ def _watch_tick(cfg: Config, st: _WatchState, note) -> str:
                  username=status.get("username", ""), ip=status.get("ip", ""),
                  since=status.get("login_time") or "-",
                  internet=tr("cli.internet_ok") if ok else tr("cli.internet_bad")))
+        return "online"
+    if status.get("unknown") and probe_internet():
+        # 门户没给出在线状态(如限速), 但外网通 → 视为在线, 不重登真实账号
+        st.fail_count = 0
+        st.latch_msg = ""
+        print(tr("cli.portal_unknown"))
         return "online"
     print(tr("cli.offline_line", state=tr("cli.offline"), url=cfg.base_url))
     if not cfg.username or not cfg.refresh_password():
@@ -436,11 +466,9 @@ def cmd_status() -> int:
         # macOS LaunchDaemon / Windows 计划任务: 之前一律报"未安装"
         where = "LaunchDaemon" if sys.platform == "darwin" else "计划任务 ZJUAutoLogin"
         print(f"系统级保活: 已安装（{where}）")
-    # 网络状态（不需要 root）
+    # 网络状态（不需要 root）; 配置读不出来时由 cmd_check 统一拒绝并给出
+    # 非零退出码, 这里不再重复打印同一份警告
     cfg = Config(str(service_config_dir() / "config.json")) if installed else Config()
-    if installed and cfg._load_failed:
-        print(f"[!] 无法读取服务配置 {cfg.path}（权限不足?）；请用 sudo 运行 status",
-              file=sys.stderr)
     return cmd_check(cfg)
 
 

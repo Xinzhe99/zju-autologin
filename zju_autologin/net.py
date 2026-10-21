@@ -28,6 +28,18 @@ def is_fake_ip(ip: str) -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=1)
+def default_ssl_context() -> ssl.SSLContext:
+    """进程级共享的默认 TLS 上下文。
+
+    每次 ssl.create_default_context() 都会重新加载系统 CA 库, 且其中的原生内存
+    在 CPython 里回收得并不彻底 —— 实测每次约 8.5 KB 不归还, 保活每分钟
+    重建一次上下文, 一天就是十几 MB 的常驻增长。上下文本身是线程安全且只读的
+    (证书校验参数不变), 整个进程共用一份即可。
+    """
+    return ssl.create_default_context()
+
+
 def build_opener(proxy_mode: str = "system", proxy_url: str = "") -> urllib.request.OpenerDirector:
     if proxy_mode == "direct":
         return urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -139,7 +151,7 @@ def bound_opener(source_ip: str) -> urllib.request.OpenerDirector:
 
     class _HS(urllib.request.HTTPSHandler):
         def __init__(self):
-            super().__init__(context=ssl.create_default_context())
+            super().__init__(context=default_ssl_context())
 
         def https_open(self, req):
             cls = functools.partial(

@@ -81,21 +81,30 @@ def run_diagnosis(cfg: Config) -> tuple[str, list[dict]]:
     # 2) 门户可达性 (诊断工具绝不能因为一个意外异常而崩掉)
     try:
         status = client.get_status()
+        # 只有真正测到耗时(LAN 回环/限速态可能没有延迟字段)才显示延迟,
+        # 否则以前会打印出 "延迟 ?ms" 这种占位符
+        latency = status.get("latency_ms")
         row(tr("diag.portal"), tr("diag.portal_ok"),
-            tr("diag.portal_latency", ms=status.get("latency_ms", "?")))
+            tr("diag.portal_latency", ms=latency) if latency is not None else "")
     except Exception as exc:  # noqa: BLE001
         row(tr("diag.portal"), tr("diag.portal_fail", err=str(exc)[:80]),
             tr("diag.portal_fail_advice", base_url=cfg.base_url))
         return tr("diag.summary_no_portal"), rows
 
     # 3) 认证状态
+    if not status.get("online") and status.get("unknown"):
+        # 门户返回了没见过的状态(如限速): 先看外网, 通就说明认证有效
+        from .net import build_opener as _build_opener
+        from .net import probe_internet as _probe
+
+        if _probe(opener=_build_opener(cfg.proxy_mode, cfg.proxy_url)):
+            row(tr("diag.auth"),
+                tr("diag.portal_unknown",
+                   err=str(status.get("portal_error") or "")[:60]),
+                tr("diag.portal_unknown_advice"))
+            row(tr("diag.internet"), tr("diag.internet_ok"))
+            return tr("diag.summary_all_ok"), rows
     if not status.get("online"):
-        # 4) 登录测试
-        if not cfg.username or not cfg.get_password():
-            row(tr("diag.auth"), tr("diag.offline_no_cred"),
-                tr("diag.offline_no_cred_advice"))
-            return tr("diag.summary_no_cred"), rows
-        row(tr("diag.auth"), tr("diag.offline"))
         try:
             result = client.login(cfg.username, cfg.get_password(), domain=cfg.domain)
         except Exception as exc:  # noqa: BLE001 - portal 可达但登录请求失败(网关瞬断等)

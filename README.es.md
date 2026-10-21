@@ -38,7 +38,7 @@ Descarga desde [Releases](https://github.com/Xinzhe99/zju-autologin/releases/lat
 
 - macOS no está firmado: clic derecho → «Abrir» la primera vez
 - Las actualizaciones se detectan automáticamente y se instalan con un clic
-- Interfaz en chino / inglés (sigue el idioma del sistema)
+- Interfaz en 7 idiomas: chino / inglés / japonés / coreano / alemán / francés / español (sigue el idioma del sistema o se elige a mano)
 
 ## Inicio rápido
 

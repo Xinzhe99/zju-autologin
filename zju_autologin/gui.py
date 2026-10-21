@@ -12,14 +12,23 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QLockFile
-from PyQt6.QtWidgets import QApplication
-
 from zju_autologin import crash, i18n, runtime
 from zju_autologin.config import Config, config_dir
-from zju_autologin.monitor import Monitor
-from zju_autologin.ui import MainWindow
-from zju_autologin.wizard import SetupWizard
+
+# Qt 与 UI 模块刻意不在模块顶层导入: 系统级保活走的是本模块的 main() →
+# "watch" 分支, 那条路径完全不需要 Qt, 早期顶层 import 让 SYSTEM 守护也
+# 拉起整套 PyQt6(实测 commit 7.5→24MB, 且长期驻留), 纯属浪费。
+# 需要这些符号的调用方(测试/入口)继续按模块属性访问, 见文件末尾的懒加载别名。
+def _qt():
+    """按需导入 Qt 与 UI 依赖, 返回 (QApplication, QLockFile, MainWindow, SetupWizard, Monitor)。"""
+    from PyQt6.QtCore import QLockFile
+    from PyQt6.QtWidgets import QApplication
+
+    from zju_autologin.monitor import Monitor
+    from zju_autologin.ui import MainWindow
+    from zju_autologin.wizard import SetupWizard
+
+    return QApplication, QLockFile, MainWindow, SetupWizard, Monitor
 
 
 def _install_session() -> str:
@@ -95,11 +104,14 @@ def _serve_activation(window) -> None:
 
 
 def main() -> int:
-    crash.install()  # 全局异常钩子：写日志 + 托盘提示，避免无声退出
     if len(sys.argv) > 1 and sys.argv[1] in ("watch", "--watch"):
+        # 先分流再碰 Qt: 守护模式不需要图形栈(crash.install 依赖托盘气泡,
+        # 由 CLI 自己的异常处理覆盖)。见文件顶部 Qt 懒加载说明。
         from zju_autologin.cli import main as cli_main
         return cli_main()
 
+    crash.install()  # 全局异常钩子：写日志 + 托盘提示，避免无声退出
+    QApplication, QLockFile, MainWindow, SetupWizard, Monitor = _qt()
     app = QApplication(sys.argv)
     app.setApplicationName("ZJUAutoLogin")
     app.setApplicationDisplayName("ZJU 校园网自动登录")

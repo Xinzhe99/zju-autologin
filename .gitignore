@@ -25,3 +25,6 @@ config.json
 # 系统杂项
 Thumbs.db
 .DS_Store
+
+# 审计/排查产物（截图、复现脚本、旧构建包），不入库
+review/

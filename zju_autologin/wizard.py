@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -83,11 +84,18 @@ class SetupWizard(QDialog):
         self._btn_next.setObjectName("primary")
         self._btn_next.clicked.connect(self._go_next)
         self._lang = QComboBox()
-        for lang in ("auto", "zh-CN", "en-US"):
+        self._lang.addItem(self._lang_label("auto"), "auto")
+        for lang in i18n.supported_langs():
             self._lang.addItem(self._lang_label(lang), lang)
-        idx = self._lang.findData(config.language if config.language in ("auto", "zh-CN", "en-US") else "auto")
+        installed = ("auto", *i18n.supported_langs())
+        idx = self._lang.findData(config.language if config.language in installed else "auto")
         self._lang.setCurrentIndex(max(0, idx))
         self._lang.currentIndexChanged.connect(self._on_lang_changed)
+        # 语言选择器按内容自适应: QComboBox 默认 Expanding, 会把整条底栏撑满,
+        # 把「上一步/下一步」挤到最右侧, 并且 "Follow system / 跟随系统" 被截断
+        self._lang.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._lang.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self._lang.setMinimumWidth(self._lang.sizeHint().width())
         nav.addWidget(self._lang)
         nav.addStretch(1)
         nav.addWidget(self._btn_back)
@@ -193,6 +201,11 @@ class SetupWizard(QDialog):
         row.addStretch(1)
         lay.addLayout(row)
         lay.addWidget(self._school_probe_result)
+
+        # 默认项是 setCurrentIndex(0) 在 connect 之前设的, 不会触发
+        # _on_school_preset —— 于是"门户地址"框空着只剩占位符
+        # https://portal.xxx.edu.cn, 用户以为必须自己填。这里主动填一次。
+        self._on_school_preset()
         lay.addStretch(1)
         return page
 
@@ -383,9 +396,16 @@ class SetupWizard(QDialog):
     def _build_done_page(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
         lay.addStretch(1)
+        # 标题与正文分开: 以前整页只有一段同字号文字, 结论和说明粘在一起,
+        # 看不出哪里是"已完成"、哪里是"启用了什么"
+        self._done_title = QLabel()
+        self._done_title.setObjectName("statusText")
+        self._done_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        lay.addWidget(self._done_title)
         self._done_text = QLabel()
+        self._done_text.setObjectName("statusDetail")
         self._done_text.setWordWrap(True)
         self._done_text.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         lay.addWidget(self._done_text)
@@ -537,9 +557,8 @@ class SetupWizard(QDialog):
     @staticmethod
     def _lang_label(lang: str) -> str:
         if lang == "auto":
-            return ("跟随系统 / Follow system"
-                    if i18n.detect_system_lang() == "zh-CN" else "Follow system / 跟随系统")
-        return i18n.LANG_LABELS.get(lang, lang)
+            return tr("lang.auto")
+        return i18n.lang_label(lang)
 
     def _on_lang_changed(self) -> None:
         i18n.set_lang(self._lang.currentData() or "auto")
@@ -595,8 +614,9 @@ class SetupWizard(QDialog):
         if self._chk_service.isChecked():
             enabled.append(tr("wiz.feat_service_short"))
         features = "、".join(enabled) if enabled else tr("wiz.done_none")
+        self._done_title.setText(tr("wiz.done_title", app=tr("app.name")))
         self._done_text.setText(
-            tr("wiz.done_text", app=tr("app.name"), features=features))
+            tr("wiz.done_body", app=tr("app.name"), features=features))
 
     def _wait_threads(self) -> None:
         for thread in (self._detect_thread, self._probe_thread):

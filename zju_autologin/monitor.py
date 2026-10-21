@@ -98,6 +98,7 @@ class MonitorWorker(QObject):
         self._notify_sent = False
         self._prev_state = ""
         self._opener = None
+        self._opener_cache: tuple[tuple[str, str], object] | None = None
         self._last_login_attempt = 0.0
         self._last_proactive_date = ""
         self._if_sig = ""
@@ -346,6 +347,22 @@ class MonitorWorker(QObject):
     def _client(self) -> SrunClient:
         return SrunClient(base_url=self._config.base_url, ac_id=self._config.ac_id)
 
+    def _get_opener(self):
+        """按当前代理设置取 opener; 设置没变就复用同一份。
+
+        build_opener("system") 每次调用都会重新读取 Windows 代理注册表并新建
+        一整套 handler, 而保活每分钟跑一轮 —— 复用它既省掉每分钟一次的注册表
+        往返, 也避免 handler 链里原生内存反复分配。
+        """
+        mode = self._config.proxy_mode
+        url = self._config.proxy_url
+        cached = self._opener_cache
+        if cached is not None and cached[0] == (mode, url):
+            return cached[1]
+        opener = build_opener(mode, url)
+        self._opener_cache = ((mode, url), opener)
+        return opener
+
     def _maybe_push(self, title_key: str, body: str) -> None:
         if self._notify_sent:
             return
@@ -442,7 +459,7 @@ class MonitorWorker(QObject):
         try:
             self._adjust_interval_for_power()
             self._ensure_campus_direct()
-            self._opener = build_opener(self._config.proxy_mode, self._config.proxy_url)
+            self._opener = self._get_opener()
             client = self._client()
             try:
                 status = client.get_status()
@@ -458,7 +475,18 @@ class MonitorWorker(QObject):
                     self._emit("no_campus", detail=str(first_exc))
                     return
 
-            if not status["online"]:
+            if not status["online"] and status.get("unknown"):
+                # 门户没给出在线状态(典型: speed_limit_error —— 本机在线但被限速)。
+                # 外网通就按在线处理: 以前当离线会每分钟拿真实账号重登一次,
+                # 既刷爆 events.jsonl, 又有触发门户锁号的风险。
+                if probe_internet(opener=self._opener):
+                    self._fail_count = 0
+                    self._auth_error = ""
+                    self._auth_ecode = ""
+                    self._emit("online", detail=tr("detail.portal_unknown"))
+                    return
+                # 外网也不通: 回到常规登录路径(带指数退避), 这是恢复通道
+            elif not status["online"]:
                 if not self._config.username or not self._config.refresh_password():
                     self._emit("need_config", detail=tr("detail.need_config"))
                     return

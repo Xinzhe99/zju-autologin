@@ -44,7 +44,7 @@ import urllib.parse
 import urllib.request
 
 from .i18n import tr
-from .net import bound_opener, candidate_source_ips, is_fake_ip
+from .net import bound_opener, candidate_source_ips, default_ssl_context, is_fake_ip
 
 __all__ = [
     "SrunClient",
@@ -93,6 +93,30 @@ def _safe_localtime(ts: int) -> str:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
     except (OverflowError, OSError, ValueError):
         return ""
+
+
+def _safe_any_time(value) -> int:
+    """门户时间字段→纪元秒。新版在线设备接口给 "2026-10-20 13:45:01" 字符串,
+    老版给纪元秒; 解析失败返回 0, 调用方按"未知"处理而不是显示 1970。"""
+    if isinstance(value, (int, float)):
+        return _safe_int(value)
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y%m%d%H%M%S"):
+        try:
+            return int(time.mktime(time.strptime(text, fmt)))
+        except ValueError:
+            continue
+    return _safe_int(text)
+
+
+def _device_list_ok(data: dict) -> bool:
+    """在线设备接口是否成功。兼容 {"error":"ok"} 与 {"code":0,"message":"Success"}。"""
+    if str(data.get("error", "")) == "ok":
+        return True
+    code = data.get("code")
+    return code == 0 or code == "0"
 
 
 def _login_outcome(username: str, ip: str, resp: dict) -> dict:
@@ -537,9 +561,7 @@ class SrunClient:
     def _request_pinned(self, url: str, host: str, ips: list[str], headers: dict,
                         source_ip: str | None) -> str:
         """把 TCP 钉到给定 IP(证书仍按原主机名校验); source_ip 时绑定源地址。"""
-        import ssl
-
-        ctx = ssl.create_default_context()
+        ctx = default_ssl_context()
         parts = urllib.parse.urlsplit(url)
         port = parts.port
         headers = dict(headers, Host=host if port is None else f"{host}:{port}")
@@ -674,8 +696,20 @@ class SrunClient:
 
     @staticmethod
     def _offline_status(raw: str = "") -> dict:
-        return {"portal_ok": True, "online": False, "username": "", "ip": "",
+        return {"portal_ok": True, "online": False, "unknown": False, "username": "", "ip": "",
                 "login_time": "", "billing": "", "all_bytes": 0, "raw": raw}
+
+    @staticmethod
+    def _unknown_status(raw: str = "", error: str = "") -> dict:
+        """门户没给出在线状态（返回了没见过的错误码/坏包）。
+
+        与"明确的未认证"必须区分开: 把它当离线会让保活每分钟重登一次真实的
+        账号 —— ZJU 门户在限速等状态下 rad_user_info 返回 speed_limit_error,
+        此时机器其实在线, 登录只会拿回 ip_already_online_error。
+        """
+        return {"portal_ok": True, "online": False, "unknown": True, "portal_error": error,
+                "username": "", "ip": "", "login_time": "", "billing": "", "all_bytes": 0,
+                "raw": raw}
 
     def get_status(self) -> dict:
         """查询门户在线状态（富形态：含套餐/累计流量；自动回退纯文本形态）。
@@ -688,6 +722,7 @@ class SrunClient:
         body = self._get("/cgi-bin/rad_user_info",
                          {"callback": "zjulogin_status"}, deadline=deadline).strip()
         latency = int((time.perf_counter() - t0) * 1000)
+        unknown_error = ""
         if body.endswith(")") and "(" in body:
             try:
                 data = json.loads(body[body.find("(") + 1: body.rfind(")")])
@@ -711,8 +746,13 @@ class SrunClient:
                         "latency_ms": latency,
                         "raw": body,
                     }
-                if data.get("error") in ("not_online_error", "login_error") or                         "not_online" in str(data.get("error_msg", "")):
+                err = str(data.get("error", "") or "")
+                if err in ("not_online_error", "login_error") or \
+                        "not_online" in str(data.get("error_msg", "")):
                     return self._offline_status(body)
+                # 其它错误码(典型: speed_limit_error —— 机器在线但被限速)不是
+                # "未认证"。当离线处理会让保活每分钟对真实账号重登一次, 必须单列。
+                unknown_error = err or str(data.get("error_msg", "") or "unknown")
 
         # 2) 纯文本形态：逗号分隔（第 1 列用户名、第 2 列上线时间戳、第 9 列 IP）
         body = self._get("/cgi-bin/rad_user_info", {}, deadline=deadline).strip()
@@ -720,11 +760,13 @@ class SrunClient:
             return self._offline_status(body)
         fields = body.split(",")
         if len(fields) < 10:
-            return self._offline_status(body)
-        # 字段形状校验: 用户名非空且 IP 列为合法 IPv4, 否则按垃圾页(未在线)处理
+            # 坏包/网关错误页不等于"未认证"。unknown 让调用方保守处理(不重登),
+            # 而不是每分钟拿真实账号去 bind 一次。
+            return self._unknown_status(body, unknown_error or body[:60])
+        # 字段形状校验: 用户名非空且 IP 列为合法 IPv4, 否则按坏包处理
         if not fields[_IDX_USERNAME].strip() or not re.fullmatch(
                 r"\d{1,3}(?:\.\d{1,3}){3}", fields[_IDX_IP].strip()):
-            return self._offline_status(body)
+            return self._unknown_status(body, unknown_error or body[:60])
         login_ts = _safe_int(fields[_IDX_LOGIN_TIME])
         return {
             "portal_ok": True,
@@ -932,6 +974,11 @@ class SrunClient:
         """获取账号的在线设备列表（用于 E2620 设备数超限时自助踢号）。
 
         门户接口使用密码的普通 MD5 作为凭据（与 portal 登录页一致）。
+
+        注意响应有两套形状: 新版是 {"code":0,"message":"Success","data":[...]},
+        老版/其它部署是 {"error":"ok","data":[...]}。以前只认后者, 新部署上就
+        永远返回空列表 —— 设备超限自助踢号与设备列表窗口一起静默失效。
+        add_time 新版是 "2026-10-20 13:45:01" 字符串, 老版是纪元秒, 统一转纪元秒。
         """
         user = (username + domain).strip()
         pwd_md5 = hashlib.md5(password.encode("utf-8")).hexdigest()
@@ -944,7 +991,7 @@ class SrunClient:
             data = _parse_jsonp(body)
         except SrunError:
             return []
-        if str(data.get("error", "")) != "ok":
+        if not _device_list_ok(data):
             return []
         items = data.get("data") or []
         return [
@@ -953,7 +1000,7 @@ class SrunClient:
                 "user_name": str(it.get("user_name") or ""),
                 "os_name": str(it.get("os_name") or ""),
                 "client_type": str(it.get("client_type") or ""),
-                "add_time": _safe_int(it.get("add_time")),
+                "add_time": _safe_any_time(it.get("add_time")),
             }
             for it in items if isinstance(it, dict)
         ]

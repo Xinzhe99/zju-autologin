@@ -38,7 +38,7 @@ Download von [Releases](https://github.com/Xinzhe99/zju-autologin/releases/lates
 
 - macOS ist unsigniert: beim ersten Start Rechtsklick → „Öffnen“
 - Updates werden automatisch erkannt und mit einem Klick installiert
-- Oberfläche auf Chinesisch / Englisch (folgt der Systemsprache)
+- Oberfläche in 7 Sprachen: Chinesisch / Englisch / Japanisch / Koreanisch / Deutsch / Französisch / Spanisch (folgt der Systemsprache oder manuell wählbar)
 
 ## Schnellstart
 

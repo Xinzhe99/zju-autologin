@@ -50,7 +50,7 @@ def system_prefers_dark() -> bool:
 
 _LIGHT = """
 * {
-    font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Yu Gothic UI", "Meiryo UI", "Malgun Gothic", "Noto Sans CJK JP", "Noto Sans CJK KR", sans-serif;
     font-size: 13px;
     color: #0d0d0d;
 }
@@ -237,7 +237,7 @@ QHeaderView::section {
 
 _DARK = """
 * {
-    font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Yu Gothic UI", "Meiryo UI", "Malgun Gothic", "Noto Sans CJK JP", "Noto Sans CJK KR", sans-serif;
     font-size: 13px;
     color: #ececec;
 }

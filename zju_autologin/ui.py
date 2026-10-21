@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -180,6 +181,23 @@ def _fmt_bytes(num: int) -> str:
     return f"{value:.2f} TB"
 
 
+# 深澜在线设备接口的 client_type: 1=PC, 2=移动, 其它值原样显示
+_CLIENT_TYPE_LABELS = {"1": "PC", "2": "移动", "3": "其他"}
+
+
+def _client_type_label(raw) -> str:
+    """把设备列表里的 client_type 数字翻译成可读类型。
+
+    以前直接把 "1"/"2" 显示在「类型」列, 用户看不懂。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    en = i18n.current_lang() == "en-US"
+    labels = {"1": "PC", "2": "Mobile", "3": "Other"} if en else _CLIENT_TYPE_LABELS
+    return labels.get(text, text)
+
+
 class _FnThread(QThread):
     """在后台线程执行 fn()，结果经信号回传到 UI 线程。"""
 
@@ -325,10 +343,16 @@ class DevicesDialog(QDialog):
             tr("devices.col_ip"), tr("devices.col_user"), tr("devices.col_os"),
             tr("devices.col_client"), tr("devices.col_since"),
         ])
-        self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setColumnWidth(0, 130)
-        self._table.setColumnWidth(1, 110)
-        self._table.setColumnWidth(2, 110)
+        header = self._table.horizontalHeader()
+        # IP 列要放得下 "10.92.107.70 （本机）"; 后两列按内容自适应,
+        # 固定像素宽在中文/英文下都会截断
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -365,7 +389,7 @@ class DevicesDialog(QDialog):
     # ------------------------------------------------------------------
 
     def reload(self) -> None:
-        self._status.setText("…")
+        self._set_status("…")
         self._btn_kick.setEnabled(False)
         self._reload_gen = getattr(self, "_reload_gen", 0) + 1  # 代计数: 丢弃过期响应
         cfg = self._config
@@ -384,11 +408,11 @@ class DevicesDialog(QDialog):
         if getattr(self, "_reload_gen", 1) != getattr(self, "_apply_gen", 0):
             return  # 过期响应(期间又点过刷新), 丢弃防覆盖新结果
         if isinstance(devices, Exception):
-            self._status.setText(tr("devices.load_fail"))
+            self._set_status(tr("devices.load_fail"))
             self._table.setRowCount(0)
             return
         if not devices:
-            self._status.setText(tr("devices.empty"))
+            self._set_status(tr("devices.empty"))
             self._table.setRowCount(0)
             return
         self._devices = list(devices)
@@ -396,15 +420,25 @@ class DevicesDialog(QDialog):
         for row, item in enumerate(self._devices):
             is_local = bool(self._current_ip) and item.get("ip") == self._current_ip
             since = time.strftime("%m-%d %H:%M", time.localtime(item.get("add_time") or 0))
-            ip_text = (item.get("ip", "") + (" " + tr("devices.this_machine")
-                                             if is_local else ""))
+            # 本机标记放账号列旁边会挤爆 IP 列(A "（本机）" 后被截成 "(本…"),
+            # 这里让 IP 列只放地址, 由选中态/提示说明本机
+            ip_text = item.get("ip", "")
+            if is_local:
+                ip_text += " " + tr("devices.this_machine")
             for col, text in enumerate((
                 ip_text, item.get("user_name", ""), item.get("os_name", ""),
-                item.get("client_type", ""), since,
+                _client_type_label(item.get("client_type", "")), since,
             )):
                 self._table.setItem(row, col, QTableWidgetItem(text))
-        self._status.setText("")
+
+        self._set_status("")
         self._btn_kick.setEnabled(True)
+
+
+    def _set_status(self, text: str) -> None:
+        """设置提示行; 空文本时整行隐藏(否则零宽标签仍会绘制出 "…")。"""
+        self._status.setText(text)
+        self._status.setVisible(bool(text))
 
     def _kick(self) -> None:
         row = self._table.currentRow()
@@ -413,7 +447,7 @@ class DevicesDialog(QDialog):
         device = self._devices[row]
         ip = device.get("ip", "")
         if self._current_ip and ip == self._current_ip:
-            self._status.setText(tr("devices.cant_kick_self"))
+            self._set_status(tr("devices.cant_kick_self"))
             return
         answer = QMessageBox.question(
             self, tr("devices.confirm_title"), tr("devices.confirm_kick", ip=ip),
@@ -435,7 +469,7 @@ class DevicesDialog(QDialog):
 
     def _kick_done(self, result) -> None:
         if isinstance(result, Exception):
-            self._status.setText(tr("update.failed", msg=result))
+            self._set_status(tr("update.failed", msg=result))
             self._btn_kick.setEnabled(True)
             return
         ok = bool(result and result[0])
@@ -443,7 +477,7 @@ class DevicesDialog(QDialog):
             self._kicked_ip = self._pending_ip
             self.accept()
         else:
-            self._status.setText(tr("update.failed", msg=result[1] if result else ""))
+            self._set_status(tr("update.failed", msg=result[1] if result else ""))
             self._btn_kick.setEnabled(True)
 
 
@@ -545,9 +579,13 @@ class StatsDialog(QDialog):
         lay.addWidget(drops_title)
         table = QTableWidget(0, 3)
         table.setHorizontalHeaderLabels(["#", tr("stats.col_time"), tr("stats.col_event")])
-        table.horizontalHeader().setStretchLastSection(True)
-        table.setColumnWidth(0, 40)
-        table.setColumnWidth(1, 150)
+        stats_header = table.horizontalHeader()
+        stats_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        stats_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        stats_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        stats_header.setStretchLastSection(False)
+        # 行号列没有信息量(表格里已有 # 列), 留着只会白占宽度
+        table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         for e in reversed(events):
@@ -563,9 +601,13 @@ class StatsDialog(QDialog):
                 text = f"{text} · {detail}" if text else detail
             table.setItem(row, 2, QTableWidgetItem(text))
         if table.rowCount() == 0:
+            # 空态不能伪装成一条记录: 以前塞了 "-" 和"暂无事件", 看起来像
+            # 真的有一条编号为 "-" 的事件, 而且时间列被当成了内容列
             table.insertRow(0)
-            table.setItem(0, 0, QTableWidgetItem("-"))
-            table.setItem(0, 1, QTableWidgetItem(tr("stats.empty")))
+            empty = QTableWidgetItem(tr("stats.empty"))
+            empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            table.setItem(0, 0, empty)
+            table.setSpan(0, 0, 1, 3)
         lay.addWidget(table, 1)
 
 
@@ -755,7 +797,8 @@ class SettingsWindow(QDialog):
         self._spin_interval.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._spin_interval.setMinimumWidth(120)
         self._combo_lang = QComboBox()
-        for lang in ("auto", "zh-CN", "en-US"):
+        self._combo_lang.addItem(self._lang_label("auto"), "auto")
+        for lang in i18n.supported_langs():
             self._combo_lang.addItem(self._lang_label(lang), lang)
         # 主题：分段胶囊（点击即时生效）
         seg_host = QFrame()
@@ -1121,9 +1164,8 @@ class SettingsWindow(QDialog):
     @staticmethod
     def _lang_label(lang: str) -> str:
         if lang == "auto":
-            return ("跟随系统 / Follow system"
-                    if i18n.detect_system_lang() == "zh-CN" else "Follow system / 跟随系统")
-        return i18n.LANG_LABELS.get(lang, lang)
+            return tr("lang.auto")
+        return i18n.lang_label(lang)
 
     @staticmethod
     def _provider_label(pid: str) -> str:
@@ -1293,7 +1335,7 @@ class SettingsWindow(QDialog):
         self._chk_auto.setChecked(bool(cfg.auto_login))
         self._chk_tray.setChecked(bool(cfg.minimize_to_tray))
         self._chk_updates.setChecked(bool(cfg.check_updates))
-        lang = cfg.language if cfg.language in ("auto", "zh-CN", "en-US") else "auto"
+        lang = cfg.language if cfg.language in ("auto", *i18n.supported_langs()) else "auto"
         self._combo_lang.setCurrentIndex(max(0, self._combo_lang.findData(lang)))
         self._set_seg_theme(cfg.theme if cfg.theme in ("auto", "light", "dark") else "auto")
         self._chk_boot.setChecked(autostart.is_enabled())
@@ -1654,11 +1696,14 @@ class SettingsWindow(QDialog):
             QTimer.singleShot(3500, lambda: self._save_hint.setText(""))
             return
         # 敏感字段(base_url/代理/通知/心跳)变更需用户确认: 恶意配置文件可把
-        # 编码后的凭据重定向到任意主机
+        # 编码后的凭据重定向到任意主机。
+        # 只比较「文件里真的写了」的键: 导出功能刻意剔除了这些敏感项, 用
+        # payload.get(k) 直接比会把缺失当成"改成了 None", 于是导入自己导出的
+        # 备份也会弹出安全确认 —— 用户点几次之后就会习惯性同意。
         sensitive = [k for k in ("base_url", "ac_id", "proxy_mode", "proxy_url",
                                  "notify_provider", "notify_key", "heartbeat_url",
                                  "smtp_host", "smtp_user", "smtp_to")
-                     if payload.get(k) != self._config.data.get(k)]
+                     if k in payload and payload[k] != self._config.data.get(k)]
         if sensitive:
             answer = QMessageBox.question(
                 self, tr("btn.import_cfg"),
@@ -2130,6 +2175,9 @@ class MainWindow(QMainWindow):
 
         self._tip = QLabel()
         self._tip.setObjectName("statusDetail")
+        # 必须换行: 德/韩/法文的提示比中文长得多, 不换行会被窗口右边界直接裁掉
+        # (实测韩语在 640px 宽的主窗里断在"右击托盘…"中间)
+        self._tip.setWordWrap(True)
         root.addWidget(self._tip)
 
     def _build_tray(self) -> None:

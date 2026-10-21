@@ -76,7 +76,7 @@ Recommended for remote access: enable **System-level keep-alive** in Settings (a
 - **DNS-failure fallback** — connects via cached portal IP when campus DNS is down or hijacked by Clash fake-ip; **VPN bypass** (direct + NIC binding + optional admin route)
 - **Self-update** — pre-downloaded, SHA256-verified, in-place swap and restart (no installer needed)
 - **Tiny headless footprint** — 8 MB CLI binary for Windows/servers; web config page (`zju-autologin serve`, localhost only) for NAS/Raspberry Pi
-- **i18n** — 简体中文 / English, follows the system language; dark mode follows the system
+- **i18n** — 7 UI languages: 简体中文 / English / 日本語 / 한국어 / Deutsch / Français / Español, follows the system language or pick one manually; a new language is just one dictionary file in `zju_autologin/i18n/`; dark mode follows the system
 - CLI: `check | login | watch | enable | disable | status | diagnose | serve`
 
 The full protocol spec (challenge / XXTEA / custom Base64 / SHA1), reusable in any language: **[docs/srun-protocol.md](docs/srun-protocol.md)**. Community-tested school list: [portals.json](zju_autologin/portals.json) — one-line PR adds your university (unofficial support).

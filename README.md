@@ -66,7 +66,7 @@ Clash / v2ray 等开启系统代理或 TUN 后，统一认证、校内论坛（c
 https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/版本号/文件名
 ```
 
-或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.29.2/ZJUAutoLogin-1.29.2-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.29.2/ZJUAutoLogin-1.29.2-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.29.2/ZJUAutoLogin-1.29.2-macos.dmg)
+或直接复制改好的最新版直链（安装包/便携包文件名带版本号，`latest/download/` 后必须写完整文件名，否则 404）：[Windows 安装包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.30.0/ZJUAutoLogin-1.30.0-windows-setup.exe) · [Windows 便携版](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.30.0/ZJUAutoLogin-1.30.0-windows-portable.zip) · [Windows CLI 瘦身包](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/latest/download/zju-autologin-windows-cli.exe) · [macOS dmg](https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download/v1.30.0/ZJUAutoLogin-1.30.0-macos.dmg)
 
 > 代理前缀仅加速下载，不改内容；介意可对照 [官方 Releases](https://github.com/Xinzhe99/zju-autologin/releases/latest) 校验。
 
@@ -107,7 +107,7 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 | 掉线通知 | 设置 → 掉线通知 | 自动重登失败时（如密码被改）手机收到提醒 |
 | 心跳 URL | 设置 → 高级选项 | 机器彻底失联时由外部服务报警 |
 
-托盘图标即状态（绿=在线 / 红=掉线 / 蓝=检测中 / 灰=无校园网），悬停看 IP 与流量，右键有快捷操作。界面支持中/英，跟随系统语言。
+托盘图标即状态（绿=在线 / 红=掉线 / 蓝=检测中 / 灰=无校园网），悬停看 IP 与流量，右键有快捷操作。界面支持**中 / 英 / 日 / 韩 / 德 / 法 / 西** 7 种语言，可跟随系统或手动切换；新增语言只需在 `zju_autologin/i18n/` 放一个词典文件。
 
 ## 功能
 
@@ -143,7 +143,7 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 - ✅ **月度网络报告**：每月推送上月掉线统计
 
 **其他**
-- 多语言（中/英，跟随系统）· 深色模式 · 流量统计与月度提醒 · 定时主动重登 · 配置导出/导入 · 电池智能降频 · 一键复制诊断 · 托盘快速开关 · 打开登录页
+- 多语言（中/英/日/韩/德/法/西，跟随系统或手动切换）· 深色模式 · 流量统计与月度提醒 · 定时主动重登 · 配置导出/导入 · 电池智能降频 · 一键复制诊断 · 托盘快速开关 · 打开登录页
 
 ## Linux / 嵌入式设备（一行命令启用）
 
@@ -301,14 +301,14 @@ zju-autologin/
 │   ├── portals.py + portals.json  # 社区共建高校预设库（向导下拉）
 │   ├── config.py              # 配置持久化（跨平台路径）+ 凭据管理器
 │   ├── updates.py             # GitHub Releases 更新检查
-│   ├── i18n.py + i18n/        # 多语言（zh-CN / en-US）
+│   ├── i18n.py + i18n/        # 多语言（zh-CN/en-US/ja-JP/ko-KR/de-DE/fr-FR/es-ES，目录自动发现）
 │   ├── power.py               # 电源状态（电池智能降频）
 │   ├── crash.py / runtime.py  # 崩溃捕获 / 单实例锁共享
 │   ├── ui.py                  # PyQt6 界面（紧凑主窗 + 独立设置/日志窗 + 托盘）
 │   └── theme.py               # 浅/深双主题（自绘控件图标）
 ├── .github/workflows/release.yml  # 打 tag 自动构建 10 资产（Win/mac/Linux×3/musl/PyPI）
 ├── .github/workflows/test.yml     # push/PR 跑 pytest（Windows + macOS matrix）
-├── tests/                         # 147 项测试（含 conftest keyring 隔离）
+├── tests/                         # 272 项测试（含 conftest keyring 隔离）
 ├── docs/                          # srun-protocol.md 协议规范 / notifications.md 推送指南
 ├── README.*.md                    # 7 语言 readme（en/ja/ko/es/fr/de）
 ├── CONTRIBUTING.md                # 贡献指南（含新语言/新学校接入步骤）
