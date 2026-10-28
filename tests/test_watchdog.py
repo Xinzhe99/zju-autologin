@@ -11,12 +11,15 @@ PowerShell 不认 `\\"`, 命令在解析阶段就整个失败(退出码 -1、零
 2. /TR 是短引用(指向落盘的 .ps1), 且不超长
 3. 脚本文件真的写出来了, 且行为(双条件判断)正确
 4. 生成的 PowerShell 语法有效(Windows 上真跑一遍解析器)
+5. 任务动作是 GUI 子系统的 wscript, VBS 用 SW_HIDE 拉起 PowerShell ——
+   v1.30.1 之前直接注册 powershell.exe, conhost 窗口会每 5 分钟闪一下
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -54,13 +57,25 @@ def test_install_uses_short_task_action_and_argv(wd_env, monkeypatch):
     argv = fake.calls[-1]
     assert argv[0] == "schtasks"                    # 直调, 不经过 PowerShell
     action = argv[argv.index("/TR") + 1]
-    # 动作是短引用(指向脚本文件), 既躲开引号解析地狱也满足 /TR 长度上限
-    assert action.startswith("powershell ")
-    assert str(W.script_path()) in action
+    # GUI 子系统的 wscript 不会创建控制台; 任务动作仍是短引用, 满足 /TR 上限
+    assert action.startswith("wscript.exe ")
+    assert str(W.launcher_path()) in action
     assert '\\"' not in action                      # 不能出现 \" 这类转义
-    assert action.count('"') == 2                   # 只有包裹脚本路径的一对引号
+    assert action.count('"') == 2                   # 只有包裹启动器路径的一对引号
     assert len(action) <= W.MAX_TASK_ACTION
     assert "/F" in argv and "/SC" in argv and "5" in argv
+
+
+def test_install_writes_hidden_launcher(wd_env, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _FakeRun())
+    assert W.install() is True
+    launcher = W.launcher_path()
+    assert launcher.is_file()
+    assert launcher.read_bytes()[:2] == b"\xff\xfe"  # WSH 各版本都认 UTF-16LE BOM
+    text = launcher.read_text(encoding="utf-16")
+    assert 'CreateObject("WScript.Shell").Run' in text
+    assert f'""{W.script_path()}""' in text          # VBS 内双引号转义
+    assert ", 0, False" in text                      # 0=SW_HIDE, 不等待
 
 
 def test_install_writes_runnable_script(wd_env, monkeypatch):
@@ -92,12 +107,21 @@ def test_uninstall_returns_false_when_task_delete_fails(wd_env, monkeypatch):
     assert W.uninstall() is False           # 以前无论成败都返回 True
 
 
+def test_uninstall_removes_generated_files(wd_env, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _FakeRun())
+    assert W.install() is True
+    assert W.script_path().is_file() and W.launcher_path().is_file()
+    assert W.uninstall() is True
+    assert not W.script_path().exists()
+    assert not W.launcher_path().exists()
+
+
 def test_refresh_without_task_only_writes_script(wd_env, monkeypatch):
     """存量机器没任务: 只补脚本, 不擅自注册(是否该装由调用方判断)。"""
     fake = _FakeRun(returncode=1)           # schtasks /Query 未找到
     monkeypatch.setattr(subprocess, "run", fake)
     assert W.refresh_if_installed() is False
-    assert W.script_path().is_file()
+    assert W.script_path().is_file() and W.launcher_path().is_file()
     assert all("/Create" not in call for call in fake.calls)
 
 
@@ -112,3 +136,23 @@ def test_generated_script_is_valid_powershell(wd_env, monkeypatch):
          "-File", str(W.script_path())],
         capture_output=True, text=True, timeout=90)
     assert r.returncode == 0, f"脚本执行失败: {r.stderr[:300]}"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要 Windows Script Host")
+def test_generated_launcher_really_runs_powershell(tmp_path):
+    """UTF-16 VBS + WScript.Shell.Run 真能拉起 PowerShell, 不是只写对文本。"""
+    marker = tmp_path / "probe.ok"
+    probe = tmp_path / "probe.ps1"
+    probe.write_text(f"Set-Content -Path {W._ps_str(marker)} -Value ok\n",
+                     encoding="utf-8-sig")
+    launcher = tmp_path / "probe.vbs"
+    launcher.write_text(W._launcher_script(probe), encoding="utf-16")
+
+    r = subprocess.run(["cscript", "//nologo", str(launcher)],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"启动器解析失败: {r.stderr[:300]}"
+
+    deadline = time.monotonic() + 15
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert marker.is_file(), "wscript 没有把 PowerShell 拉起来"

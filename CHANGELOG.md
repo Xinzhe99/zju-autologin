@@ -2,6 +2,17 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [1.30.1] - 2026-10-28
+
+### 修复
+- **GUI 看护任务每 5 分钟闪一次黑色控制台窗口**：任务动作是
+  `powershell -WindowStyle Hidden`，但负责承载控制台的 conhost 窗口在
+  PowerShell 解析到该参数之前就已创建，所以每轮都会闪一下。现在任务改由
+  GUI 子系统的 `wscript.exe` 运行 `<配置目录>/watchdog.vbs`，启动器再用
+  `WScript.Shell.Run(..., 0, False)`（`SW_HIDE`）拉起 PowerShell——从
+  `CreateProcess` 起就没有可见窗口。存量机器下次启动 GUI 时会自动重建
+  任务，无需手动改计划任务。
+
 ## [1.30.0] - 2026-10-22
 
 ### 新增
