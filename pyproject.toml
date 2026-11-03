@@ -41,3 +41,10 @@ packages = ["zju_autologin"]
 
 [tool.setuptools.package-data]
 zju_autologin = ["i18n/*.json", "portals.json", "webui_stat.js", "resources/*"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# 只拦截确定性问题: 未使用/未定义的名称与语法错误; 风格问题不阻塞贡献
+select = ["F", "E9"]

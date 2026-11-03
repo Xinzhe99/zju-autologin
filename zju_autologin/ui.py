@@ -750,7 +750,6 @@ class SettingsWindow(QDialog):
 
         # ================================================================ 账号
         _card, _v, grid = self._section(root, "settings.sec_account")
-        self._settings_title = _v.itemAt(0).widget()  # 兼容旧引用: 首节标题
         self._edit_user = QLineEdit()
         self._edit_domain = QLineEdit()
         pwd_host = QFrame()
@@ -855,7 +854,7 @@ class SettingsWindow(QDialog):
             self._hb_timer.start()
 
         # ======================================================= 代理与校内直连
-        self._net_card, _v, grid = self._section(root, "settings.sec_network")
+        _card, _v, grid = self._section(root, "settings.sec_network")
         self._combo_proxy = QComboBox()
         for pid in ("system", "direct", "custom"):
             self._combo_proxy.addItem(tr(f"net.proxy.{pid}"), pid)
@@ -864,7 +863,7 @@ class SettingsWindow(QDialog):
         self._edit_proxy_url.setPlaceholderText("http://127.0.0.1:7890")
         self._edit_proxy_url.setEnabled(False)
         self._row(grid, "net.proxy", self._combo_proxy)
-        self._lbl_proxy_url = self._row(grid, "net.proxy.url", self._edit_proxy_url)
+        self._row(grid, "net.proxy.url", self._edit_proxy_url)
         self._proxy_hint = QLabel()
         self._proxy_hint.setObjectName("statusDetail")
         self._proxy_hint.setWordWrap(True)
@@ -907,7 +906,6 @@ class SettingsWindow(QDialog):
 
         # ================================================================ 通知
         _card, _v, grid = self._section(root, "settings.notify")
-        self._notify_title = _v.itemAt(0).widget()
         self._notify_hint = QLabel()
         self._notify_hint.setObjectName("statusDetail")
         self._notify_hint.setWordWrap(True)
@@ -934,7 +932,7 @@ class SettingsWindow(QDialog):
         num_row.addWidget(self._lbl_traffic)
         num_row.addWidget(self._spin_traffic)
         num_row.addStretch(1)
-        self._lbl_threshold = self._row(grid, "notify.threshold", num_row)
+        self._row(grid, "notify.threshold", num_row)
         self._chk_recovery = QCheckBox()
         self._chk_monthly = QCheckBox()
         chk_row = QHBoxLayout()
@@ -1031,7 +1029,6 @@ class SettingsWindow(QDialog):
 
         # DDNS 区块
         _card, _v, grid = self._section(adv_lay, "settings.ddns")
-        self._ddns_title = _v.itemAt(0).widget()
         self._combo_ddns = QComboBox()
         for pid in ("off", "duckdns", "cloudflare", "aliyun"):
             self._combo_ddns.addItem(tr(f"ddns.{pid}"), pid)
@@ -1048,7 +1045,6 @@ class SettingsWindow(QDialog):
 
         # 状态钩子
         _card, _v, grid = self._section(adv_lay, "settings.hooks")
-        self._hooks_title = _v.itemAt(0).widget()
         self._edit_hook_on = QLineEdit()
         self._edit_hook_off = QLineEdit()
         self._hook_labels = []
@@ -2455,7 +2451,6 @@ class MainWindow(QMainWindow):
     def _predownload_done(self, path: str) -> None:
         self._downloader = None
         self._update_pkg = path
-        self._pkg_verified = True  # 下载线程已做 SHA256 校验
         # 预下载完成：横幅提示即点即更
         if self._update_banner.isVisible():
             self._set_banner("ready")

@@ -41,7 +41,7 @@ Grab a package from [Releases](https://github.com/Xinzhe99/zju-autologin/release
 | Platform | Installer | Portable |
 | --- | --- | --- |
 | Windows | `ZJUAutoLogin-*-windows-setup.exe` | `ZJUAutoLogin-*-windows-portable.zip` |
-| Windows, keep-alive only (8 MB) | — | `zju-autologin-windows-cli.exe` |
+| Windows, keep-alive only (about 9 MB) | — | `zju-autologin-windows-cli.exe` |
 | macOS | `ZJUAutoLogin-*-macos.dmg` | `ZJUAutoLogin-*-macos-portable.zip` |
 | Linux / router | — | `zju-autologin-linux-x86_64` / `-aarch64` / `-musl` |
 
@@ -75,7 +75,7 @@ Recommended for remote access: enable **System-level keep-alive** in Settings (a
 - **Campus direct with Clash on** (Windows, on by default) — keeps campus domains and `10.*` in the system proxy bypass list, re-applied within 3 s whenever Clash rewrites it; live status on the main window
 - **DNS-failure fallback** — connects via cached portal IP when campus DNS is down or hijacked by Clash fake-ip; **VPN bypass** (direct + NIC binding + optional admin route)
 - **Self-update** — pre-downloaded, SHA256-verified, in-place swap and restart (no installer needed)
-- **Tiny headless footprint** — 8 MB CLI binary for Windows/servers; web config page (`zju-autologin serve`, localhost only) for NAS/Raspberry Pi
+- **Tiny headless footprint** — 9 MB CLI binary for Windows/servers; web config page (`zju-autologin serve`, localhost only) for NAS/Raspberry Pi
 - **i18n** — 7 UI languages: 简体中文 / English / 日本語 / 한국어 / Deutsch / Français / Español, follows the system language or pick one manually; a new language is just one dictionary file in `zju_autologin/i18n/`; dark mode follows the system
 - CLI: `check | login | watch | enable | disable | status | diagnose | serve`
 

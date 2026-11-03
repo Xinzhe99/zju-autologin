@@ -19,7 +19,6 @@ import threading
 import time
 from pathlib import Path
 
-APP_ID = "ZJUAutoLogin"
 KEYRING_SERVICE = "ZJUAutoLogin"
 
 _DEFAULTS = {

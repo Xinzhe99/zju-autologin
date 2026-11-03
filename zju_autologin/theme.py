@@ -1,6 +1,6 @@
 """应用 QSS 主题：Codex 风格设计语言（近黑白灰、细边框、扁平克制），浅/深双主题。
 
-- 控件箭头/勾选使用自绘图标（resources/icon_*.png），与整体风格一致
+- 控件箭头使用自绘图标（resources/icon_chevron*.png），与整体风格一致
 - 主按钮：浅色主题黑底白字，深色主题白底黑字（OpenAI 风格）
 - 通过 __ICON_DIR__ 占位符在运行时注入图标目录
 """
@@ -10,10 +10,12 @@ from __future__ import annotations
 import os
 import sys
 
+from .config import resource_path
+
 
 def _icon_dir() -> str:
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    path = os.path.join(base, "resources")
+    # 与图标加载共用同一套查找顺序: 包内 resources → PyInstaller 解包目录 → 仓库根
+    path = os.path.dirname(resource_path("icon_chevron.png"))
     return path.replace("\\", "/")
 
 

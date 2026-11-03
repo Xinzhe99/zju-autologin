@@ -13,8 +13,6 @@ import urllib.request
 
 from .net import default_ssl_context
 
-PROVIDERS = ("none", "bark", "serverchan", "wecom", "dingtalk", "feishu", "webhook", "smtp")
-
 _URL_RE = _re.compile(r"https?://\S+")
 
 

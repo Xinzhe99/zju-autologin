@@ -11,7 +11,6 @@ sys.path.insert(0, ".")
 from PyQt6.QtQml import QJSEngine
 
 from zju_autologin import srun as S
-from zju_autologin.srun import SrunClient
 
 # —— 以下 JS 为 Portal.js _encodeUserInfo 的原样摘录（仅去掉闭包外壳）——
 JS = r"""
@@ -124,7 +123,7 @@ def py_encode(info: dict, token: str) -> str:
 def main() -> int:
     from PyQt6.QtCore import QCoreApplication
 
-    app = QCoreApplication.instance() or QCoreApplication([])
+    _app = QCoreApplication.instance() or QCoreApplication([])
     engine = QJSEngine()
     ok = engine.evaluate(JS)
     if engine.hasError() or ok.isError():

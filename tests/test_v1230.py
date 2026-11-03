@@ -79,8 +79,8 @@ def test_resolve_and_cache_updates_on_success(monkeypatch):
     S._PORTAL_IP_CACHE.clear()
     fake = [("f", None, None, "", ("10.1.1.1", 443)), ("f", None, None, "", ("10.1.1.1", 443))]
     monkeypatch.setattr(S.socket, "getaddrinfo", lambda *a, **k: fake)
-    ips, alive = S._resolve_and_cache("portal.test")
-    assert ips == ["10.1.1.1"] and alive is True
+    ips, mode = S._resolve("portal.test")
+    assert ips == ["10.1.1.1"] and mode == "ok"
     assert S._PORTAL_IP_CACHE["portal.test"] == ["10.1.1.1"]
 
 
@@ -89,8 +89,8 @@ def test_dns_failure_uses_cache(monkeypatch):
     import socket as _sock
     monkeypatch.setattr(S.socket, "getaddrinfo",
                         lambda *a, **k: (_ for _ in ()).throw(_sock.gaierror("dns dead")))
-    ips, alive = S._resolve_and_cache("portal.test")
-    assert ips == ["10.2.2.2"] and alive is False
+    ips, mode = S._resolve("portal.test")
+    assert ips == ["10.2.2.2"] and mode == "down"
 
 
 def test_dns_failure_no_cache_raises(monkeypatch):
@@ -98,8 +98,8 @@ def test_dns_failure_no_cache_raises(monkeypatch):
     import socket as _sock
     monkeypatch.setattr(S.socket, "getaddrinfo",
                         lambda *a, **k: (_ for _ in ()).throw(_sock.gaierror("dns dead")))
-    ips, alive = S._resolve_and_cache("none.test")
-    assert ips == [] and alive is False
+    ips, mode = S._resolve("none.test")
+    assert ips == [] and mode == "down"
 
 
 # ===== 兼容性矩阵 =====

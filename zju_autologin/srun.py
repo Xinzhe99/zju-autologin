@@ -142,7 +142,7 @@ def _login_outcome(username: str, ip: str, resp: dict) -> dict:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """阻止自动跟随 302，用于捕获 captive portal 重定向地址。"""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+    def redirect_request(self, req, fp, code, msg, headers, _newurl):  # noqa: D102
         return None
 
 
@@ -309,12 +309,6 @@ def cached_portal_ips(base_url: str) -> list[str]:
     host = urllib.parse.urlsplit(base_url).hostname or ""
     _load_ip_cache()
     return list(_PORTAL_IP_CACHE.get(host, []))
-
-
-def _resolve_and_cache(host: str) -> tuple[list[str], bool]:
-    """兼容旧接口: 返回 (IP 列表, DNS 是否可直接使用)。"""
-    ips, mode = _resolve(host)
-    return ips, mode == "ok"
 
 
 # 门户连接策略缓存（host -> "策略|协议"）：命中后跳过全部失败尝试
@@ -778,10 +772,6 @@ class SrunClient:
             "all_bytes": 0,
             "raw": body,
         }
-
-    def get_status_detail(self) -> dict:
-        """向后兼容别名：get_status 现已自带套餐/流量字段。"""
-        return self.get_status()
 
     def get_local_ip(self) -> str:
         """探测本机在校园网的 IPv4 地址（路由到门户所在网段）。"""

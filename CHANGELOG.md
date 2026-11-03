@@ -2,6 +2,14 @@
 
 所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 
+## [Unreleased]
+
+### 清理
+- 删除未被引用的常量、兼容别名、界面控件引用、翻译键与文档截图；
+  主题图标改为统一走 `resource_path`，源码运行与 pip 安装使用同一套资源查找。
+- 打包清单（winget / Homebrew / AUR）更新到 v1.30.1 的真实版本与 SHA256。
+- CI 增加 ruff 检查（仅 F/E9：未使用/未定义名称与语法错误），README 开发说明同步。
+
 ## [1.30.1] - 2026-10-28
 
 ### 修复

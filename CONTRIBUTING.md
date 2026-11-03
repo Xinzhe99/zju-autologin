@@ -7,7 +7,7 @@
 ```bash
 git clone https://github.com/Xinzhe99/zju-autologin.git
 cd zju-autologin
-pip install -r requirements.txt pytest
+pip install -r requirements.txt pytest ruff
 python main.py          # GUI
 python cli.py check     # CLI 验证
 python -m pytest tests/ -q   # 测试
@@ -20,20 +20,21 @@ python -m pytest tests/ -q   # 测试
 - `zju_autologin/srun.py` — 深澜 Srun 门户协议（challenge / login / 状态 / 设备管理），逆向自门户前端 JS
 - `zju_autologin/monitor.py` — 后台监控线程（检测 / 自动重登 / 推送 / 心跳 / 事件记录）
 - `zju_autologin/ui.py` + `wizard.py` — PyQt6 界面与首次引导
-- `zju_autologin/i18n/` — 翻译文件（zh-CN / en-US）
+- `zju_autologin/i18n/` — 翻译文件（zh-CN / en-US / ja-JP / ko-KR / de-DE / fr-FR / es-ES，目录自动发现）
 
 ## 添加新语言
 
 1. 复制 `zju_autologin/i18n/en-US.json` 为 `{lang}.json`（如 `ja-JP.json`）
 2. 翻译全部 value（**保留 `{placeholder}` 占位符**）
-3. 在 `zju_autologin/i18n.py` 的 `SUPPORTED_LANGS` / `LANG_LABELS` 中注册
-4. 在 `zju_autologin/ui.py` 的语言下拉框和 `_provider_label` 等处补充映射
-5. 运行 `python -m pytest tests/test_i18n.py -q` 确保键集合与占位符一致
+3. 填写 `lang.native_name`（语言下拉框显示的自称；留空则显示语言码）
+4. 运行 `python -m pytest tests/test_i18n.py -q` 确保键集合与占位符一致
+
+下拉框会扫描词典目录自动列出新语言，无需改 Python 代码。
 
 ## 测试
 
 - `tests/test_srun_crypto.py` 的加密基准向量由 QJSEngine 执行门户原版 JS 生成（`tools/cross_check_js.py`），修改加密实现前请先跑一遍确认
-- 提交前请确保 `python -m pytest tests/ -q` 全绿
+- 提交前请确保 `python -m pytest tests/ -q` 全绿，且 `python -m ruff check zju_autologin tools tests` 通过
 
 ## 发布流程
 

@@ -15,8 +15,6 @@ import socket
 import ssl
 import urllib.request
 
-PROXY_MODES = ("system", "direct", "custom")
-
 # Clash/mihomo/sing-box 的 fake-ip 与 TUN 默认地址段
 FAKE_IP_POOL = ipaddress.ip_network("198.18.0.0/15")
 

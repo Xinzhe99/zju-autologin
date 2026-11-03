@@ -10,12 +10,11 @@
 """
 
 import base64
-import json
 import os
-import subprocess
 import sys
 import tempfile
 import uuid
+from pathlib import Path
 
 SVC_CFG = r"C:\ProgramData\ZJUAutoLogin\config.json"
 
@@ -38,7 +37,7 @@ def main() -> int:
         if not ok:
             print("读取失败:", detail)
             return 1
-        b64 = open(out_tmp, encoding="ascii").read().strip()
+        b64 = Path(out_tmp).read_text(encoding="ascii").strip()
         password = base64.b64decode(b64).decode("utf-8")
     finally:
         try:

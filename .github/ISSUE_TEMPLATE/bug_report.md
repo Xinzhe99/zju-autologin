@@ -30,7 +30,7 @@ body:
     id: version
     attributes:
       label: 版本
-      description: 关于对话框或 `zju-autologin version`，如 1.24.1
+      description: 关于对话框或 `zju-autologin version`，如 1.30.1
     validations:
       required: true
 

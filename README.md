@@ -73,7 +73,7 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 | 平台 | 安装版（推荐） | 便携版 |
 | --- | --- | --- |
 | Windows | `ZJUAutoLogin-*-windows-setup.exe` | `ZJUAutoLogin-*-windows-portable.zip` |
-| Windows 仅保活（8MB） | — | `zju-autologin-windows-cli.exe` |
+| Windows 仅保活（约 9MB） | — | `zju-autologin-windows-cli.exe` |
 | macOS | `ZJUAutoLogin-*-macos.dmg` | `ZJUAutoLogin-*-macos-portable.zip` |
 
 - Windows 安装包按用户安装（无需管理员权限），可选创建桌面图标与开机自启
@@ -129,7 +129,7 @@ https://gh-proxy.com/https://github.com/Xinzhe99/zju-autologin/releases/download
 
 **安装与更新**
 - ✅ **原地自更新**：预下载 + SHA256 校验 + 无感重启，无需再跑安装器
-- ✅ **多形态分发**：Windows 安装/便携/**8MB CLI 瘦身包**、macOS dmg、Linux pip/静态二进制（含 musl 路由器版）、Web 配置页（`serve`）
+- ✅ **多形态分发**：Windows 安装/便携/**约 9MB CLI 瘦身包**、macOS dmg、Linux pip/静态二进制（含 musl 路由器版）、Web 配置页（`serve`）
 - ✅ **首次引导向导**：在线时自动带出账号，只输一次密码；新装/覆盖安装必弹
 - ✅ **更新失败自动回滚**：新版本启动后 60 秒内不稳定则自动换回上一版并重新拉起
 - ✅ **一键清理系统改动**：设置页可移除代理例外、直连路由、保活/看护任务与开机自启
@@ -290,25 +290,28 @@ zju-autologin/
 │   ├── captcha.py             # 验证码输入弹窗（图片 + 换一张）
 │   ├── diag.py                # 一键网络自诊断
 │   ├── narrative.py           # 掉线叙事回放（事件时间线人话化）
-│   ├── webui.py               # 无头设备 Web 配置页（serve，仅 127.0.0.1）
+│   ├── webui.py + webui_stat.js  # 无头设备 Web 配置页（serve，仅 127.0.0.1）
 │   ├── watchdog.py            # GUI 崩溃看护（gui.alive 标记 + 计划任务拉起）
-│   ├── notify.py              # 掉线推送（Bark/Server酱/企业微信/钉钉/飞书/SMTP）
+│   ├── notify.py              # 掉线推送（Bark/Server酱/企业微信/钉钉/飞书/Webhook/SMTP）
 │   ├── net.py                 # 网络出口（代理路由/网卡绑定/外网探测）
 │   ├── routes.py              # 门户直连路由（绕过 TUN/VPN，Windows）
 │   ├── campus.py              # 校内直连（Clash 系统代理例外，Windows）
+│   ├── ddns.py                # 动态域名（DuckDNS/Cloudflare/阿里云）
 │   ├── service.py             # 系统级保活（Win SYSTEM 任务/mac LaunchDaemon/Linux systemd）
 │   ├── autostart.py           # 开机自启（注册表/LaunchAgent/XDG autostart）
+│   ├── reset.py               # 一键清理代理例外/直连路由/保活与看护任务
 │   ├── portals.py + portals.json  # 社区共建高校预设库（向导下拉）
 │   ├── config.py              # 配置持久化（跨平台路径）+ 凭据管理器
 │   ├── updates.py             # GitHub Releases 更新检查
+│   ├── update_health.py       # 原地更新的启动健康计数与回滚
 │   ├── i18n.py + i18n/        # 多语言（zh-CN/en-US/ja-JP/ko-KR/de-DE/fr-FR/es-ES，目录自动发现）
 │   ├── power.py               # 电源状态（电池智能降频）
 │   ├── crash.py / runtime.py  # 崩溃捕获 / 单实例锁共享
 │   ├── ui.py                  # PyQt6 界面（紧凑主窗 + 独立设置/日志窗 + 托盘）
 │   └── theme.py               # 浅/深双主题（自绘控件图标）
 ├── .github/workflows/release.yml  # 打 tag 自动构建 10 资产（Win/mac/Linux×3/musl/PyPI）
-├── .github/workflows/test.yml     # push/PR 跑 pytest（Windows + macOS matrix）
-├── tests/                         # 272 项测试（含 conftest keyring 隔离）
+├── .github/workflows/test.yml     # push/PR 跑 pytest（Windows/macOS/Linux 三平台）
+├── tests/                         # pytest 测试套件（含 conftest keyring 隔离）
 ├── docs/                          # srun-protocol.md 协议规范 / notifications.md 推送指南
 ├── README.*.md                    # 7 语言 readme（en/ja/ko/es/fr/de）
 ├── CONTRIBUTING.md                # 贡献指南（含新语言/新学校接入步骤）
@@ -325,10 +328,10 @@ zju-autologin/
 ```bash
 git clone https://github.com/Xinzhe99/zju-autologin.git
 cd zju-autologin
-pip install -e ".[dev]"      # 或: pip install -r requirements.txt pytest
+pip install -e ".[dev]"      # 或: pip install -r requirements.txt pytest ruff
 python main.py               # 运行 GUI
 python cli.py check          # 运行 CLI
-python -m pytest tests/ -q   # 测试（147 项）
+python -m pytest tests/ -q   # 测试
 build_exe.bat                # 打包（产物: dist/ZJUAutoLogin.exe）
 ```
 

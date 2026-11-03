@@ -29,11 +29,7 @@ bbox = blue.getbbox()
 blue_tight = blue.crop(bbox)
 blue_tight.save(os.path.join(RES, "zju_logo_blue.png"))
 
-# ---- 2. 找出左侧圆形印章的列范围（alpha 投影上的第一段连续区域）----
-proj = [min(255, px * 8) for px in (alpha.crop((x, 0, x + 1, src.height)).
-        getbbox() and ((alpha.crop((x, 0, x + 1, src.height)).getbbox()[1] is not None)) * 255 or 0
-        for x in range(src.width))]
-# 简化：直接找第一段有内容的连续列区间，允许 12px 空隙
+# ---- 2. 找出左侧圆形印章的列范围（第一段有内容的连续列区间，允许 12px 空隙）----
 cols = [x for x in range(src.width) if alpha.crop((x, 0, x + 1, src.height)).getbbox()]
 seal_end = cols[0]
 for x in cols:
