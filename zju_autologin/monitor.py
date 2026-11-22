@@ -12,6 +12,7 @@ UI 与 worker 之间全部通过信号-槽（跨线程排队调用）交互，�
 
 from __future__ import annotations
 
+import ipaddress
 import sys
 import time
 import urllib.request
@@ -76,6 +77,36 @@ def _interface_signature() -> str:
     return "|".join(sorted(parts))
 
 
+def _duckdns_addresses(portal_ip: str) -> tuple[str, str]:
+    """在门户返回的 IP 所属网卡上查找另一种协议的地址；只有单栈时保留门户地址。"""
+    from PyQt6.QtNetwork import QNetworkAddressEntry, QNetworkInterface
+
+    primary = ipaddress.ip_address(portal_ip)
+    for iface in QNetworkInterface.allInterfaces():
+        entries = iface.addressEntries()
+        if not any(entry.ip().toString() == str(primary) for entry in entries):
+            continue
+        candidates = []
+        for entry in entries:
+            address = ipaddress.ip_address(entry.ip().toString().split("%")[0])
+            if address.version == primary.version or address.is_link_local or address.is_loopback:
+                continue
+            if address.is_multicast or address.is_unspecified:
+                continue
+            if address.version == 6 and not address.is_global:
+                continue
+            if entry.isLifetimeKnown() and entry.preferredLifetime().hasExpired():
+                continue
+            # 同一网卡有多个候选地址时，优先使用操作系统标记为适合注册到 DNS 的地址。
+            preferred = entry.dnsEligibility() == QNetworkAddressEntry.DnsEligibilityStatus.DnsEligible
+            candidates.append((not preferred, int(address), str(address)))
+        if candidates:
+            other = min(candidates)[2]
+            return (portal_ip, other) if primary.version == 4 else (other, portal_ip)
+        break
+    return portal_ip, ""
+
+
 class MonitorWorker(QObject):
     statusChanged = pyqtSignal(dict)
     logLine = pyqtSignal(str)
@@ -109,7 +140,7 @@ class MonitorWorker(QObject):
         self._captcha_pending = False
         self._hook_family = ""
         self._logged_family = ""
-        self._ddns_last_ip = ""
+        self._ddns_last_update = None
         self._report_month = ""
         self._update_fail_logged = False
         self._update_retry_pending = False
@@ -706,13 +737,26 @@ class MonitorWorker(QObject):
         """IP 变化或登录成功后更新 DDNS 解析(静默, 失败仅记日志)。"""
         if not ip or not ddns_enabled(self._config):
             return
-        if ip == self._ddns_last_ip:
+        ipv6 = ""
+        if self._config.ddns_provider == "duckdns":
+            try:
+                ip, ipv6 = _duckdns_addresses(ip)
+            except ValueError:
+                self.log("DDNS: invalid portal IP")
+                return
+        target = (self._config.ddns_provider, self._config.ddns_domain, ip, ipv6)
+        if target == self._ddns_last_update:
             return  # IP 未变
-        ok, detail = push_ddns(self._config, ip, opener=self._opener)
+        if ipv6:
+            ok, detail = push_ddns(self._config, ip, opener=self._opener, ipv6=ipv6)
+        else:
+            ok, detail = push_ddns(self._config, ip, opener=self._opener)
+        if self._config.ddns_provider == "duckdns":
+            detail += " [" + ", ".join(addr for addr in (ip, ipv6) if addr) + "]"
         # 成功才记账: 失败还记下来的话, 换 IP 后第一次推送失败就再也不会重试,
         # 域名会一直指向旧地址(这个功能存在的意义就是防止这种情况)
         if ok:
-            self._ddns_last_ip = ip
+            self._ddns_last_update = target
         self.log(tr("log.ddns_result", domain=self._config.ddns_domain, detail=detail))
 
     def _run_hooks(self, event: str) -> None:

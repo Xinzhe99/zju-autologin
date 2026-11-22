@@ -120,7 +120,7 @@ def _ali_sign(cfg, params: dict) -> dict:
     return all_p
 
 
-def update_duckdns(cfg, host: str, ip: str, opener=None) -> tuple[bool, str]:
+def update_duckdns(cfg, host: str, ip: str, opener=None, *, ipv6: str = "") -> tuple[bool, str]:
     """DuckDNS(免费): host 形如 yourname(无需 .duckdns.org), token 为账户 token。
 
     API: https://www.duckdns.org/update?domains=X&token=Y&ip=Z → "OK" / "KO"
@@ -136,6 +136,8 @@ def update_duckdns(cfg, host: str, ip: str, opener=None) -> tuple[bool, str]:
     url = ("https://www.duckdns.org/update"
            f"?domains={_up.quote(domain)}&token={_up.quote(cfg.ddns_secret.strip())}"
            f"&{field}={_up.quote(ip)}")
+    if field == "ip" and ipv6:
+        url += "&ipv6=" + _up.quote(ipv6)
     try:
         if opener is None:
             opener = urllib.request.build_opener()
@@ -202,7 +204,7 @@ def _split_host(cfg, host: str) -> tuple[str, str]:
 
 # ------------------------------------------------------------------ 入口
 
-def push_ddns(cfg, ip: str, opener=None) -> tuple[bool, str]:
+def push_ddns(cfg, ip: str, opener=None, *, ipv6: str = "") -> tuple[bool, str]:
     """把 ip 更新到配置的域名。由 monitor 在 IP 变化/登录成功时调用。"""
     if not ip or not ddns_enabled(cfg):
         return False, "disabled"
@@ -213,5 +215,5 @@ def push_ddns(cfg, ip: str, opener=None) -> tuple[bool, str]:
     if provider == "aliyun":
         return update_aliyun(cfg, host, ip, opener=opener)
     if provider == "duckdns":
-        return update_duckdns(cfg, host, ip, opener=opener)
+        return update_duckdns(cfg, host, ip, opener=opener, ipv6=ipv6)
     return False, f"unknown provider {provider}"
