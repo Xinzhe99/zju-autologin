@@ -259,6 +259,22 @@ def test_ddns_duckdns_ipv6_uses_ipv6_param(tmp_path):
     assert ok and "ipv6=2001%3Adb8%3A%3A1" in op.urls[0]
     assert "&ip=" not in op.urls[0]
 
+    ok, _ = DD.push_ddns(cfg, "10.1.2.3", opener=op, ipv6="2001:db8::2")
+    assert ok and len(op.urls) == 2
+    assert "&ip=10.1.2.3&ipv6=2001%3Adb8%3A%3A2" in op.urls[1]
+
+
+def test_duckdns_updates_when_only_ipv6_changes(tmp_path):
+    cfg = _cfg(tmp_path, ddns_provider="duckdns", ddns_domain="myname", ddns_secret="tok")
+    worker = M.MonitorWorker(cfg)
+    ip = "10.1.2.3"
+    pairs = [(ip, "2001:db8::1"), (ip, "2001:db8::2"), (ip, "2001:db8::2")]
+    with patch.object(M, "_duckdns_addresses", side_effect=pairs), \
+            patch.object(M, "push_ddns", return_value=(True, "updated")) as push:
+        for _ in pairs:
+            worker._push_ddns_if_changed(ip)
+    assert [call.kwargs["ipv6"] for call in push.call_args_list] == [pair[1] for pair in pairs[:2]]
+
 
 def test_ddns_duckdns_bare_name(tmp_path):
     cfg = _cfg(tmp_path, ddns_provider="duckdns", ddns_domain="myname",
